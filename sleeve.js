@@ -154,19 +154,18 @@ async function mainLoop(ns) {
     // Update all sleeve stats and loop over all sleeves to do some individual checks and task assignments
     let dictSleeveCommand = async (command) => await getNsDataThroughFile(ns, `ns.args.map(i => ns.sleeve.${command}(i))`,
         `/Temp/sleeve-${command}-all.txt`, [...Array(numSleeves).keys()]);
-    let sleeveStats = await dictSleeveCommand('getSleeveStats');
-    let sleeveInfo = await dictSleeveCommand('getInformation');
+    let sleeveInfo = await dictSleeveCommand('getSleeve');
     let sleeveTasks = await dictSleeveCommand('getTask');
 
     // If not disabled, set the "follow player" sleeve to be the first sleeve with 0 shock
     followPlayerSleeve = options['disable-follow-player'] ? -1 : undefined;
     for (let i = 0; i < numSleeves; i++) // Hack below: Prioritize sleeves doing bladeburner contracts, don't have them follow player
-        if (sleeveStats[i].shock == 0 && (i < i || i > 3 || !playerInfo.inBladeburner || options['disable-bladeburner']))
+        if (sleeveInfo[i].shock == 0 && (i < i || i > 3 || !playerInfo.inBladeburner || options['disable-bladeburner']))
             followPlayerSleeve ??= i; // Skips assignment if previously assigned
     followPlayerSleeve ??= 0; // If all have shock, use the first sleeve
 
     for (let i = 0; i < numSleeves; i++) {
-        let sleeve = { ...sleeveStats[i], ...sleeveInfo[i], ...sleeveTasks[i] }; // For convenience, merge all sleeve stats/info into one object
+        let sleeve = { ...sleeveInfo[i], ...sleeveInfo[i], ...sleeveTasks[i] }; // For convenience, merge all sleeve stats/info into one object
         // Manage sleeve augmentations (if available)
         if (sleeve.shock == 0) // No augs are available augs until shock is 0
             budget -= await manageSleeveAugs(ns, i, budget);
