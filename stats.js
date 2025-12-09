@@ -1,6 +1,6 @@
 import {
     log, disableLogs, instanceCount, getConfiguration, getNsDataThroughFile, getActiveSourceFiles,
-    getStocksValue, formatNumberShort, formatMoney, formatRam, getFilePath
+    getStocksValue, formatNumberShort, formatNumber, formatMoney, formatRam, getFilePath
 } from './helpers.js'
 
 const argsSchema = [
@@ -144,14 +144,18 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
             if (hashes[1] > 0) {
                 val1.push(true, `${formatNumberShort(hashes[0], 3, 1)}/${formatNumberShort(hashes[1], 3, 1)}`,
                     `Current Hashes ${hashes[0].toLocaleString('en')} / Current Hash Capacity ${hashes[1].toLocaleString('en')}`)
-                // Detect and notify the HUD if we are liquidating hashes (selling them as quickly as possible)
+                // Detect and notify the HUD if any scripts are liquidating hashes (selling them as quickly as possible)
                 const spendHashesScript = getFilePath('spend-hacknet-hashes.js');
-                const liquidatingHashes = await getNsDataThroughFile(ns,
-                    `ns.ps('home').filter(p => p.filename == ns.args[0] && (p.args.includes('--liquidate') || p.args.includes('-l')))`,
-                    '/Temp/hash-liquidation-scripts.txt', [spendHashesScript]);
+                const liquidatingHashes = await (/**@returns{Promise<ProcessInfo[]>}*/async () =>
+                    await getNsDataThroughFile(ns,
+                        `ns.ps('home').filter(p => p.filename == ns.args[0] && (p.args.includes('--liquidate') || p.args.includes('-l')))`,
+                        '/Temp/hash-liquidation-scripts.txt', [spendHashesScript])
+                )();
                 if (liquidatingHashes.length > 0)
-                    val2.push(true, "Liquidating", `You have a script running that is selling hashes as quickly as possible ` +
-                        `(PID ${liquidatingHashes[0].pid}: ${spendHashesScript} ${liquidatingHashes[0].args.join(' ')})`);
+                    val2.push(true, "Liquidating", `You have ${liquidatingHashes.length} script` +
+                        (liquidatingHashes.length > 1 ? 's running that are' : ' running that is') +
+                        ' selling hashes as quickly as possible:\n' +
+                        liquidatingHashes.map(s => `${s.filename} ${s.args.join(' ')} (PID: ${s.pid})`).join('\n',));
             }
         }
         if (val1.length < 2) val1.push(false);
@@ -315,6 +319,16 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
                 "\nRun `daemon.js` with the `--no-share` flag to disable.");
         } else val.push(false)
         hudData.push(val)
+    }
+
+    {
+      const val = ["Intel Boost"];
+      const data = await getNsDataThroughFile(ns, 'ns.getPlayer()');
+      const intel = data.skills.intelligence;
+      if (intel > 1) {
+        val.push(true, (formatNumber((1 + Math.pow(intel, 0.8) / 600) -1) * 100) + "%", "Boost to stats provided by intellegence.");
+        hudData.push(val)
+      }
     }
 
     return hudData
