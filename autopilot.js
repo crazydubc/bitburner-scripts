@@ -48,33 +48,18 @@ export async function main(ns) {
         // 1st Priority: core multipliers and int
         4.3, //Unlocks the Singularity API...not optimal, but allows automation
         1.3, //Multipliers
-        5.2, //Intel. This is a slow grind, so we get it early.
-        9.1, //initial hacknet for fast money script and more ram on home
-        3.3,  //corporations.
-        6.1, //bladeburners
+        5.1, //Intel. This is a slow grind, so we get it early.
+        2.3, //gangs
+		12.3, //recursion for speed
+        10.3,  //sleeves
         9.3, //hacknet servers
-        3.1, //Corporations 
-        10.1, //sleeves
-        2.1,  //Unlocks gangs
-        8.2,  // Hard.   8.1 immediately unlocks stocks, 8.2 doubles stock earning rate with shorts. Stocks are never nerfed in any BN (4S can be made too pricey though), and we have a good pre-4S stock script.
-        13.1, // Hard.   Unlock Stanek's Gift. We've put a lot of effort into min/maxing the Tetris, so we should try to get it early, even though it's a hard BN. I might change my mind and push this down if it proves too slow.
-        7.1,  // Hard.   Unlocks the bladeburner API (and bladeburner outside of BN 6/7). Many recommend it before BN9 since it ends up being a faster win condition in some of the tougher bitnodes ahead.
-        14.2, // Hard.   Boosts go.js bonuses, but note that we can automate IPvGO from the very start (BN1.1), no need to unlock it. 14.1 doubles all bonuses. 14.2 unlocks the cheat API.
-
-        // 3nd Priority: With most features unlocked, max out SF levels roughly in the order of greatest boost and/or easiest difficulty, to hardest and/or less worthwhile
-        2.3,  // Easy.   Boosts to crime success / money / CHA will speed along gangs, training and earning augmentations in the future
-        5.3,  // Normal. Diminishing boost to hacking multipliers (8% -> 12% -> 14%), but relatively normal bitnode, especially with other features unlocked
-        11.3, // Normal. Decrease augmentation cost scaling in a reset (4% -> 6% -> 7%) (can buy more augs per reset). Also boosts company salary/rep (32% -> 48% -> 56%), which we have little use for with gangs.)
-        14.3, // Hard.   Makes go.js cheats slightly more successful, increases max go favour from (100->120) and not too difficult to get out of the way
-        13.3, // Hard.   Make stanek's gift bigger to get more/different boosts10.3, // Hard.   Get the last 2 sleeves (6 => 8) to boost their productivity ~30%. These really help with Bladeburner below. Putting this a little later because buying sleeves memory upgrades requires manual intervention right now.
-
-        // 4th Priority: Play some Bladeburners. Mostly not used to beat other BNs, because for much of the BN this can't be done concurrently with player actions like crime/faction work, and no other BNs are "tuned" to be beaten via Bladeburner win condition
-        6.3,  // Normal. The 3 easier bladeburner BNs. Boosts combat stats by 8% -> 12% -> 14%
-        7.3,  // Hard.   The remaining 2 hard bladeburner BNs. Boosts all Bladeburner mults by 8% -> 12% -> 14%, so no interaction with other BNs unless trying to win via Bladeburner.
-
-        // Low Priority:
-        8.3,  // Hard.   Just gives stock "Limit orders" which we don't use in our scripts,
-        12.9999 // Easy. Keep playing forever. Only stanek scales very well here, there is much work to be done to be able to climb these faster.
+        13.3, //stanek
+		7.1, //blade runner
+        6.3, //blade burner 
+        7.3, //blade runnner
+        11.3,  //stocks
+        3.3, //corporations
+        12.9999999 // Easy. Keep playing forever. Only stanek scales very well here, there is much work to be done to be able to climb these faster.
     ];
     const augTRP = "The Red Pill";
     const augStanek = `Stanek's Gift - Genesis`;
@@ -613,17 +598,31 @@ export async function main(ns) {
 
         // Once stanek's gift is accepted, launch it once per reset before we launch daemon (Note: stanek's gift is auto-purchased by faction-manager.js on your first install)
         let stanekRunning = (13 in unlockedSFs) && findScript('stanek.js') !== undefined;
-        if ((13 in unlockedSFs) && !stanekLaunched && !stanekRunning && installedAugmentations.includes(augStanek)) {
-            stanekLaunched = true; // Once we've know we've launched stanek once, we never have to again this reset.
-            const stanekArgs = ["--on-completion-script", getFilePath('daemon.js')]
+        if ((13 in unlockedSFs) && !stanekRunning && installedAugmentations.includes(augStanek)) {
+            //stanekLaunched = true; // Once we've know we've launched stanek once, we never have to again this reset.
+            const stanekArgs = ["--on-completion-script", getFilePath('daemon.js')];
+            //daemonArgs.push('--use-hacknet-servers', true);
+            daemonArgs.push('--reserved-ram', 8);
+            daemonArgs.push('--use-hacknet-servers', true);
             if (options['no-tail-windows']) stanekArgs.push('--no-tail'); // Relay the option to suppress tail windows
             if (daemonArgs.length >= 0) stanekArgs.push("--on-completion-script-args", JSON.stringify(daemonArgs)); // Pass in all the args we wanted to run daemon.js with
-            launchScriptHelper(ns, 'stanek.js', stanekArgs);
+            if (ns.serverExists('hacknet-server-0')) {
+              stanekArgs.push('--max-charges', Number.MAX_SAFE_INTEGER);
+              for (let i = 0; i < 20; i++) {
+                const sName = `hacknet-server-${i}`;
+                if (!ns.serverExists(sName)) break;
+                
+                if (!ns.scriptRunning("stanek.js", sName)) {
+                  ns.scp(["helpers.js", "stanek.js", "stanek.js.create.js"], sName);
+                  ns.exec("stanek.js", sName, 1, ...stanekArgs);
+                  stanekRunning = true;
+                }
+              }
+            } else if (!(9 in unlockedSFs)){
+              launchScriptHelper(ns, 'stanek.js', stanekArgs);
             stanekRunning = true;
+            }
         }
-        // If stanek is running, tell daemon to reserve all home RAM for it.
-        if (stanekRunning)
-            daemonArgs.push("--reserved-ram", 1E100);
 
         // Launch (or re-launch) daemon if it is not already running with all our desired args.
         // Hack: Ignore numeric arguments in the comparison, since we e.g. tweak --recovery-thread-padding over time
