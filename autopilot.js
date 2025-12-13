@@ -45,16 +45,18 @@ export async function main(ns) {
     const persistentLog = "log.autopilot.txt";
     const factionManagerOutputFile = "/Temp/affordable-augs.txt"; // Temp file produced by faction manager with status information
     const defaultBnOrder = [ // The order in which we intend to play bitnodes
-        // 1st Priority: core multipliers and int
         4.3, //Unlocks the Singularity API...not optimal, but allows automation
-        1.3, //Multipliers
-        5.1, //Intel. This is a slow grind, so we get it early.
-        2.3, //gangs
+        1.3, //Multipliers to hacking
+        5.1, //Intel. This is a slow grind, so we get it early. 
+        2.3, //gangs, but we are going to farm intel first
+        //TODO: add ability to pass a farm BN, example 99.25 to go into farm and farm until 25% bonus per hour.
+        5.3, //mo intel
 		12.3, //recursion for speed
+        8.3, //stonks
         10.3,  //sleeves
         9.3, //hacknet servers
         13.3, //stanek
-		7.1, //blade runner
+	    7.1, //blade runner
         6.3, //blade burner 
         7.3, //blade runnner
         11.3,  //stocks
@@ -150,8 +152,8 @@ export async function main(ns) {
                 `too expensive to run until you have bought a lot of home RAM.`, true);
         }
         // We currently no longer have any one-time logic that needs to be run at the start of a new bitnode
-        //if (getTimeInBitnode() < 60 * 1000) // Skip initialization if we've been in the bitnode for more than 1 minute
-        //    await initializeNewBitnode(ns);
+        if (getTimeInBitnode() < 60 * 1000) // Skip initialization if we've been in the bitnode for more than 1 minute
+            await initializeNewBitnode(ns);
 
         // Decide what the next-up bitnode should be
         const getSFLevel = bn => Number(bn + "." + ((dictOwnedSourceFiles[bn] || 0) + (resetInfo.currentNode == bn ? 1 : 0)));
@@ -187,7 +189,15 @@ export async function main(ns) {
     /** Logic run once at the beginning of a new BN
      * @param {NS} ns */
     async function initializeNewBitnode(ns) {
-        // Nothing to do here (yet)
+        const player = await getPlayerInfo(ns);
+		//see if we unlocked intel and farm it. We will use BN8 for the startup cash in order to travel and join factions.
+        if ((5 in unlockedSFs) && resetInfo.currentNode != 5 && player.skills.intelligence < 100) {
+          await runCommand(ns, `ns.singularity.b1tflum3(ns.args[0], ns.args[1]` +
+          `, { sourceFileOverrides: new Map() }` + // Work around a long-standing bug on bitburner-official.github.io TODO: Remove when no longer needed
+          `)`, '/Temp/b1tflum3.js', [8,'farm-intelligence.js']);
+          return;
+        }
+        launchScriptHelper(ns, 'hacks.js'); //just unlocking a few -1 BN's.
     }
 
     /** Logic run periodically throughout the BN
@@ -678,11 +688,7 @@ export async function main(ns) {
             // If we're trying to rush gangs, run in such a way that we will spend most of our time doing crime, reducing Karma (also okay early income)
             // NOTE: Default work-for-factions behaviour is to spend hashes on coding contracts, which suits us fine
             launchScriptHelper(ns, 'work-for-factions.js', rushGang ? rushGangsArgs : workForFactionsArgs);
-        }
-        if (((5 in unlockedSFs) || resetInfo.currentNode == 5) && !findScript('farm-intelligence.js') && getPlayerInfo().skills.intelligence < 255) {
-          launchScriptHelper(ns, 'farm-intelligence.js');
-        }
-        
+        }        
         if (((9 in unlockedSFs) || resetInfo.currentNode == 9) && !findScript('fastmoney.ts') && ns.getPlayer().money < 1e+10) {
           launchScriptHelper(ns, 'fastmoney.ts');
         }
@@ -1049,20 +1055,6 @@ export async function main(ns) {
         // Dynamically update reserved cash based on how much money is already converted to stocks.
         const reserve = Math.min(reserveCap, Math.max(0, player.money * minStockPercent, minStockValue - stocksValue));
         return currentReserve == reserve ? true : ns.write("reserve.txt", reserve, "w"); // Reserve for stocks
-        // NOTE: After several iterations, I decided that the above is actually best to keep in all scenarios:
-        // - Casino.js ignores the reserve, so the above takes care of ensuring our casino seed money isn't spent
-        // - In low-income situations, stockmaster will be our best source of income. We invoke it such that it ignores
-        //	 the global reserve, so this 8B is for stocks only. The 2B remaining is plenty to kickstart the rest.
-        // - Once high-hack/gang income is achieved, this 8B will not be missed anyway.
-        /*
-        if(!ranCasino) {
-            ns.write("reserve.txt", 300000, "w"); // Prevent other scripts from spending our casino seed money
-            return moneyReserved = true;
-        }
-        // Otherwise, clear any reserve we previously had
-        if(moneyReserved) ns.write("reserve.txt", 0, "w"); // Remove the casino reserve we would have placed
-        return moneyReserved = false;
-        */
     }
 
     /** Logic to determine whether we should keep running, or shut down autopilot.js for some reason.
