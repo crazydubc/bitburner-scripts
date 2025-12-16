@@ -28,7 +28,7 @@ const argsSchema = [
     ['use-hacknet-nodes', false], // Same as above (kept for backwards compatibility, but these are now called hacknet-servers)
     ['use-hacknet-servers', false], // Same as above, but the game recently renamed these
 
-    ['spend-hashes-for-money-when-under', 10E6], // (Default 10m) Convert 4 hashes to money whenever we're below this amount
+    ['spend-hashes-for-money-when-under', 20E7], // (Default 200m) Convert 4 hashes to money whenever we're below this amount
     ['disable-spend-hashes', false], // An easy way to set the above to a very large negative number, thus never spending hashes for Money
 
     ['x', false], // Focus on a strategy that produces the most hack EXP rather than money

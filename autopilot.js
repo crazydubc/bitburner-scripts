@@ -4,13 +4,17 @@ import {
     formatMoney, formatDuration, formatNumber, getErrorInfo, tail
 } from './helpers.js'
 
+import {SaveFarmConfig} from './farm-intelligence.js'
+
+import {recordBnStart, printBnRunSummary} from './logger.js'
+
 const argsSchema = [ // The set of all command line arguments
     ['next-bn', 0], // If we destroy the current BN, the next BN to start
     ['disable-auto-destroy-bn', false], // Set to true if you do not want to auto destroy this BN when done
     ['install-at-aug-count', 8], // Automatically install when we can afford this many new augmentations (with NF only counting as 1). Note: This number will automatically be increased by 1 for every level of SF11 you have (up to 3)
     ['install-at-aug-plus-nf-count', 12], // or... automatically install when we can afford this many augmentations including additional levels of Neuroflux.  Note: This number will automatically be increased by 1 for every level of SF11 you have (up to 3)
     ['install-for-augs', ["The Red Pill"]], // or... automatically install as soon as we can afford one of these augmentations
-    ['install-countdown', 5 * 60 * 1000], // If we're ready to install, wait this long first to see if more augs come online (we might just be gaining momentum)
+    ['install-countdown', 7 * 60 * 1000], // If we're ready to install, wait this long first to see if more augs come online (we might just be gaining momentum)
     ['time-before-boosting-best-hack-server', 15 * 60 * 1000], // Wait this long before picking our best hack-income server and spending hashes on boosting it
     ['reduced-aug-requirement-per-hour', 0.5], // For every hour since the last reset, require this many fewer augs to install.
     ['interval', 2000], // Wake up this often (milliseconds) to check on things
@@ -27,7 +31,7 @@ const argsSchema = [ // The set of all command line arguments
     ['on-completion-script-args', []], // Optional args to pass to the script when we defeat the bitnode
     ['xp-mode-interval-minutes', 55], // Every time this many minutes has elapsed, toggle daemon.js to runing in --xp-only mode, which prioritizes earning hack-exp rather than money
     ['xp-mode-duration-minutes', 5], // The number of minutes to keep daemon.js in --xp-only mode before switching back to normal money-earning mode.
-    ['no-tail-windows', false], // Set to true to prevent the default behaviour of opening a tail window for certain launched scripts. (Doesn't affect scripts that open their own tail windows)
+    ['no-tail-windows', true], // Set to true to prevent the default behaviour of opening a tail window for certain launched scripts. (Doesn't affect scripts that open their own tail windows)
 ];
 
 export function autocomplete(data, args) {
@@ -44,23 +48,40 @@ export function autocomplete(data, args) {
 export async function main(ns) {
     const persistentLog = "log.autopilot.txt";
     const factionManagerOutputFile = "/Temp/affordable-augs.txt"; // Temp file produced by faction manager with status information
-    const defaultBnOrder = [ // The order in which we intend to play bitnodes
-        4.3, //Unlocks the Singularity API...not optimal, but allows automation
-        1.3, //Multipliers to hacking
-        5.1, //Intel. This is a slow grind, so we get it early. 
-        2.3, //gangs, but we are going to farm intel first
-        //TODO: add ability to pass a farm BN, example 99.25 to go into farm and farm until 25% bonus per hour.
-        5.3, //mo intel
-		12.3, //recursion for speed
-        8.3, //stonks
-        10.3,  //sleeves
-        9.3, //hacknet servers
-        13.3, //stanek
-	    7.1, //blade runner
-        6.3, //blade burner 
-        7.3, //blade runnner
-        11.3,  //stocks
-        3.3, //corporations
+     const defaultBnOrder = [ // The order in which we intend to play bitnodes
+        // 1st Priority: Key new features and/or major stat boosts
+        4.3,  // Normal. Need singularity to automate everything, and need the API costs reduced from 16x -> 4x -> 1x reliably do so from the start of each BN
+        1.2,  // Easy.   Big boost to all multipliers (16% -> 24%), and no penalties to slow us down. Should go quick.
+        5.1,  // Normal. Unlock intelligence stat early to maximize growth, getBitNodeMultipliers + Formulas.exe for more accurate scripts, and +8% hack mults
+        1.3,  // Easy.   The last bonus is not as big a jump (24% -> 28%), but it's low-hanging fruit
+        2.1,  // Easy.   Unlocks gangs, which reduces the need to grind faction and company rep for getting access to most augmentations, speeding up all BNs
+        12.3, // Easy.   Should be able to grab a few levels of this to make later nodes easier. Combined with the intel boost, we see a decent speed improvement.
+
+        // 2nd Priority: More new features, from Harder BNs. Things will slow down for a while, but the new features should pay in dividends for all future BNs
+        10.1, // Hard.   Unlock Sleeves (which tremendously speed along gangs outside of BN2) and grafting (can speed up slow rep-gain BNs). // TODO: Buying / upgrading sleeve mem has no API, requires manual interaction. Can we automate this with UI clicking like casino.js?
+        8.2,  // Hard.   8.1 immediately unlocks stocks, 8.2 doubles stock earning rate with shorts. Stocks are never nerfed in any BN (4S can be made too pricey though), and we have a good pre-4S stock script.
+        13.1, // Hard.   Unlock Stanek's Gift. We've put a lot of effort into min/maxing the Tetris, so we should try to get it early, even though it's a hard BN. I might change my mind and push this down if it proves too slow.
+        7.1,  // Hard.   Unlocks the bladeburner API (and bladeburner outside of BN 6/7). Many recommend it before BN9 since it ends up being a faster win condition in some of the tougher bitnodes ahead.
+        9.1,  // Hard.   Unlocks hacknet servers. Hashes can be earned and spent on cash very early in a tough BN to help kick-start things. Hacknet productin/costs improved by 12%
+        3.3,  // Hard.   Corporations. While hard, these are insanely profitable.
+        14.2, // Hard.   Boosts go.js bonuses, but note that we can automate IPvGO from the very start (BN1.1), no need to unlock it. 14.1 doubles all bonuses. 14.2 unlocks the cheat API.
+
+        // 3nd Priority: With most features unlocked, max out SF levels roughly in the order of greatest boost and/or easiest difficulty, to hardest and/or less worthwhile
+        2.3,  // Easy.   Boosts to crime success / money / CHA will speed along gangs, training and earning augmentations in the future
+        5.3,  // Normal. Diminishing boost to hacking multipliers (8% -> 12% -> 14%), but relatively normal bitnode, especially with other features unlocked
+        11.3, // Normal. Decrease augmentation cost scaling in a reset (4% -> 6% -> 7%) (can buy more augs per reset). Also boosts company salary/rep (32% -> 48% -> 56%), which we have little use for with gangs.)
+        14.3, // Hard.   Makes go.js cheats slightly more successful, increases max go favour from (100->120) and not too difficult to get out of the way
+        13.3, // Hard.   Make stanek's gift bigger to get more/different boosts
+        9.2,  // Hard.   Start with 128 GB home ram. Speeds up slow-starting new BNs, but less important with good ram-dodging scripts. Hacknet productin/costs improved by 12% -> 18%.
+        9.3,  // Hard.   Start each new BN with an already powerful hacknet server, but *only until the first reset*, which is a bit of a damper. Hacknet productin/costs improved by 18% -> 21%
+        10.3, // Hard.   Get the last 2 sleeves (6 => 8) to boost their productivity ~30%. These really help with Bladeburner below. Putting this a little later because buying sleeves memory upgrades requires manual intervention right now.
+
+        // 4th Priority: Play some Bladeburners. Mostly not used to beat other BNs, because for much of the BN this can't be done concurrently with player actions like crime/faction work, and no other BNs are "tuned" to be beaten via Bladeburner win condition
+        6.3,  // Normal. The 3 easier bladeburner BNs. Boosts combat stats by 8% -> 12% -> 14%
+        7.3,  // Hard.   The remaining 2 hard bladeburner BNs. Boosts all Bladeburner mults by 8% -> 12% -> 14%, so no interaction with other BNs unless trying to win via Bladeburner.
+
+        // Low Priority:
+        8.3,  // Hard.   Just gives stock "Limit orders" which we don't use in our scripts,
         12.9999999 // Easy. Keep playing forever. Only stanek scales very well here, there is much work to be done to be able to climb these faster.
     ];
     const augTRP = "The Red Pill";
@@ -191,13 +212,17 @@ export async function main(ns) {
     async function initializeNewBitnode(ns) {
         const player = await getPlayerInfo(ns);
 		//see if we unlocked intel and farm it. We will use BN8 for the startup cash in order to travel and join factions.
-        if ((5 in unlockedSFs) && resetInfo.currentNode != 5 && player.skills.intelligence < 100) {
+        if ((5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 175) {
+          await SaveFarmConfig(ns, resetInfo.currentNode, 0.5);
           await runCommand(ns, `ns.singularity.b1tflum3(ns.args[0], ns.args[1]` +
           `, { sourceFileOverrides: new Map() }` + // Work around a long-standing bug on bitburner-official.github.io TODO: Remove when no longer needed
           `)`, '/Temp/b1tflum3.js', [8,'farm-intelligence.js']);
           return;
         }
         launchScriptHelper(ns, 'hacks.js'); //just unlocking a few -1 BN's.
+        //we put this here to avoid accidently logging the intel farming as a new node.
+        recordBnStart(ns);
+        printBnRunSummary(ns, 25);
     }
 
     /** Logic run periodically throughout the BN
@@ -689,14 +714,14 @@ export async function main(ns) {
             // NOTE: Default work-for-factions behaviour is to spend hashes on coding contracts, which suits us fine
             launchScriptHelper(ns, 'work-for-factions.js', rushGang ? rushGangsArgs : workForFactionsArgs);
         }        
-        if (((9 in unlockedSFs) || resetInfo.currentNode == 9) && !findScript('fastmoney.ts') && ns.getPlayer().money < 1e+10) {
-          launchScriptHelper(ns, 'fastmoney.ts');
-        }
+        //if (((9 in unlockedSFs) || resetInfo.currentNode == 9) && !findScript('fastmoney.ts') && ns.getPlayer().money < 1e+10) {
+        //  launchScriptHelper(ns, 'fastmoney.ts');
+        //}
         if ((resetInfo.currentNode== 3) && !findScript('corpbootstrap.ts') && playerInstalledAugCount < 1000) {
           try {
-          if (!ns.scriptRunning("corporation.ts", "hacknet-server-1") && !ns.scriptRunning("corp3.ts", "hacknet-server-0"))
+          if (!ns.scriptRunning("corporation.ts", "hacknet-server-1") && !ns.scriptRunning("corp3.ts", "hacknet-server-0") && !ns.scriptRunning("corporation.ts", "home") && !ns.scriptRunning("corp3.ts", "home"))
               launchScriptHelper(ns, 'corpbootstrap.ts');
-          } catch (e) {}
+          } catch (e) {          }
         }
     }
 

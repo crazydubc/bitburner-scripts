@@ -320,13 +320,13 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
         } else val.push(false)
         hudData.push(val)
     }
-
+    //Show intel boost value
     {
       const val = ["Intel Boost"];
       const data = await getNsDataThroughFile(ns, 'ns.getPlayer()');
       const intel = data.skills.intelligence;
       if (intel > 1) {
-        val.push(true, (formatNumber((1 + Math.pow(intel, 0.8) / 600) -1) * 100) + "%", "Boost to stats provided by intellegence.");
+        val.push(true, (formatNumber((1 + Math.pow(intel, 0.8) / 600) -1, 3) * 100) + "%", "Boost to stats provided by intellegence.");
         hudData.push(val)
       }
     }

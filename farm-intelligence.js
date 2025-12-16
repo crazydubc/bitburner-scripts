@@ -3,22 +3,17 @@ import {
 } from './helpers.js'
 
 const STATS_FILE = "/Temp/intFarmStats.txt";
+const CONFIG_FILE = "/Temp/intFarmConf.txt";
 // Stop when extra INT bonus is growing by less than this per hour:
-const MIN_PERCENT_BONUS_PER_HOUR = 0.25;
 const FORECAST_HOURS = 1;
 
 function intBonus(intel) {
   return 1 + Math.pow(intel, 0.8) / 600;
 }
-
 /** @param {NS} ns */
-export async function main(ns) {
-  const player = await getNsDataThroughFile(ns, 'ns.getPlayer()');
-  const intel = player.skills.intelligence;
-
-  //Load previous stats (if any)
+function getFileData(ns, file) {
   let prev = null;
-  const raw = ns.read(STATS_FILE);
+  const raw = ns.read(file);
   if (raw) {
     try {
       prev = JSON.parse(raw);
@@ -26,6 +21,28 @@ export async function main(ns) {
       // corrupt file, ignore
     }
   }
+  return prev;
+}
+/** @param {NS} ns */
+export async function SaveFarmConfig(ns, nextBN, minPercent) {
+  ns.write(CONFIG_FILE, JSON.stringify({ nextBN, minPercent }), "w");
+}
+
+/** @param {NS} ns */
+export async function main(ns) {
+  const player = await getNsDataThroughFile(ns, 'ns.getPlayer()');
+  const intel = player.skills.intelligence; //0.5% bonus per hour
+  let MIN_PERCENT_BONUS_PER_HOUR = 0.5;
+  let next_BN = 2; //default is BN 2
+
+  //Load previous stats (if any)
+  let prev = getFileData(ns, STATS_FILE);
+  let conf = getFileData(ns, CONFIG_FILE);
+  if (conf) {
+    next_BN = conf.nextBN;
+    MIN_PERCENT_BONUS_PER_HOUR = conf.minPercent;
+  }
+
   const now = Date.now();
   let stopForLowROI = false;
 
@@ -63,19 +80,6 @@ export async function main(ns) {
     // First time / no previous data: initialize baseline
     ns.write(STATS_FILE, JSON.stringify({ intel, time: now }), "w");
   }
-
-  //If ROI is bad, bail out to your desired bitnode ---
-  if (stopForLowROI) {
-    log(ns, `ROI threshold reached, resetting to bitnode 2...`, true, 'info');
-    await ns.sleep(5000);
-    await runCommand(ns,
-      `ns.singularity.b1tflum3(ns.args[0], ns.args[1], { sourceFileOverrides: new Map() })`,
-      '/Temp/b1tflum3.js',
-      [2, 'autopilot.js']
-    );
-    return;
-  }
-
   //Normal farming
   for (const loc of ['Chongqing', 'New Tokyo', 'Ishima']) {
     await runCommand(ns,
@@ -91,6 +95,18 @@ export async function main(ns) {
         [inv]
       );
     }
+  }
+
+  //If ROI is bad, bail out to your desired bitnode ---
+  if (stopForLowROI) {
+    log(ns, `ROI threshold reached, resetting to bitnode 2...`, true, 'info');
+    await ns.sleep(5000);
+    await runCommand(ns,
+      `ns.singularity.b1tflum3(ns.args[0], ns.args[1], { sourceFileOverrides: new Map() })`,
+      '/Temp/b1tflum3.js',
+      [next_BN, 'autopilot.js']
+    );
+    return;
   }
 
   // Soft reset back into this script to keep farming

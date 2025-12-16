@@ -41,19 +41,6 @@ export async function main(ns) {
         ns.disableLog("ALL");
 
     let abort = false;
-    /*// TODO:
-    // Let the user know what's going on and give them an easy way to kill casino.js
-    function showDialog(onCancel) {
-        const dlg = doc.createElement('div');
-        dlg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:20px;';
-        dlg.innerHTML = `<p>casino.js is running until it wins \$10b. It will reload the save if it loses too much.<br/>` +
-            `It should only take a minute or two, but you can cancel by clicking the button below.</p>` +
-            `<button>Cancel</button>`;
-        dlg.querySelector('button').onclick = () => { onCancel(); doc.body.removeChild(dlg); };
-        doc.body.appendChild(dlg);
-    }
-    showDialog(() => abort = true);
-    //*/
 
     /** Helper function to detect if focus was stolen by (e.g.) faction|company work|studying|training and send that work to the background
      * @param {boolean} throwError (default true) If true, and we were doing focus work, throws an Error.
@@ -469,7 +456,7 @@ async function onCompletion(ns, kickedOutAfterPlaying = true) {
 }
 
 // Some DOM helpers (partial credit to @ShamesBond)
-async function click(ns, button) {
+export async function click(ns, button) {
     if (button === null || button === undefined)
         throw new Error("click was called on a null reference. This means the prior button detection failed, but was assumed to have succeeded.");
     // Sleep before clicking, if so configured
@@ -500,7 +487,7 @@ async function setText(ns, input, text) {
  * @param {string} xpath The xpath 1.0 expression to use to find the element.
  * @param {number} retries (default 10) The number of times to retry.
  * @param {string?} customErrorMessage (optional) A custom error message to replace the default on failure. */
-async function findRequiredElement(ns, xpath, retries = 15, customErrorMessage = null) {
+export async function findRequiredElement(ns, xpath, retries = 15, customErrorMessage = null) {
     return await internalfindWithRetry(ns, xpath, false, retries, customErrorMessage);
 }
 /** Try to find an element, with retries. Returns null if the element is not found.
@@ -508,7 +495,7 @@ async function findRequiredElement(ns, xpath, retries = 15, customErrorMessage =
  * @param {string} xpath The xpath 1.0 expression to use to find the element.
  * @param {number} retries (default 4) The number of times to check if the element exists before assuming it does not.
  * It's important to retry a few times, since the UI can lag. An element not here now might appear in a few milliseconds. */
-async function tryfindElement(ns, xpath, retries = 4) {
+export async function tryfindElement(ns, xpath, retries = 4) {
     return await internalfindWithRetry(ns, xpath, true, retries);
 }
 
