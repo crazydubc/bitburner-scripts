@@ -1,5 +1,5 @@
 import {
-  log, runCommand, getNsDataThroughFile, formatNumber
+  log, getNsDataThroughFile, formatNumber, runCmdAsScript
 } from './helpers.js'
 
 const STATS_FILE = "/Temp/intFarmStats.txt";
@@ -82,37 +82,21 @@ export async function main(ns) {
   }
   //Normal farming
   for (const loc of ['Chongqing', 'New Tokyo', 'Ishima']) {
-    await runCommand(ns,
-      `ns.singularity.travelToCity(ns.args[0], { sourceFileOverrides: new Map() })`,
-      '/Temp/travelToCity.js',
-      [loc]
-    );
-    const invs = ns.singularity.checkFactionInvitations();
+    await runCmdAsScript(ns, `ns.singularity.travelToCity`, [loc]);
+    const invs = await runCmdAsScript(ns, `ns.singularity.checkFactionInvitations`);
     for (const inv of invs) {
-      await runCommand(ns,
-        `ns.singularity.joinFaction(ns.args[0], { sourceFileOverrides: new Map() })`,
-        '/Temp/joinFaction.js',
-        [inv]
-      );
+      await runCmdAsScript(ns, `ns.singularity.joinFaction`, [inv]);
     }
   }
 
   //If ROI is bad, bail out to your desired bitnode ---
   if (stopForLowROI) {
     log(ns, `ROI threshold reached, resetting to bitnode 2...`, true, 'info');
-    await ns.sleep(5000);
-    await runCommand(ns,
-      `ns.singularity.b1tflum3(ns.args[0], ns.args[1], { sourceFileOverrides: new Map() })`,
-      '/Temp/b1tflum3.js',
-      [next_BN, 'autopilot.js']
-    );
+    await ns.sleep(2000);
+    await runCmdAsScript(ns, `ns.singularity.b1tflum3`, [next_BN, 'autopilot.js']);
     return;
   }
 
   // Soft reset back into this script to keep farming
-  await runCommand(ns,
-    `ns.singularity.softReset(ns.args[0], { sourceFileOverrides: new Map() })`,
-    '/Temp/softReset.js',
-    [ns.getScriptName()]
-  );
+  await runCmdAsScript(ns, `ns.singularity.softReset`, [ns.getScriptName()]);
 }

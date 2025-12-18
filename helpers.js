@@ -278,6 +278,26 @@ export async function runCommand(ns, command, fileName, args = [], verbose = fal
     return await runCommand_Custom(ns, ns.run, command, fileName, args, verbose, maxRetries, retryDelayMs, silent);
 }
 
+/**
+ * Runs an ns.* command via a temporary script, with sourceFileOverrides injected.
+ *
+ * Example:
+ *   await runCmdAsScript(ns, 'ns.singularity.b1tflum3', [8, 'farm-intelligence.js']);
+ *
+ * @param {NS} ns
+ * @param {string} fnPath - e.g. "ns.singularity.b1tflum3"
+ * @param {any[]} args
+ * @param {string} [tempScript] - optional override path
+ */
+export async function runCmdAsScript(ns, fnPath, args = []) {
+  const argList = args.map((_, i) => `ns.args[${i}]`).join(", ");
+  const tempScript = "/Temp/" + fnPath + ".js";
+  const command = `${fnPath}(` + `${argList}` +
+    (argList ? ", " : "") + `{ sourceFileOverrides: new Map() }` + `)`;
+
+  return await runCommand(ns, command, tempScript, args);
+}
+
 const _cachedExports = []; // A cached list of functions exported by helpers.js. Should be fine as long as we aren't actively editing it.
 /** @param {NS} ns The nestcript instance passed to your script's main entry point
  * @returns {string[]} The set of all function names exported by this file. */
@@ -535,6 +555,11 @@ export function scanAllServers(ns) {
 export async function getActiveSourceFiles(ns, includeLevelsFromCurrentBitnode = true, silent = true) {
     return await getActiveSourceFiles_Custom(ns, getNsDataThroughFile, includeLevelsFromCurrentBitnode, silent);
 }
+const resetInfoConst = 'ns.' + 'get' + 'ResetInfo' + '()';
+
+export async function getResetInfo(ns) {
+  return await getNsDataThroughFile(ns, resetInfoConst);
+}
 
 /** getActiveSourceFiles Helper that allows the user to pass in their chosen implementation of getNsDataThroughFile to minimize RAM usage
  * @param {NS} ns The nestcript instance passed to your script's main entry point
@@ -556,7 +581,7 @@ export async function getActiveSourceFiles_Custom(ns, fnGetNsDataThroughFile, in
     // Try to get reset info
     let resetInfo = (/**@returns{ResetInfo}*/() => null)();
     try {
-        resetInfo = await fnGetNsDataThroughFile(ns, 'ns.getResetInfo()', null, null, null, null, null, silent);
+        resetInfo = await fnGetNsDataThroughFile(ns, resetInfoConst, null, null, null, null, null, silent);
     } catch { } // As above, suppress any errors and use a fall-back to survive low ram conditions.
     resetInfo ??= { currentNode: 0 }
 
@@ -614,7 +639,7 @@ export async function tryGetBitNodeMultipliers_Custom(ns, fnGetNsDataThroughFile
 export async function getHardCodedBitNodeMultipliers(ns, fnGetNsDataThroughFile, bnOverride = null) {
     let bn = bnOverride ?? 1;
     if (!bnOverride) {
-        try { bn = (await fnGetNsDataThroughFile(ns, 'ns.getResetInfo()', '/Temp/reset-info.txt')).currentNode; }
+        try { bn = (await fnGetNsDataThroughFile(ns, resetInfoConst, '/Temp/reset-info.txt')).currentNode; }
         catch { /* We are expected to be fault-tolerant in low-ram conditions */ }
     }
     return Object.fromEntries(Object.entries({

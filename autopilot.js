@@ -1,20 +1,21 @@
 import {
-    log, getFilePath, getConfiguration, instanceCount, getNsDataThroughFile, runCommand, waitForProcessToComplete,
+    log, getFilePath, getConfiguration, instanceCount, getNsDataThroughFile, waitForProcessToComplete,
     getActiveSourceFiles, tryGetBitNodeMultipliers, getStocksValue, unEscapeArrayArgs,
-    formatMoney, formatDuration, formatNumber, getErrorInfo, tail
+    formatMoney, formatDuration, formatNumber, getErrorInfo, tail, runCmdAsScript, getResetInfo
 } from './helpers.js'
 
 import {SaveFarmConfig} from './farm-intelligence.js'
 
 import {recordBnStart, printBnRunSummary} from './logger.js'
 
+
 const argsSchema = [ // The set of all command line arguments
     ['next-bn', 0], // If we destroy the current BN, the next BN to start
     ['disable-auto-destroy-bn', false], // Set to true if you do not want to auto destroy this BN when done
-    ['install-at-aug-count', 8], // Automatically install when we can afford this many new augmentations (with NF only counting as 1). Note: This number will automatically be increased by 1 for every level of SF11 you have (up to 3)
-    ['install-at-aug-plus-nf-count', 12], // or... automatically install when we can afford this many augmentations including additional levels of Neuroflux.  Note: This number will automatically be increased by 1 for every level of SF11 you have (up to 3)
+    ['install-at-aug-count', 10], // Automatically install when we can afford this many new augmentations (with NF only counting as 1). Note: This number will automatically be increased by 1 for every level of SF11 you have (up to 3)
+    ['install-at-aug-plus-nf-count', 14], // or... automatically install when we can afford this many augmentations including additional levels of Neuroflux.  Note: This number will automatically be increased by 1 for every level of SF11 you have (up to 3)
     ['install-for-augs', ["The Red Pill"]], // or... automatically install as soon as we can afford one of these augmentations
-    ['install-countdown', 7 * 60 * 1000], // If we're ready to install, wait this long first to see if more augs come online (we might just be gaining momentum)
+    ['install-countdown', 5 * 60 * 1000], // If we're ready to install, wait this long first to see if more augs come online (we might just be gaining momentum)
     ['time-before-boosting-best-hack-server', 15 * 60 * 1000], // Wait this long before picking our best hack-income server and spending hashes on boosting it
     ['reduced-aug-requirement-per-hour', 0.5], // For every hour since the last reset, require this many fewer augs to install.
     ['interval', 2000], // Wake up this often (milliseconds) to check on things
@@ -33,7 +34,6 @@ const argsSchema = [ // The set of all command line arguments
     ['xp-mode-duration-minutes', 5], // The number of minutes to keep daemon.js in --xp-only mode before switching back to normal money-earning mode.
     ['no-tail-windows', true], // Set to true to prevent the default behaviour of opening a tail window for certain launched scripts. (Doesn't affect scripts that open their own tail windows)
 ];
-
 export function autocomplete(data, args) {
     data.flags(argsSchema);
     const lastFlag = args.length > 1 ? args[args.length - 2] : null;
@@ -112,6 +112,7 @@ export async function main(ns) {
     let bnCompletionSuppressed = false; // Flag if we've detected that we've won the BN, but are suppressing a restart
     let sleevesMaxedOut = false; // Flag used only when the player is replaying BN 10 with all sleeves but has suppressed auto-destroying the BN, to allow continued auto-installs
     let loggedBnCompletion = false; // Flag set to ensure that if we choose to stay in the BN, we only log the "BN completed" message once per reset.
+    let currBN = 1.1;
 
     // Replacements for player properties deprecated since 2.3.0
     function getTimeInAug() { return Date.now() - resetInfo.lastAugReset; }
@@ -152,7 +153,7 @@ export async function main(ns) {
         await persistConfigChanges(ns);
 
         // Collect and cache some one-time data
-        resetInfo = await getNsDataThroughFile(ns, 'ns.getResetInfo()');
+        resetInfo = await getResetInfo(ns);
         bitNodeMults = await tryGetBitNodeMultipliers(ns);
         dictOwnedSourceFiles = await getActiveSourceFiles(ns, false);
         unlockedSFs = await getActiveSourceFiles(ns, true);
@@ -176,14 +177,18 @@ export async function main(ns) {
         if (getTimeInBitnode() < 60 * 1000) // Skip initialization if we've been in the bitnode for more than 1 minute
             await initializeNewBitnode(ns);
 
+        
+
         // Decide what the next-up bitnode should be
         const getSFLevel = bn => Number(bn + "." + ((dictOwnedSourceFiles[bn] || 0) + (resetInfo.currentNode == bn ? 1 : 0)));
-        const nextSfEarned = getSFLevel(resetInfo.currentNode);
+        currBN = getSFLevel(resetInfo.currentNode);
+        await recordBnStart(ns, currBN);
+        printBnRunSummary(ns, 25);
         const nextRecommendedSf = defaultBnOrder.find(v => v - Math.floor(v) > getSFLevel(Math.floor(v)) - Math.floor(v));
         const nextRecommendedBn = Math.floor(nextRecommendedSf);
         nextBn = options['next-bn'] || nextRecommendedBn;
-        log(ns, `INFO: After the current BN (${nextSfEarned}), the next recommended BN is ${nextRecommendedBn} until you have SF ${nextRecommendedSf}.` +
-            `\nYou are currently earning SF${nextSfEarned}, and you already own the following source files: ` +
+        log(ns, `INFO: After the current BN (${currBN}), the next recommended BN is ${nextRecommendedBn} until you have SF ${nextRecommendedSf}.` +
+            `\nYou are currently earning SF${currBN}, and you already own the following source files: ` +
             Object.keys(dictOwnedSourceFiles).map(bn => `${bn}.${dictOwnedSourceFiles[bn]}`).join(", "));
         if (nextBn != nextRecommendedBn)
             log(ns, `WARN: The next recommended BN is ${nextRecommendedBn}, but the --next-bn parameter is set to override this with ${nextBn}.`, true, 'warning');
@@ -214,15 +219,10 @@ export async function main(ns) {
 		//see if we unlocked intel and farm it. We will use BN8 for the startup cash in order to travel and join factions.
         if ((5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 175) {
           await SaveFarmConfig(ns, resetInfo.currentNode, 0.5);
-          await runCommand(ns, `ns.singularity.b1tflum3(ns.args[0], ns.args[1]` +
-          `, { sourceFileOverrides: new Map() }` + // Work around a long-standing bug on bitburner-official.github.io TODO: Remove when no longer needed
-          `)`, '/Temp/b1tflum3.js', [8,'farm-intelligence.js']);
+          await runCmdAsScript(ns, `ns.singularity.b1tflum3`, [8,'farm-intelligence.js']);
           return;
         }
         launchScriptHelper(ns, 'hacks.js'); //just unlocking a few -1 BN's.
-        //we put this here to avoid accidently logging the intel farming as a new node.
-        recordBnStart(ns);
-        printBnRunSummary(ns, 25);
     }
 
     /** Logic run periodically throughout the BN
@@ -235,7 +235,7 @@ export async function main(ns) {
         manageReservedMoney(ns, player, stocksValue);
         await checkOnDaedalusStatus(ns, player, stocksValue);
         await checkIfBnIsComplete(ns, player);
-        await maybeAcceptStaneksGift(ns, player);
+        await maybeAcceptStaneksGift(ns);
         await checkOnRunningScripts(ns, player);
         await maybeDoCasino(ns, player);
         await maybeInstallAugmentations(ns, player);
@@ -253,7 +253,7 @@ export async function main(ns) {
      * @param {NS} ns */
     async function updateCachedData(ns) {
         // Now that grafting is a thing, we need to check if new augmentations have been installed between resets
-        if ((4 in unlockedSFs)) { // Note: Installed augmentations can also be obtained from getResetInfo() (without SF4), but this seems unintended and will probably be removed from the game.
+        if ((4 in unlockedSFs)) {
             try {
                 installedAugmentations = await getNsDataThroughFile(ns, 'ns.singularity.getOwnedAugmentations()', '/Temp/player-augs-installed.txt');
                 playerInstalledAugCount = installedAugmentations.length;
@@ -447,9 +447,7 @@ export async function main(ns) {
         if (pid) await waitForProcessToComplete(ns, pid);
 
         // Use the new special singularity function to automate entering a new BN
-        pid = await runCommand(ns, `ns.singularity.destroyW0r1dD43m0n(ns.args[0], ns.args[1]` +
-            `, { sourceFileOverrides: new Map() }` + // Work around a long-standing bug on bitburner-official.github.io TODO: Remove when no longer needed
-            `)`, '/Temp/singularity-destroyW0r1dD43m0n.js', [nextBn, ns.getScriptName()]);
+        pid = await runCmdAsScript(ns, `ns.singularity.destroyW0r1dD43m0n`, [nextBn, ns.getScriptName()]);
         if (pid) {
             log(ns, `SUCCESS: Initiated process ${pid} to execute 'singularity.destroyW0r1dD43m0n' with args: [${nextBn}, ${ns.getScriptName()}]`, true, 'success')
             await waitForProcessToComplete(ns, pid);
@@ -641,21 +639,26 @@ export async function main(ns) {
             daemonArgs.push('--use-hacknet-servers', true);
             if (options['no-tail-windows']) stanekArgs.push('--no-tail'); // Relay the option to suppress tail windows
             if (daemonArgs.length >= 0) stanekArgs.push("--on-completion-script-args", JSON.stringify(daemonArgs)); // Pass in all the args we wanted to run daemon.js with
-            if (ns.serverExists('hacknet-server-0')) {
+            
+            const hacknetExists = await runCmdAsScript(ns,`ns.serverExists`,['hacknet-server-0']);
+            if (hacknetExists) {
               stanekArgs.push('--max-charges', Number.MAX_SAFE_INTEGER);
               for (let i = 0; i < 20; i++) {
                 const sName = `hacknet-server-${i}`;
-                if (!ns.serverExists(sName)) break;
-                
-                if (!ns.scriptRunning("stanek.js", sName)) {
-                  ns.scp(["helpers.js", "stanek.js", "stanek.js.create.js"], sName);
-                  ns.exec("stanek.js", sName, 1, ...stanekArgs);
+                const sExists = await runCmdAsScript(ns, `ns.serverExists`, [sName]);
+                if (!sExists) break;
+                const sRunning = await runCmdAsScript(ns, `ns.scriptRunning`, ["stanek.js", sName]);
+                if (!sRunning) {
+                  await runCmdAsScript(ns, `ns.scp`, [["helpers.js", "stanek.js", "stanek.js.create.js"], sName]);
+                  await runCmdAsScript(ns, `ns.exec`, ["stanek.js", sName, 1, ...stanekArgs]);
+                  //ns.scp(["helpers.js", "stanek.js", "stanek.js.create.js"], sName);
+                  //ns.exec("stanek.js", sName, 1, ...stanekArgs);
                   stanekRunning = true;
                 }
               }
             } else if (!(9 in unlockedSFs)){
               launchScriptHelper(ns, 'stanek.js', stanekArgs);
-            stanekRunning = true;
+              stanekRunning = true;
             }
         }
 
@@ -702,7 +705,6 @@ export async function main(ns) {
             if (wrongWork) await killScript(ns, 'work-for-factions.js', null, wrongWork);
 
             // Start gangs immediately (even though daemon would eventually start it) since we want any income they provide right away after an ascend
-            // TODO: Consider monitoring gangs territory progress and increasing their budget / decreasing their reserve to help kick-start them
             if (playerInGang && !findScript('gangs.js'))
                 launchScriptHelper(ns, 'gangs.js');
         }
@@ -718,8 +720,12 @@ export async function main(ns) {
         //  launchScriptHelper(ns, 'fastmoney.ts');
         //}
         if ((resetInfo.currentNode== 3) && !findScript('corpbootstrap.ts') && playerInstalledAugCount < 1000) {
+          const runningOnHacknet = runCmdAsScript(`ns.scriptRunning`, ["corporation.ts", "hacknet-server-0"]);
+          const runningOnHacknet3 = runCmdAsScript(`ns.scriptRunning`, ["corp3.ts", "hacknet-server-0"]);
+          const runningOnHome = runCmdAsScript(`ns.scriptRunning`, ["corporation.ts", "home"]);
+          const runningOnHome3 = runCmdAsScript(`ns.scriptRunning`, ["corp3.ts", "home"]);
           try {
-          if (!ns.scriptRunning("corporation.ts", "hacknet-server-1") && !ns.scriptRunning("corp3.ts", "hacknet-server-0") && !ns.scriptRunning("corporation.ts", "home") && !ns.scriptRunning("corp3.ts", "home"))
+          if (!runningOnHacknet && !runningOnHacknet3 && !runningOnHome && !runningOnHome3)
               launchScriptHelper(ns, 'corpbootstrap.ts');
           } catch (e) {          }
         }
@@ -734,9 +740,8 @@ export async function main(ns) {
 
     /** Accept Stanek's gift immediately at the start of the BN (as opposed to just before the first install)
      * if it looks like it will scale well.
-     * @param {NS} ns
-     * @param {Player} player */
-    async function maybeAcceptStaneksGift(ns, player) {
+     * @param {NS} ns*/
+    async function maybeAcceptStaneksGift(ns) {
         // Look for any reason not to accept stanek's gift (do the quickest checks first)
         if (acceptedStanek) return;
         // Don't get Stanek's gift too early if its size is reduced in this BN

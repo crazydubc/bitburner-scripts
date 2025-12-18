@@ -1,3 +1,5 @@
+import {getResetInfo} from './helpers.js';
+
 const RUNLOG_FILE = "/data/bn-run-log.json";
 
 function loadLog(ns) {
@@ -23,33 +25,29 @@ function closeRun(run, endReason, extra = {}) {
 }
 
 /** Call once early in your main script */
-export function recordBnStart(ns, extra = {}) {
-  const r = ns.getResetInfo();
-  const currentNode = r.currentNode;
-  const currentLevel = r.currentNodeLevel ?? null;
+export async function recordBnStart(ns, currentNode = '1.1', extra = {}) {
+  const r = await getResetInfo(ns);
 
   const log = loadLog(ns);
   const last = log.runs.length ? log.runs[log.runs.length - 1] : null;
 
   // 1) If the previous run is still open but we are now in a different BN,
   // auto-close it.
-  if (last && !last.endTime && last.bn !== currentNode) {
+  if (last && !last.endTime && last.currentNode != currentNode) {
     closeRun(last, "detected_new_bn", { autoClosed: true });
   }
 
   // 2) If we already have an open run for this BN, do nothing
   const last2 = log.runs.length ? log.runs[log.runs.length - 1] : null;
-  if (last2 && !last2.endTime && last2.bn === currentNode) {
-    // Still merge in any extra metadata if you want
-    Object.assign(last2, extra);
-    saveLog(ns, log);
-    return;
-  }
+  if (last2 && !last2.endTime && isSameRun(last2)) {
+        Object.assign(last2, extra);
+        saveLog(ns, log);
+        return;}
+
 
   // 3) Start a new run entry
   log.runs.push({
-    bn: currentNode,
-    level: currentLevel,
+    currentNode: currentNode,
     startTime: Date.now(),
     startIso: nowIso(),
     endTime: null,
@@ -81,7 +79,7 @@ export function printBnRunSummary(ns, lastN = 10) {
     const dur = formatDuration(r.durationMs ?? (r.startTime ? (Date.now() - r.startTime) : null));
     const status = r.endTime ? "DONE" : "IN-PROGRESS";
     ns.tprint(
-      `BN${r.bn}${r.level != null ? `.${r.level}` : ""} | ${status} | `
+      `BN${r.currentNode != null ? `.${r.currentNode}` : ""} | ${status} | `
       + `${r.startIso} → ${r.endIso ?? "(now)"} | ${dur}`
       + (r.nextBn != null ? ` | next: BN${r.nextBn}` : "")
     );
