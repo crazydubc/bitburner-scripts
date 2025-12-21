@@ -994,7 +994,7 @@ export async function main(ns) {
         if (await checkIfGrafting(ns))
             return true;
         // Are we close to being able to afford 4S TIX data?
-        if (!options['disable-wait-for-4s'] && !(await getNsDataThroughFile(ns, `ns.stock.has4SDataTIXAPI()`))) {
+        if (!options['disable-wait-for-4s'] && !(await getNsDataThroughFile(ns, `ns.stock.has4SDataTixApi()`))) {
             const totalWorth = player.money + await getStocksValue(ns);
             const has4S = await getNsDataThroughFile(ns, `ns.stock.has4SData()`);
             const totalCost = 25E9 * bitNodeMults.FourSigmaMarketDataApiCost +

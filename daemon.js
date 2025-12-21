@@ -1062,8 +1062,8 @@ export async function main(ns) {
 
         // Hack: Below concerns aren't related to "server data", but are things we also wish to refresh just once in a while
         // Determine whether we have purchased stock API accesses yet (affects reserving and attempts to manipulate stock markets)
-        haveTixApi = haveTixApi || await getNsDataThroughFile(ns, `ns.stock.hasTIXAPIAccess()`);
-        have4sApi = have4sApi || await getNsDataThroughFile(ns, `ns.stock.has4SDataTIXAPI()`);
+        haveTixApi = haveTixApi || await getNsDataThroughFile(ns, `ns.stock.hasTixApiAccess()`);
+        have4sApi = have4sApi || await getNsDataThroughFile(ns, `ns.stock.has4SDataTixApi()`);
         // If required, determine the current terminal server (used when intelligence farming)
         if (options.i)
             currentTerminalServer = getServerByName(await getNsDataThroughFile(ns, 'ns.singularity.getCurrentServer()'));
