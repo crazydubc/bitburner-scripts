@@ -554,7 +554,7 @@ async function liquidate(ns) {
 /** @param {NS} ns **/
 /** @param {Player} playerStats **/
 async function tryGet4SApi(ns, playerStats, budget) {
-    if (await checkAccess(ns, 'has4SDataTxiApi')) return false; // Only return true if we just bought it
+    if (await checkAccess(ns, 'has4SDataTixApi')) return false; // Only return true if we just bought it
     const cost4sData = 1E9 * bitNodeMults.FourSigmaMarketDataCost;
     const cost4sApi = 25E9 * bitNodeMults.FourSigmaMarketDataApiCost;
     const has4S = await checkAccess(ns, 'has4SData');
