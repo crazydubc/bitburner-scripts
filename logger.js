@@ -39,7 +39,7 @@ export async function recordBnStart(ns, currentNode = '1.1', extra = {}) {
 
   // 2) If we already have an open run for this BN, do nothing
   const last2 = log.runs.length ? log.runs[log.runs.length - 1] : null;
-  if (last2 && !last2.endTime && isSameRun(last2)) {
+  if (last2 && !last2.endTime && last.currentNode == currentNode) {
         Object.assign(last2, extra);
         saveLog(ns, log);
         return;}
