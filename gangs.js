@@ -168,7 +168,7 @@ async function initialize(ns) {
         cost: dictEquipmentCosts[equipmentName],
         stats: dictEquipmentStats[equipmentName],
     })).sort((a, b) => a.cost - b.cost);
-    //log(ns, JSON.stringify(equipments));
+
     // Initialize information about gang members and crimes
     allTaskNames = await getNsDataThroughFile(ns, 'ns.gang.getTaskNames()')
     allTaskStats = await getGangInfoDict(ns, allTaskNames, 'getTaskStats');
@@ -313,7 +313,6 @@ async function optimizeGangCrime(ns, myGangInfo) {
     } else {
         Object.values(memberTaskRates).forEach(tasks => tasks.sort((a, b) => b[optStat] - a[optStat]));
     }
-    //ns.print(memberTaskRates);
 
     // Run "the algorithm"
     const start = Date.now(); // Time the algorithms
@@ -340,7 +339,7 @@ async function optimizeGangCrime(ns, myGangInfo) {
             [proposedTasks[mostWanted], totalWanted, totalGain] = [nextBestTask, totalWanted + nextBestTask.wanted - proposedTasks[mostWanted].wanted, totalGain + nextBestTask[optStat] - proposedTasks[mostWanted][optStat]];
             if (infiniteLoop-- <= 0) throw "Infinite Loop!";
         }
-        //log(ns, `Optimal task assignments:. Wanted: ${totalWanted.toPrecision(3)}, Gain: ${formatNumberShort(totalGain)}`);
+
         // Save the new new task assignments only if it's the best gain result we've seen for the value we're trying to optimize, or the closest we've come to meeting our wanted tolerance
         if (totalWanted <= wantedGainTolerance && totalGain > bestTotalGain || totalWanted > wantedGainTolerance && totalWanted < bestWanted)
             [bestTaskAssignments, bestTotalGain, bestWanted] = [proposedTasks, totalGain, totalWanted];
@@ -437,7 +436,7 @@ async function tryUpgradeMembers(ns, dictMembers) {
     let augBudget = Math.min(maxBudget, (options['augmentations-budget'] || defaultMaxSpendPerTickPermanentEquipment)) * homeMoney;
     // Hack: Default aug budget is cut by 1/100 in a few situations (TODO: Add more, like when BitnodeMults are such that gang income is severely nerfed)
     if (!is4sBought)
-        is4sBought = await getNsDataThroughFile(ns, 'ns.stock.has4SDataTIXAPI()');
+        is4sBought = await getNsDataThroughFile(ns, 'ns.stock.has4SDataTixApi()');
     if (!is4sBought || resetInfo.currentNode === 8) {
         budget /= 100;
         augBudget /= 100;
@@ -563,7 +562,7 @@ function computeRepGains(myGangInfo, currentTask, memberInfo) {
     if (isNaN(territoryMult) || territoryMult <= 0) return 0;
     const respectMult = getWantedPenalty(myGangInfo);
     const territoryPenalty = getTerritoryPenalty(myGangInfo);
-    //console.log(`statWeight: ${statWeight} task.difficulty: ${task.difficulty} territoryMult: ${territoryMult} territoryPenalty: ${territoryPenalty} myGangInfo.respect ${myGangInfo.respect} myGangInfo.wanted ${myGangInfo.wanted} respectMult: ${respectMult}`);
+
     return Math.pow(11 * task.baseRespect * statWeight * territoryMult * respectMult, territoryPenalty);
 }
 
