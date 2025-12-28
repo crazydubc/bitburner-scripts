@@ -616,7 +616,7 @@ async function goToCity(ns, cityName) {
 
 /** @param {NS} ns */
 export async function crimeForKillsKarmaStats(ns, reqKills, reqKarma, reqStats, doFastCrimesOnly = false) {
-    const bestCrimesByDifficulty = ["heist", "assassinate", "homicide", "mug"]; // Will change crimes as our success rate improves
+    const bestCrimesByDifficulty = ["Heist", "Assassination", "Homicide", "Mug"]; // Will change crimes as our success rate improves
     const chanceThresholds = [0.75, 0.9, 0.5, 0]; // Will change crimes once we reach this probability of success for better all-round gains
     doFastCrimesOnly = doFastCrimesOnly || (options ? options['fast-crimes-only'] : false);
     let player = await getPlayerInfo(ns);
@@ -633,13 +633,13 @@ export async function crimeForKillsKarmaStats(ns, reqKills, reqKarma, reqStats, 
         if (!forever && breakToMainLoop()) return ns.print('INFO: Interrupting crime to check on high-level priorities.');
         let crimeChances = await getNsDataThroughFile(ns, `Object.fromEntries(ns.args.map(c => [c, ns.singularity.getCrimeChance(c)]))`, '/Temp/crime-chances.txt', bestCrimesByDifficulty);
         let karma = -ns.heart.break();
-        crime = crimeCount < 2 ? (crimeChances["homicide"] > 0.75 ? "homicide" : "mug") : // Start with a few fast & easy crimes to boost stats if we're just starting
-            (!needStats && (player.numPeopleKilled < reqKills || karma < reqKarma)) ? "homicide" : // If *all* we need now is kills or Karma, homicide is the fastest way to do that, even at low proababilities
+        crime = crimeCount < 2 ? (crimeChances["homicide"] > 0.75 ? "Homicide" : "Mug") : // Start with a few fast & easy crimes to boost stats if we're just starting
+            (!needStats && (player.numPeopleKilled < reqKills || karma < reqKarma)) ? "Homicide" : // If *all* we need now is kills or Karma, homicide is the fastest way to do that, even at low proababilities
                 bestCrimesByDifficulty.find((c, index) => doFastCrimesOnly && index <= 1 ? 0 : crimeChances[c] >= chanceThresholds[index]); // Otherwise, crime based on success chance vs relative reward (precomputed)
         // Warn if current crime is disrupted
         let currentWork = await getCurrentWorkInfo(ns);
         let crimeType = currentWork.crimeType;
-        if (!lastCrime || !(crimeType && crimeType.toLowerCase().includes(lastCrime))) {
+        if (!lastCrime || !(crimeType && crimeType == lastCrime)) {
             if (await isValidInterruption(ns, currentWork)) return;
             if (lastCrime) {
                 log(ns, `Committing Crime "${lastCrime}" Interrupted. (Now: ${crimeType ?? currentWork.type}) Restarting...`, false, 'warning');

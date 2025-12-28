@@ -91,7 +91,7 @@ export async function main(ns) {
 
   //If ROI is bad, bail out to your desired bitnode ---
   if (stopForLowROI) {
-    log(ns, `ROI threshold reached, resetting to bitnode 2...`, true, 'info');
+    log(ns, `ROI threshold reached, resetting to bitnode ${next_BN}...`, true, 'info');
     await ns.sleep(2000);
     await runCmdAsScript(ns, `ns.singularity.b1tflum3`, [next_BN, 'autopilot.js']);
     return;

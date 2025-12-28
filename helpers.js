@@ -295,7 +295,7 @@ export async function runCmdAsScript(ns, fnPath, args = []) {
   const command = `${fnPath}(` + `${argList}` +
     (argList ? ", " : "") + `{ sourceFileOverrides: new Map() }` + `)`;
 
-  return await runCommand(ns, command, tempScript, args);
+  return await getNsDataThroughFile(ns, command, tempScript, args);
 }
 
 const _cachedExports = []; // A cached list of functions exported by helpers.js. Should be fine as long as we aren't actively editing it.
