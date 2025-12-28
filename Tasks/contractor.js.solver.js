@@ -940,5 +940,50 @@ const codingContractTypesMetadata = [{
             throw new Error(`Square Root did not converge. Arrived at answer:\n${root} - which when squared, gives:\n${root * root} instead of\n${n}`);
         return root.toString();
     }
+},
+{
+  name: "Total Number of Primes",
+  solver: function(data) {
+    let [a, b] = data;
+    if (a > b) [a, b] = [b, a];
+    if (b < 2) return "0";
+    if (a < 2) a = 2;
+
+    const n = b - a + 1;
+    // 0 = potential prime, 1 = composite
+    const isComposite = new Uint8Array(n);
+
+    // Sieve primes up to sqrt(b)
+    const limit = Math.floor(Math.sqrt(b));
+    const base = new Uint8Array(limit + 1);
+
+    const basePrimes = [];
+    for (let p = 2; p <= limit; p++) {
+        if (base[p] === 0) {
+            basePrimes.push(p);
+            // mark multiples
+            if (p * p <= limit) {
+                for (let m = p * p; m <= limit; m += p) base[m] = 1;
+            }
+        }
+    }
+
+    // Mark composites in [a, b]
+    for (const p of basePrimes) {
+        // first multiple of p in [a,b]
+        let start = Math.ceil(a / p) * p;
+        if (start < p * p) start = p * p; // optimization + correctness
+        for (let x = start; x <= b; x += p) {
+            isComposite[x - a] = 1;
+        }
+    }
+
+    // Count unmarked
+    let count = 0;
+    for (let i = 0; i < n; i++) {
+        if (isComposite[i] === 0) count++;
+    }
+    return String(count);
+  }
 }
 ]
