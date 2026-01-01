@@ -31,7 +31,7 @@ export async function main(ns) {
         ns.disableLog("scan");
         for (let i = 0, j; i < servers.length; i++)
             for (j of (await getNsDataThroughFile(ns, `ns.scan(ns.args[0])`, null, [servers[i]])))
-                if (!servers.includes(j)) servers.push(j), routes[j] = routes[servers[i]].slice(), routes[j].push(j);
+                if (!servers.includes(j) && !j.includes("hacknet-") && !j.includes("daemon")) servers.push(j), routes[j] = routes[servers[i]].slice(), routes[j].push(j);
 
         // Get the required hacking level of each server
         const dictRequiredHackingLevels = await getNsDataThroughFile(ns,

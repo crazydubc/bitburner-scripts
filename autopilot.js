@@ -51,23 +51,22 @@ export async function main(ns) {
      const defaultBnOrder = [ // The order in which we intend to play bitnodes
         // 1st Priority: Key new features and/or major stat boosts
         4.3,  // Normal. Need singularity to automate everything, and need the API costs reduced from 16x -> 4x -> 1x reliably do so from the start of each BN
-        1.2,  // Easy.   Big boost to all multipliers (16% -> 24%), and no penalties to slow us down. Should go quick.
-        5.1,  // Normal. Unlock intelligence stat early to maximize growth, getBitNodeMultipliers + Formulas.exe for more accurate scripts, and +8% hack mults
-        1.3,  // Easy.   The last bonus is not as big a jump (24% -> 28%), but it's low-hanging fruit
         2.1,  // Easy.   Unlocks gangs, which reduces the need to grind faction and company rep for getting access to most augmentations, speeding up all BNs
-        12.3, // Easy.   Should be able to grab a few levels of this to make later nodes easier. Combined with the intel boost, we see a decent speed improvement.
+        1.3,  // Easy.   Big boost to all multipliers (16% -> 24%), and no penalties to slow us down. Should go quick.
+        5.1,  // Normal. Unlock intelligence stat early to maximize growth, getBitNodeMultipliers + Formulas.exe for more accurate scripts, and +8% hack mults
+        2.3,  // Easy.   Boosts to crime tasks. This is needed for Sleeves or it will take FOREVER.
 
         // 2nd Priority: More new features, from Harder BNs. Things will slow down for a while, but the new features should pay in dividends for all future BNs
+        9.1,  // Hard.   Unlocks hacknet servers. Hashes can be earned and spent on cash very early in a tough BN to help kick-start things. Hacknet productin/costs improved by 12%
         10.1, // Hard.   Unlock Sleeves (which tremendously speed along gangs outside of BN2) and grafting (can speed up slow rep-gain BNs). // TODO: Buying / upgrading sleeve mem has no API, requires manual interaction. Can we automate this with UI clicking like casino.js?
+        3.3,  // Hard.   Corporations. While hard, these are insanely profitable.
+        12.3, // Easy.   Should be able to grab a few levels of this to make later nodes easier. Combined with the intel boost, we see a decent speed improvement.
         8.2,  // Hard.   8.1 immediately unlocks stocks, 8.2 doubles stock earning rate with shorts. Stocks are never nerfed in any BN (4S can be made too pricey though), and we have a good pre-4S stock script.
         13.1, // Hard.   Unlock Stanek's Gift. We've put a lot of effort into min/maxing the Tetris, so we should try to get it early, even though it's a hard BN. I might change my mind and push this down if it proves too slow.
         7.1,  // Hard.   Unlocks the bladeburner API (and bladeburner outside of BN 6/7). Many recommend it before BN9 since it ends up being a faster win condition in some of the tougher bitnodes ahead.
-        9.1,  // Hard.   Unlocks hacknet servers. Hashes can be earned and spent on cash very early in a tough BN to help kick-start things. Hacknet productin/costs improved by 12%
-        3.3,  // Hard.   Corporations. While hard, these are insanely profitable.
         14.2, // Hard.   Boosts go.js bonuses, but note that we can automate IPvGO from the very start (BN1.1), no need to unlock it. 14.1 doubles all bonuses. 14.2 unlocks the cheat API.
 
         // 3nd Priority: With most features unlocked, max out SF levels roughly in the order of greatest boost and/or easiest difficulty, to hardest and/or less worthwhile
-        2.3,  // Easy.   Boosts to crime success / money / CHA will speed along gangs, training and earning augmentations in the future
         5.3,  // Normal. Diminishing boost to hacking multipliers (8% -> 12% -> 14%), but relatively normal bitnode, especially with other features unlocked
         11.3, // Normal. Decrease augmentation cost scaling in a reset (4% -> 6% -> 7%) (can buy more augs per reset). Also boosts company salary/rep (32% -> 48% -> 56%), which we have little use for with gangs.)
         14.3, // Hard.   Makes go.js cheats slightly more successful, increases max go favour from (100->120) and not too difficult to get out of the way
@@ -216,10 +215,11 @@ export async function main(ns) {
      * @param {NS} ns */
     async function initializeNewBitnode(ns) {
         const player = await getPlayerInfo(ns);
-		//see if we unlocked intel and farm it. We will use BN8 for the startup cash in order to travel and join factions.
-        if ((5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 175) {
-          await SaveFarmConfig(ns, resetInfo.currentNode, 0.5);
-          await runCmdAsScript(ns, `ns.singularity.b1tflum3`, [8,'farm-intelligence.js']);
+		    //see if we unlocked intel and farm it. We will use BN8 for the startup cash in order to travel and join factions.
+        //this gets up about 12.25% boost to stats in a short time.
+        if ((5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 200) {
+          if (resetInfo.currentNode != 8) await SaveFarmConfig(ns, resetInfo.currentNode, 0.5);
+          await runCmdAsScript(ns, `ns.singularity.b1tflum3`, [8,'farm-intelligence.js']); 
           return;
         }
         launchScriptHelper(ns, 'hacks.js'); //just unlocking a few -1 BN's.
