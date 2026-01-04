@@ -34,6 +34,21 @@ export function parseShortNumber(text = "0") {
             return Number.parseFloat(text.slice(0, text.length - sym.length)) * Math.pow(10, 3 * symbols.indexOf(sym));
     return Number.NaN;
 }
+/** Helper to launch a script and log whether if it succeeded or failed
+     * @param {NS} ns */
+export function launchScriptHelper(ns, baseScriptName, args = [], convertFileName = true) {
+        if (!options['no-tail-windows'])
+            tail(ns); // If we're going to be launching scripts, show our tail window so that we can easily be killed if the user wants to interrupt.
+        let pid, err;
+        try { pid = ns.run(convertFileName ? getFilePath(baseScriptName) : baseScriptName, 1, ...args); }
+        catch (e) { err = e; }
+        if (pid)
+            log(ns, `INFO: Launched ${baseScriptName} (pid: ${pid}) with args: [${args.join(", ")}]`, true);
+        else
+            log(ns, `ERROR: Failed to launch ${baseScriptName} with args: [${args.join(", ")}]` +
+                (err ? `\nCaught: ${getErrorInfo(err)}` : ''), true, 'error');
+        return pid;
+    }
 
 /**
  * Return a number formatted with the specified number of significant figures or decimal places, whichever is more limiting.

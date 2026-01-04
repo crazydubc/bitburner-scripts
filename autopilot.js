@@ -1,7 +1,7 @@
 import {
     log, getFilePath, getConfiguration, instanceCount, getNsDataThroughFile, waitForProcessToComplete,
     getActiveSourceFiles, tryGetBitNodeMultipliers, getStocksValue, unEscapeArrayArgs,
-    formatMoney, formatDuration, formatNumber, getErrorInfo, tail, runCmdAsScript, getResetInfo
+    formatMoney, formatDuration, formatNumber, getErrorInfo, tail, runCmdAsScript, getResetInfo, launchScriptHelper
 } from './helpers.js'
 
 import {SaveFarmConfig} from './farm-intelligence.js'
@@ -12,8 +12,8 @@ import {recordBnStart, printBnRunSummary} from './logger.js'
 const argsSchema = [ // The set of all command line arguments
     ['next-bn', 0], // If we destroy the current BN, the next BN to start
     ['disable-auto-destroy-bn', false], // Set to true if you do not want to auto destroy this BN when done
-    ['install-at-aug-count', 5], // Automatically install when we can afford this many new augmentations (with NF only counting as 1). Note: This number will automatically be increased by 1 for every level of SF11 you have (up to 3)
-    ['install-at-aug-plus-nf-count', 12], // or... automatically install when we can afford this many augmentations including additional levels of Neuroflux.  Note: This number will automatically be increased by 1 for every level of SF11 you have (up to 3)
+    ['install-at-aug-count', 4], // Automatically install when we can afford this many new augmentations (with NF only counting as 1). Note: This number will automatically be increased by 1 for every level of SF11 you have (up to 3)
+    ['install-at-aug-plus-nf-count', 8], // or... automatically install when we can afford this many augmentations including additional levels of Neuroflux.  Note: This number will automatically be increased by 1 for every level of SF11 you have (up to 3)
     ['install-for-augs', ["The Red Pill"]], // or... automatically install as soon as we can afford one of these augmentations
     ['install-countdown', 5 * 60 * 1000], // If we're ready to install, wait this long first to see if more augs come online (we might just be gaining momentum)
     ['time-before-boosting-best-hack-server', 15 * 60 * 1000], // Wait this long before picking our best hack-income server and spending hashes on boosting it
@@ -59,6 +59,7 @@ export async function main(ns) {
         // 2nd Priority: More new features, from Harder BNs. Things will slow down for a while, but the new features should pay in dividends for all future BNs
         9.1,  // Hard.   Unlocks hacknet servers. Hashes can be earned and spent on cash very early in a tough BN to help kick-start things. Hacknet productin/costs improved by 12%
         10.1, // Hard.   Unlock Sleeves (which tremendously speed along gangs outside of BN2) and grafting (can speed up slow rep-gain BNs). // TODO: Buying / upgrading sleeve mem has no API, requires manual interaction. Can we automate this with UI clicking like casino.js?
+        9.3,  // Hard.   Start each new BN with an already powerful hacknet server, but *only until the first reset*, which is a bit of a damper. Hacknet productin/costs improved by 12% -> 21%
         3.3,  // Hard.   Corporations. While hard, these are insanely profitable.
         12.3, // Easy.   Should be able to grab a few levels of this to make later nodes easier. Combined with the intel boost, we see a decent speed improvement.
         8.2,  // Hard.   8.1 immediately unlocks stocks, 8.2 doubles stock earning rate with shorts. Stocks are never nerfed in any BN (4S can be made too pricey though), and we have a good pre-4S stock script.
@@ -71,8 +72,6 @@ export async function main(ns) {
         11.3, // Normal. Decrease augmentation cost scaling in a reset (4% -> 6% -> 7%) (can buy more augs per reset). Also boosts company salary/rep (32% -> 48% -> 56%), which we have little use for with gangs.)
         14.3, // Hard.   Makes go.js cheats slightly more successful, increases max go favour from (100->120) and not too difficult to get out of the way
         13.3, // Hard.   Make stanek's gift bigger to get more/different boosts
-        9.2,  // Hard.   Start with 128 GB home ram. Speeds up slow-starting new BNs, but less important with good ram-dodging scripts. Hacknet productin/costs improved by 12% -> 18%.
-        9.3,  // Hard.   Start each new BN with an already powerful hacknet server, but *only until the first reset*, which is a bit of a damper. Hacknet productin/costs improved by 18% -> 21%
         10.3, // Hard.   Get the last 2 sleeves (6 => 8) to boost their productivity ~30%. These really help with Bladeburner below. Putting this a little later because buying sleeves memory upgrades requires manual intervention right now.
 
         // 4th Priority: Play some Bladeburners. Mostly not used to beat other BNs, because for much of the BN this can't be done concurrently with player actions like crime/faction work, and no other BNs are "tuned" to be beaten via Bladeburner win condition
@@ -720,10 +719,10 @@ export async function main(ns) {
         //  launchScriptHelper(ns, 'fastmoney.ts');
         //}
         if ((resetInfo.currentNode== 3) && !findScript('corpbootstrap.ts') && playerInstalledAugCount < 1000) {
-          const runningOnHacknet = runCmdAsScript(`ns.scriptRunning`, ["corporation.ts", "hacknet-server-0"]);
-          const runningOnHacknet3 = runCmdAsScript(`ns.scriptRunning`, ["corp3.ts", "hacknet-server-0"]);
-          const runningOnHome = runCmdAsScript(`ns.scriptRunning`, ["corporation.ts", "home"]);
-          const runningOnHome3 = runCmdAsScript(`ns.scriptRunning`, ["corp3.ts", "home"]);
+          const runningOnHacknet = await runCmdAsScript(`ns.scriptRunning`, ["corporation.ts", "hacknet-server-0"]);
+          const runningOnHacknet3 = await runCmdAsScript(`ns.scriptRunning`, ["corp3.ts", "hacknet-server-0"]);
+          const runningOnHome = await runCmdAsScript(`ns.scriptRunning`, ["corporation.ts", "home"]);
+          const runningOnHome3 = await runCmdAsScript(`ns.scriptRunning`, ["corp3.ts", "home"]);
           try {
           if (!runningOnHacknet && !runningOnHacknet3 && !runningOnHome && !runningOnHome3)
               launchScriptHelper(ns, 'corpbootstrap.ts');
@@ -1107,22 +1106,6 @@ export async function main(ns) {
         }
         // Otherwise, keep running
         return true;
-    }
-
-    /** Helper to launch a script and log whether if it succeeded or failed
-     * @param {NS} ns */
-    function launchScriptHelper(ns, baseScriptName, args = [], convertFileName = true) {
-        if (!options['no-tail-windows'])
-            tail(ns); // If we're going to be launching scripts, show our tail window so that we can easily be killed if the user wants to interrupt.
-        let pid, err;
-        try { pid = ns.run(convertFileName ? getFilePath(baseScriptName) : baseScriptName, 1, ...args); }
-        catch (e) { err = e; }
-        if (pid)
-            log(ns, `INFO: Launched ${baseScriptName} (pid: ${pid}) with args: [${args.join(", ")}]`, true);
-        else
-            log(ns, `ERROR: Failed to launch ${baseScriptName} with args: [${args.join(", ")}]` +
-                (err ? `\nCaught: ${getErrorInfo(err)}` : ''), true, 'error');
-        return pid;
     }
 
     let lastStatusLog = ""; // The current or last-assigned long-term status (what this script is waiting to happen)

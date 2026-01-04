@@ -1,10 +1,10 @@
-import { log } from "./helpers";
+import { log, runCmdAsScript, launchScriptHelper } from "./helpers";
 
 export async function main(ns: NS): Promise<void> {
   log(ns, `Bootstrapping started...`, true, 'info');
   const hacknetName = "hacknet-server-1";
   let ramNeeded = 0;
-  let runValuation = ns.getBitNodeMultipliers().CorporationValuation >= 0.85;
+  let runValuation = (await runCmdAsScript(ns, 'ns.getBitNodeMultipliers') as BitNodeMultipliers).CorporationValuation >= 0.85;
   let scripts = ["corporationOptimizer.ts", "priorityQueue.js", 
   "ceres.js", "helpers.js", "corpconsts.ts", "heap.js", "corputils.ts", "smartsupply.ts", "spend-hacknet-hashes.js"];
   let scriptName;
@@ -22,7 +22,8 @@ export async function main(ns: NS): Promise<void> {
   do {
     let home = ns.getServer("home");
     if (home.maxRam-home.ramUsed > ramNeeded*1.5) {
-      ns.spawn(scriptName);
+      let pid = launchScriptHelper(ns, scriptName);
+      if (pid) return;
     } else if (ns.serverExists(hacknetName)) {
       let hacknet = ns.getServer(hacknetName);
       if (hacknet.maxRam > ramNeeded && ns.scp(scripts, hacknetName, "home") && exec_on_server(ns, hacknet, scriptName)) return;
