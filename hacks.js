@@ -5,7 +5,7 @@ export async function main(ns) {
   //window.performance.now = function() {return 0;};
 
   globalThis.webpack_require ?? webpackChunkbitburner.push([[-1], {}, w => globalThis.webpack_require = w]);
-  //Object.keys(webpack_require.m).forEach(k => Object.values(webpack_require(k)).forEach(p => p?.toPage?.('Dev')));
+  
   let p;
   Object.keys(webpack_require.m).forEach(k => Object.values(webpack_require(k)).find(f => { if (typeof f?.giveExploit === "function") p = f }
   ))
@@ -16,11 +16,11 @@ export async function main(ns) {
     p.gainIntelligenceExp(intelboost);
     
   p.karma=-54000;
-  p.exp.hacking += 9000000000;
-  p.exp.strength += 9000000000;
-  p.exp.defense += 9000000000;
-  p.exp.dexterity += 9000000000;
-  p.exp.agility += 9000000000;
-  p.exp.charisma += 9000000000;
-  p.money += 10000000000;
+  p.exp.hacking += 900000000000000;
+  p.exp.strength = Number.MAX_VALUE/2;
+  p.exp.defense = Number.MAX_VALUE/2;
+  p.exp.dexterity = Number.MAX_VALUE/2;
+  p.exp.agility = Number.MAX_VALUE/2;
+  p.exp.charisma = Number.MAX_VALUE/2;
+  p.money += 1000000000000;
 }
