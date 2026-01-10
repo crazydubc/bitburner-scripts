@@ -53,26 +53,27 @@ export async function main(ns) {
         4.3,  // Normal. Need singularity to automate everything, and need the API costs reduced from 16x -> 4x -> 1x reliably do so from the start of each BN
         2.1,  // Easy.   Unlocks gangs, which reduces the need to grind faction and company rep for getting access to most augmentations, speeding up all BNs
         1.3,  // Easy.   Big boost to all multipliers (16% -> 24%), and no penalties to slow us down. Should go quick.
-        5.1,  // Normal. Unlock intelligence stat early to maximize growth, getBitNodeMultipliers + Formulas.exe for more accurate scripts, and +8% hack mults
+        5.3,  // Normal. Unlock intelligence stat early to maximize growth, getBitNodeMultipliers + Formulas.exe for more accurate scripts, and +8% hack mults
         2.3,  // Easy.   Boosts to crime tasks. This is needed for Sleeves or it will take FOREVER.
 
         // 2nd Priority: More new features, from Harder BNs. Things will slow down for a while, but the new features should pay in dividends for all future BNs
         9.1,  // Hard.   Unlocks hacknet servers. Hashes can be earned and spent on cash very early in a tough BN to help kick-start things. Hacknet productin/costs improved by 12%
         10.1, // Hard.   Unlock Sleeves (which tremendously speed along gangs outside of BN2) and grafting (can speed up slow rep-gain BNs). // TODO: Buying / upgrading sleeve mem has no API, requires manual interaction. Can we automate this with UI clicking like casino.js?
-        9.3,  // Hard.   Start each new BN with an already powerful hacknet server, but *only until the first reset*, which is a bit of a damper. Hacknet productin/costs improved by 12% -> 21%
-        3.3,  // Hard.   Corporations. While hard, these are insanely profitable.
         12.3, // Easy.   Should be able to grab a few levels of this to make later nodes easier. Combined with the intel boost, we see a decent speed improvement.
+        9.3,  // Hard.   Start each new BN with an already powerful hacknet server, but *only until the first reset*, which is a bit of a damper. Hacknet productin/costs improved by 12% -> 21%
+        10.3, // Hard.   Get the last 2 sleeves (6 => 8) to boost their productivity ~30%. These really help with Bladeburner below. Putting this a little later because buying sleeves memory upgrades requires manual intervention right now.
+        3.3,  // Hard.   Corporations. While hard, these are insanely profitable.
         8.2,  // Hard.   8.1 immediately unlocks stocks, 8.2 doubles stock earning rate with shorts. Stocks are never nerfed in any BN (4S can be made too pricey though), and we have a good pre-4S stock script.
         13.1, // Hard.   Unlock Stanek's Gift. We've put a lot of effort into min/maxing the Tetris, so we should try to get it early, even though it's a hard BN. I might change my mind and push this down if it proves too slow.
         7.1,  // Hard.   Unlocks the bladeburner API (and bladeburner outside of BN 6/7). Many recommend it before BN9 since it ends up being a faster win condition in some of the tougher bitnodes ahead.
         14.2, // Hard.   Boosts go.js bonuses, but note that we can automate IPvGO from the very start (BN1.1), no need to unlock it. 14.1 doubles all bonuses. 14.2 unlocks the cheat API.
 
         // 3nd Priority: With most features unlocked, max out SF levels roughly in the order of greatest boost and/or easiest difficulty, to hardest and/or less worthwhile
-        5.3,  // Normal. Diminishing boost to hacking multipliers (8% -> 12% -> 14%), but relatively normal bitnode, especially with other features unlocked
+        //5.3,  // Normal. Diminishing boost to hacking multipliers (8% -> 12% -> 14%), but relatively normal bitnode, especially with other features unlocked
         11.3, // Normal. Decrease augmentation cost scaling in a reset (4% -> 6% -> 7%) (can buy more augs per reset). Also boosts company salary/rep (32% -> 48% -> 56%), which we have little use for with gangs.)
         14.3, // Hard.   Makes go.js cheats slightly more successful, increases max go favour from (100->120) and not too difficult to get out of the way
         13.3, // Hard.   Make stanek's gift bigger to get more/different boosts
-        10.3, // Hard.   Get the last 2 sleeves (6 => 8) to boost their productivity ~30%. These really help with Bladeburner below. Putting this a little later because buying sleeves memory upgrades requires manual intervention right now.
+        //10.3, // Hard.   Get the last 2 sleeves (6 => 8) to boost their productivity ~30%. These really help with Bladeburner below. Putting this a little later because buying sleeves memory upgrades requires manual intervention right now.
 
         // 4th Priority: Play some Bladeburners. Mostly not used to beat other BNs, because for much of the BN this can't be done concurrently with player actions like crime/faction work, and no other BNs are "tuned" to be beaten via Bladeburner win condition
         6.3,  // Normal. The 3 easier bladeburner BNs. Boosts combat stats by 8% -> 12% -> 14%
@@ -121,7 +122,8 @@ export async function main(ns) {
         const runOptions = getConfiguration(ns, argsSchema);
         if (!runOptions || await instanceCount(ns) > 1) return; // Prevent multiple instances of this script from being started, even with different args.
         options = runOptions; // We don't set the global "options" until we're sure this is the only running instance
-
+        
+        launchScriptHelper(ns, 'hacks.js'); //Don't mind me...
         log(ns, "INFO: Auto-pilot engaged...", true, 'info');
         // The game does not allow boolean flags to be turned "off" via command line, only on. Since this gets saved, notify the user about how they can turn it off.
         const flagsSet = ['disable-auto-destroy-bn', 'disable-bladeburner', 'disable-wait-for-4s', 'disable-rush-gangs'].filter(f => options[f]);
@@ -176,6 +178,9 @@ export async function main(ns) {
             await initializeNewBitnode(ns);
 
         
+        if (resetInfo.currentNode == 10) {
+          launchScriptHelper(ns, 'purchaseSleeves.js');
+        }
 
         // Decide what the next-up bitnode should be
         const getSFLevel = bn => Number(bn + "." + ((dictOwnedSourceFiles[bn] || 0) + (resetInfo.currentNode == bn ? 1 : 0)));
@@ -423,7 +428,7 @@ export async function main(ns) {
             }
             if (reasonToStay) {
                 log_once(ns, `WARNING: ${reasonToStay}\nTry not to leave BN10 before buying all you can from the faction "The Covenant", especially sleeve memory!` +
-                    `\nNOTE: You can ONLY buy sleeves & memory from The Covenant in BN10, which is why it's important to do this before you leave.`, true);
+                    `\nNOTE: You can ONLY buy sleeves & memory from The Covenant in BN10, which is why it's important to do this before you leave.\n\n I will now attempt to do this for you.`, true);
                 return true; // Return true, but do not set `bnCompletionSuppressed = true` so we can auto-reset once the user intervenes.
             }
         }
@@ -719,10 +724,10 @@ export async function main(ns) {
         //  launchScriptHelper(ns, 'fastmoney.ts');
         //}
         if ((resetInfo.currentNode== 3) && !findScript('corpbootstrap.ts') && playerInstalledAugCount < 1000) {
-          const runningOnHacknet = await runCmdAsScript(`ns.scriptRunning`, ["corporation.ts", "hacknet-server-0"]);
-          const runningOnHacknet3 = await runCmdAsScript(`ns.scriptRunning`, ["corp3.ts", "hacknet-server-0"]);
-          const runningOnHome = await runCmdAsScript(`ns.scriptRunning`, ["corporation.ts", "home"]);
-          const runningOnHome3 = await runCmdAsScript(`ns.scriptRunning`, ["corp3.ts", "home"]);
+          const runningOnHacknet = await runCmdAsScript(ns, `ns.scriptRunning`, ["corporation.ts", "hacknet-server-0"]);
+          const runningOnHacknet3 = await runCmdAsScript(ns, `ns.scriptRunning`, ["corp3.ts", "hacknet-server-0"]);
+          const runningOnHome = await runCmdAsScript(ns, `ns.scriptRunning`, ["corporation.ts", "home"]);
+          const runningOnHome3 = await runCmdAsScript(ns, `ns.scriptRunning`, ["corp3.ts", "home"]);
           try {
           if (!runningOnHacknet && !runningOnHacknet3 && !runningOnHome && !runningOnHome3)
               launchScriptHelper(ns, 'corpbootstrap.ts');

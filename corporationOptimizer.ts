@@ -1,5 +1,5 @@
 import { Ceres } from "./ceres";
-import { CeresSolverResult, CorpMaterialsData, CorpResearchesData, CorpState, CorpUpgradesData, 
+import { CeresSolverResult, CityName, CorpMaterialsData, CorpResearchesData, CorpState, CorpUpgradesData, 
 CorporationUpgradeLevels, DivisionName, DivisionResearches, EmployeePosition, IndustryType, MaterialName, 
 OfficeSetup, OfficeSetupJobs, ResearchName, UnlockName, UpgradeName, boostMaterials, cities } from "./corpconsts";
 import { dummyDivisionNamePrefix, getAdvertisingFactors, getBusinessFactor, getMarketFactor, getProductIdArray, getRecordEntries, 
@@ -1350,7 +1350,7 @@ export function getDivisionRawProduction(
     return officeMultiplier * divisionProductionMultiplier * upgradeMultiplier * researchMultiplier;
 }
 
-export async function buyUnlock(ns: NS, unlockName: UnlockName): Promise<void> {
+export async function buyUnlock(ns: NS, unlockName: CorpUnlockName): Promise<void> {
     if (ns.corporation.hasUnlock(unlockName)) {
         return;
     }
@@ -1449,11 +1449,11 @@ export function assignJobs(ns: NS, divisionName: string, officeSetups: OfficeSet
     for (const officeSetup of officeSetups) {
         // Reset all jobs
         for (const jobName of Object.values(EmployeePosition)) {
-            ns.corporation.setAutoJobAssignment(divisionName, officeSetup.city, jobName, 0);
+            ns.corporation.setJobAssignment(divisionName, officeSetup.city, jobName, 0);
         }
         // Assign jobs
         for (const [jobName, count] of Object.entries(officeSetup.jobs)) {
-            if (!ns.corporation.setAutoJobAssignment(divisionName, officeSetup.city, jobName, count)) {
+            if (!ns.corporation.setJobAssignment(divisionName, officeSetup.city, jobName, count)) {
                 ns.print(`Cannot assign job properly. City: ${officeSetup.city}, job: ${jobName}, count: ${count}`);
             }
         }
@@ -1828,7 +1828,7 @@ export function getCorporationUpgradeLevels(ns: NS): CorporationUpgradeLevels {
     const corporationUpgradeLevels: CorporationUpgradeLevels = {
         [UpgradeName.SMART_FACTORIES]: 0,
         [UpgradeName.SMART_STORAGE]: 0,
-        [UpgradeName.DREAM_SENSE]: 0,
+        //[UpgradeName.DREAM_SENSE]: 0,
         [UpgradeName.WILSON_ANALYTICS]: 0,
         [UpgradeName.NUOPTIMAL_NOOTROPIC_INJECTOR_IMPLANTS]: 0,
         [UpgradeName.SPEECH_PROCESSOR_IMPLANTS]: 0,
@@ -2020,8 +2020,8 @@ export function developNewProduct(
     if (bestProduct) {
         const bestProductBudget = bestProduct.designInvestment + bestProduct.advertisingInvestment;
         if (productDevelopmentBudget < bestProductBudget * 0.5 && products.length >= 3) {
-            const warningMessage = `Budget for new product is too low: ${ns.formatNumber(productDevelopmentBudget)}. `
-                + `Current best product's budget: ${ns.formatNumber(bestProductBudget)}`;
+            const warningMessage = `Budget for new product is too low: ${ns.format.number(productDevelopmentBudget)}. `
+                + `Current best product's budget: ${ns.format.number(bestProductBudget)}`;
             log(ns, warningMessage, true, 'info');
         }
     }
@@ -2066,7 +2066,7 @@ export async function buyBoostMaterials(ns: NS, division: Division): Promise<voi
     // This method is only called in round 3+. If we don't have more than 10e9 in funds, there must be something wrong
     // in the script.
     const funds = ns.corporation.getCorporation().funds/3;
-    const industryData = ns.corporation.getIndustryData(division.type);
+    const industryData = ns.corporation.getIndustryData(division.industry);
     let reservedSpaceRatio = 0.2;
     const ratio = 0.1;
     if (industryData.makesProducts) {
@@ -2089,9 +2089,9 @@ export async function buyBoostMaterials(ns: NS, division: Division): Promise<voi
                 continue;
             }
             let effectiveRatio = ratio;
-            if ((availableSpace / warehouse.size < 0.5 && division.type === IndustryType.AGRICULTURE)
+            if ((availableSpace / warehouse.size < 0.5 && division.industry === IndustryType.AGRICULTURE)
                 || (availableSpace / warehouse.size < 0.75
-                    && (division.type === IndustryType.CHEMICAL || division.type === IndustryType.TOBACCO))) {
+                    && (division.industry === IndustryType.CHEMICAL || division.industry === IndustryType.TOBACCO))) {
                 effectiveRatio = 0.2;
             }
             const boostMaterialQuantities = getOptimalBoostMaterialQuantities(industryData, availableSpace * effectiveRatio);

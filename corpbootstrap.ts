@@ -1,8 +1,8 @@
-import { log, runCmdAsScript, launchScriptHelper } from "./helpers";
+import { log, runCmdAsScript, launchScriptHelper, formatRam } from "./helpers";
 
 export async function main(ns: NS): Promise<void> {
   log(ns, `Bootstrapping started...`, true, 'info');
-  const hacknetName = "hacknet-server-1";
+  const hacknetName = "hacknet-server-0";
   let ramNeeded = 0;
   let runValuation = (await runCmdAsScript(ns, 'ns.getBitNodeMultipliers') as BitNodeMultipliers).CorporationValuation >= 0.85;
   let scripts = ["corporationOptimizer.ts", "priorityQueue.js", 
@@ -14,11 +14,11 @@ export async function main(ns: NS): Promise<void> {
     scriptName = "corporation.ts";
   
   scripts.push(scriptName);
-
   for (const script of scripts) {
     ramNeeded += ns.getScriptRam(script);
     await ns.sleep(100);
   }
+  log(ns, `Waiting for a server that has a ram of ${formatRam(ramNeeded*1.5)}`);
   do {
     let home = ns.getServer("home");
     if (home.maxRam-home.ramUsed > ramNeeded*1.5) {

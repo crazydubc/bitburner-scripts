@@ -134,7 +134,7 @@ export function setSmartSupplyData(ns: NS): void {
     }
     loopAllDivisionsAndCities(ns, (divisionName, city) => {
         const division = ns.corporation.getDivision(divisionName);
-        const industrialData = ns.corporation.getIndustryData(division.type);
+        const industrialData = ns.corporation.getIndustryData(division.industry);
         const warehouse = ns.corporation.getWarehouse(division.name, city);
         let totalRawProduction = 0;
 
@@ -275,7 +275,7 @@ export function getCorporationUpgradeLevels(ns: NS): CorporationUpgradeLevels {
     const corporationUpgradeLevels: CorporationUpgradeLevels = {
         [UpgradeName.SMART_FACTORIES]: 0,
         [UpgradeName.SMART_STORAGE]: 0,
-        [UpgradeName.DREAM_SENSE]: 0,
+        //[UpgradeName.DREAM_SENSE]: 0,
         [UpgradeName.WILSON_ANALYTICS]: 0,
         [UpgradeName.NUOPTIMAL_NOOTROPIC_INJECTOR_IMPLANTS]: 0,
         [UpgradeName.SPEECH_PROCESSOR_IMPLANTS]: 0,
@@ -489,7 +489,7 @@ export function clearPurchaseOrders(ns: NS, clearInputMaterialOrders: boolean = 
         }
         if (clearInputMaterialOrders) {
             const division = ns.corporation.getDivision(divisionName);
-            const industrialData = ns.corporation.getIndustryData(division.type);
+            const industrialData = ns.corporation.getIndustryData(division.industry);
             for (const materialName of getRecordKeys(industrialData.requiredMaterials)) {
                 ns.corporation.buyMaterial(divisionName, city, materialName, 0);
                 ns.corporation.sellMaterial(divisionName, city, materialName, "0", "MP");
@@ -519,7 +519,7 @@ export async function setOptimalSellingPriceForEverything(ns: NS): Promise<void>
     }
     await loopAllDivisionsAndCitiesAsyncCallback(ns, async (divisionName, city) => {
         const division = ns.corporation.getDivision(divisionName);
-        const industryData = ns.corporation.getIndustryData(division.type);
+        const industryData = ns.corporation.getIndustryData(division.industry);
         const products = division.products;
         const hasMarketTA2 = ns.corporation.hasResearched(divisionName, ResearchName.MARKET_TA_2);
         if (industryData.makesProducts) {
@@ -640,7 +640,7 @@ export function getMarketFactor(demand: number, competition: number): number {
 
 export function getUpgradeBenefit(upgradeName: CorpUpgradeName, upgradeLevel: number): number {
     // For DreamSense, value is not a multiplier, so it starts at 0
-    let value = (upgradeName === UpgradeName.DREAM_SENSE) ? 0 : 1;
+    let value = 1;
     const benefit = CorpUpgradesData[upgradeName].benefit;
     if (!benefit) {
         throw new Error(`Cannot find data of upgrade: ${upgradeName}`);
@@ -688,7 +688,7 @@ export function buyOptimalAmountOfInputMaterials(ns: NS, warehouseCongestionData
     // Loop and set buy amount
     loopAllDivisionsAndCities(ns, (divisionName, city) => {
         const division = ns.corporation.getDivision(divisionName);
-        const industrialData = ns.corporation.getIndustryData(division.type);
+        const industrialData = ns.corporation.getIndustryData(division.industry);
         const office = ns.corporation.getOffice(division.name, city);
         const requiredMaterials = getRecordEntries(industrialData.requiredMaterials);
 

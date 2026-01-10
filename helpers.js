@@ -37,8 +37,8 @@ export function parseShortNumber(text = "0") {
 /** Helper to launch a script and log whether if it succeeded or failed
      * @param {NS} ns */
 export function launchScriptHelper(ns, baseScriptName, args = [], convertFileName = true) {
-        if (!options['no-tail-windows'])
-            tail(ns); // If we're going to be launching scripts, show our tail window so that we can easily be killed if the user wants to interrupt.
+        //if (!options['no-tail-windows'])
+        //    tail(ns); // If we're going to be launching scripts, show our tail window so that we can easily be killed if the user wants to interrupt.
         let pid, err;
         try { pid = ns.run(convertFileName ? getFilePath(baseScriptName) : baseScriptName, 1, ...args); }
         catch (e) { err = e; }
@@ -306,9 +306,11 @@ export async function runCommand(ns, command, fileName, args = [], verbose = fal
  */
 export async function runCmdAsScript(ns, fnPath, args = []) {
   const argList = args.map((_, i) => `ns.args[${i}]`).join(", ");
-  const tempScript = "/Temp/" + fnPath + ".js";
-  const command = `${fnPath}(` + `${argList}` +
-    (argList ? ", " : "") + `{ sourceFileOverrides: new Map() }` + `)`;
+  const tempScript = `/Temp/${fnPath}.js`;
+  const command = `${fnPath}(` + `${argList}` 
+    //+ (argList ? ", " : "") 
+    //+ `{ sourceFileOverrides: new Map() }` 
+    + `)`;
 
   return await getNsDataThroughFile(ns, command, tempScript, args);
 }

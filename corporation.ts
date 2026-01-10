@@ -184,7 +184,7 @@ function bribeFactions(ns:NS) {
   const corp = ns.corporation.getCorporation();
   if (corp.valuation < ns.corporation.getConstants().bribeThreshold) return;
   if (corp.funds < 1_500_000_000_000) return;
-  const factions = ns.getPlayer().factions;
+  const factions = ns.getPlayer().factions as FactionName[];
   const fundsToBribe = Math.floor(corp.funds/factions.length/2);
   log(ns, `Bribing: all factions with ${fundsToBribe} each.`, false, 'info');
   for (const factionName of factions) {
@@ -235,10 +235,10 @@ async function assignEmployees(ns:NS, division : Division, productCity: CityName
       try{
           //this can error is there is not enough free bodies. If so, the bodies will be freed up this cycle
           //and will be assigned next cycle. Maybe we can handle this better?
-          ns.corporation.setAutoJobAssignment(division.name, city, job, positionCounts[job]);
+          ns.corporation.setJobAssignment(division.name, city, job, positionCounts[job]);
         } catch (error) {
           for (const job in positionCounts) {
-            ns.corporation.setAutoJobAssignment(division.name, city, job, 0);
+            ns.corporation.setJobAssignment(division.name, city, job, 0);
           }
         }
     }
@@ -288,9 +288,9 @@ async function upgradeWarehouses(ns:NS, division:Division) {
       industryData,
       ns.corporation.getUpgradeLevel(UpgradeName.SMART_STORAGE),
       // Assume that all warehouses are at the same level
-      ns.corporation.getWarehouse(division.type, CityName.Sector12).level,
+      ns.corporation.getWarehouse(division.industry, CityName.Sector12).level,
       ns.corporation.getUpgradeLevel(UpgradeName.SMART_FACTORIES),
-      getDivisionResearches(ns, division.type),
+      getDivisionResearches(ns, division.industry),
       ns.corporation.getCorporation().funds,
       false
     );
@@ -301,11 +301,11 @@ async function upgradeWarehouses(ns:NS, division:Division) {
   buyUpgrade(ns, UpgradeName.SMART_FACTORIES, optimalData.smartFactoriesLevel);
   for (const city of cities) {
       //log(ns, `Upgraded warehouse for ${division.name} in ${city} to ${optimalData.warehouseLevel}`, true, 'info');
-      upgradeWarehouse(ns, division.type, city, optimalData.warehouseLevel);
+      upgradeWarehouse(ns, division.industry, city, optimalData.warehouseLevel);
   }
   const optimalAmountOfBoostMaterials = await findOptimalAmountOfBoostMaterials(
       ns,
-      division.type,
+      division.industry,
       industryData,
       CityName.Sector12,
       false,
@@ -313,7 +313,7 @@ async function upgradeWarehouses(ns:NS, division:Division) {
   );
   await stockMaterials(
       ns,
-      division.type,
+      division.industry,
       generateMaterialsOrders(
           cities,
           [
@@ -341,7 +341,7 @@ function upgradeCorp(ns:NS) {
         let upgradeCost = ns.corporation.getUpgradeLevelCost(upgrade.name);
         if (funds > upgrade.prio * upgradeCost) {
             // For certain upgrades, only purchase if DreamSense is high enough.
-            if (upgrade.name !== "ABC SalesBots" && upgrade.name !== "Wilson Analytics" || ns.corporation.getUpgradeLevel("DreamSense") > 20) {
+            if (upgrade.name !== "ABC SalesBots" && upgrade.name !== "Wilson Analytics") {
                 //log(ns, `Upgrading ${upgrade.name} to level ${ns.corporation.getUpgradeLevel(upgrade.name) + 1}`, true, 'info');
                 try {
                   ns.corporation.levelUpgrade(upgrade.name);
@@ -464,7 +464,7 @@ function doResearch(ns:NS, division: Division) {
 export async function createDivision(ns: NS, divisionName: string, officeSize: number, warehouseLevel: number): Promise<Division> {
     // Create division if not exists
     if (!hasDivision(ns, divisionName)) {
-        let industryType;
+        let industryType: CorpIndustryName;
         switch (divisionName) {
             case DivisionName.AGRICULTURE:
                 industryType = IndustryType.AGRICULTURE;
@@ -644,7 +644,7 @@ export async function waitForOffer(ns: NS, numberOfInitCycles: number, maxAdditi
         }
          await waitForNumberOfCycles(ns, 1);
     }
-    log(ns, `Accept offer: ${ns.formatNumber(ns.corporation.getInvestmentOffer().funds)}`, true, 'info');
+    log(ns, `Accept offer: ${ns.format.number(ns.corporation.getInvestmentOffer().funds)}`, true, 'info');
     //corporationEventLogger.generateOfferAcceptanceEvent(ns);
     while (!ns.corporation.acceptInvestmentOffer()){
       await ns.sleep(200);
@@ -799,8 +799,8 @@ export async function improveProductDivisionSupportOffices(ns:NS,
     if (budget > ns.corporation.getCorporation().funds) {
         // Bypass usage of logger. If this happens, there is race condition. We must be notified about it.
         console.warn(
-            `Budget is higher than current funds. Budget: ${ns.formatNumber(budget)}, `
-            + `funds: ${ns.formatNumber(ns.corporation.getCorporation().funds)}`
+            `Budget is higher than current funds. Budget: ${ns.format.number(budget)}, `
+            + `funds: ${ns.format.number(ns.corporation.getCorporation().funds)}`
         );
         budget = ns.corporation.getCorporation().funds * 0.9;
     }
@@ -809,7 +809,7 @@ export async function improveProductDivisionSupportOffices(ns:NS,
         const office = ns.corporation.getOffice(divisionName, city);
         const maxOfficeSize = getMaxAffordableOfficeSize(ns, office.size, budgetForEachOffice);
         if (maxOfficeSize < 5) {
-            throw new Error(`Budget for office is too low. Division: ${divisionName}. Office's budget: ${ns.formatNumber(budgetForEachOffice)}`);
+            throw new Error(`Budget for office is too low. Division: ${divisionName}. Office's budget: ${ns.format.number(budgetForEachOffice)}`);
         }
         if (maxOfficeSize < office.size) {
             continue;
@@ -1041,7 +1041,7 @@ async function improveSupportDivision(ns:NS,
     const office = ns.corporation.getOffice(divisionName, city);
     const maxOfficeSize = getMaxAffordableOfficeSize(ns, office.size, officeBudget);
     if (maxOfficeSize < 6) {
-        throw new Error(`Budget for office is too low. Division: ${divisionName}. Office's budget: ${ns.formatNumber(officeBudget)}`);
+        throw new Error(`Budget for office is too low. Division: ${divisionName}. Office's budget: ${ns.format.number(officeBudget)}`);
     }
     const rndEmployee = Math.min(
         Math.floor(maxOfficeSize * 0.2),
@@ -1080,7 +1080,7 @@ async function improveSupportDivision(ns:NS,
             throw new Error("Invalid R&D ratio");
         }
         const division = ns.corporation.getDivision(divisionName);
-        const industryData = ns.corporation.getIndustryData(division.type);
+        const industryData = ns.corporation.getIndustryData(division.industry);
         const dataArray = await optimizeOffice(
             ns,
             division,
@@ -1169,7 +1169,7 @@ export async function improveProductDivision(ns:NS,
         return;
     }
     const division = ns.corporation.getDivision(divisionName);
-    const industryData = ns.corporation.getIndustryData(division.type);
+    const industryData = ns.corporation.getIndustryData(division.industry);
     const divisionResearches = getDivisionResearches(ns, divisionName);
     const benchmark = new CorporationOptimizer();
     const currentFunds = ns.corporation.getCorporation().funds;
@@ -1271,7 +1271,7 @@ export async function improveProductDivision(ns:NS,
         );
     }
 
-    log(ns, `Spent: ${ns.formatNumber(currentFunds - ns.corporation.getCorporation().funds)}`, true, 'info');
+    log(ns, `Spent: ${ns.format.number(currentFunds - ns.corporation.getCorporation().funds)}`, true, 'info');
 }
 
 
@@ -1376,14 +1376,14 @@ async function improveAllDivisions(ns:NS): Promise<void> {
 
     let reservedFunds = 0;
     const increaseReservedFunds = (amount: number) => {
-        console.log(`Increase reservedFunds by ${ns.formatNumber(amount)}`);
+        console.log(`Increase reservedFunds by ${ns.format.number(amount)}`);
         reservedFunds += amount;
-        console.log(`New reservedFunds: ${ns.formatNumber(reservedFunds)}`);
+        console.log(`New reservedFunds: ${ns.format.number(reservedFunds)}`);
     };
     const decreaseReservedFunds = (amount: number) => {
-        console.log(`Decrease reservedFunds by ${ns.formatNumber(amount)}`);
+        console.log(`Decrease reservedFunds by ${ns.format.number(amount)}`);
         reservedFunds -= amount;
-        console.log(`New reservedFunds: ${ns.formatNumber(reservedFunds)}`);
+        console.log(`New reservedFunds: ${ns.format.number(reservedFunds)}`);
     };
 
     // We use preparingToAcceptOffer to prevent optimizing office right before we switch all offices to "profit" setup.
@@ -1529,7 +1529,7 @@ async function improveAllDivisions(ns:NS): Promise<void> {
                     DivisionName.TOBACCO,
                     nonOfficesBudget
                 );
-                console.log(`Upgrade ${DivisionName.TOBACCO}-1, budget: ${ns.formatNumber(nonOfficesBudget)}`);
+                console.log(`Upgrade ${DivisionName.TOBACCO}-1, budget: ${ns.format.number(nonOfficesBudget)}`);
                 console.time(DivisionName.TOBACCO + "-1");
                 improveProductDivision(ns,
                     DivisionName.TOBACCO,
@@ -1553,7 +1553,7 @@ async function improveAllDivisions(ns:NS): Promise<void> {
                 const officesBudget = budgetForTobaccoDivision * budgetRatioForProductDivision.office;
                 increaseReservedFunds(officesBudget);
                 pendingImprovingProductDivisions2.set(DivisionName.TOBACCO, officesBudget);
-                console.log(`Upgrade ${DivisionName.TOBACCO}-2, budget: ${ns.formatNumber(officesBudget)}`);
+                console.log(`Upgrade ${DivisionName.TOBACCO}-2, budget: ${ns.format.number(officesBudget)}`);
                 console.time(DivisionName.TOBACCO + "-2");
                 improveProductDivisionOffices(ns,
                     DivisionName.TOBACCO,
@@ -1581,7 +1581,7 @@ async function improveAllDivisions(ns:NS): Promise<void> {
             availableFunds -= budgetForAgricultureDivision;
             increaseReservedFunds(budgetForAgricultureDivision);
             pendingImprovingSupportDivisions.set(DivisionName.AGRICULTURE, budgetForAgricultureDivision);
-            console.log(`Upgrade ${DivisionName.AGRICULTURE}, budget: ${ns.formatNumber(budgetForAgricultureDivision)}`);
+            console.log(`Upgrade ${DivisionName.AGRICULTURE}, budget: ${ns.format.number(budgetForAgricultureDivision)}`);
             console.time(DivisionName.AGRICULTURE);
             improveSupportDivision(ns, 
                 DivisionName.AGRICULTURE,
@@ -1608,7 +1608,7 @@ async function improveAllDivisions(ns:NS): Promise<void> {
             availableFunds -= budgetForChemicalDivision;
             increaseReservedFunds(budgetForChemicalDivision);
             pendingImprovingSupportDivisions.set(DivisionName.CHEMICAL, budgetForChemicalDivision);
-            console.log(`Upgrade ${DivisionName.CHEMICAL}, budget: ${ns.formatNumber(budgetForChemicalDivision)}`);
+            console.log(`Upgrade ${DivisionName.CHEMICAL}, budget: ${ns.format.number(budgetForChemicalDivision)}`);
             console.time(DivisionName.CHEMICAL);
             improveSupportDivision(ns,
                 DivisionName.CHEMICAL,
@@ -1649,7 +1649,7 @@ function needToUpgradeDivision(ns:NS, divisionName: string, budget: number) {
     const needToUpgrade = maxOfficeSize >= office.size + expectedUpgradeSize;
     if (needToUpgrade) {
         console.debug(
-            `needToUpgrade ${divisionName}, budget: ${ns.formatNumber(budget)}, office.size: ${office.size}, `
+            `needToUpgrade ${divisionName}, budget: ${ns.format.number(budget)}, office.size: ${office.size}, `
             + `maxOfficeSize: ${maxOfficeSize}}`
         );
     }

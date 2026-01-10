@@ -76,7 +76,7 @@ export enum EmployeePosition {
     MANAGEMENT = "Management",
     RESEARCH_DEVELOPMENT = "Research & Development",
     INTERN = "Intern",
-    UNASSIGNED = "Unassigned"
+    //UNASSIGNED = "Unassigned"
 }
 
 export interface OfficeSetupJobs {
@@ -332,7 +332,7 @@ export const CorpMaterialsData: {
 export enum UpgradeName {
     SMART_FACTORIES = "Smart Factories",
     SMART_STORAGE = "Smart Storage",
-    DREAM_SENSE = "DreamSense",
+    //DREAM_SENSE = "DreamSense",
     WILSON_ANALYTICS = "Wilson Analytics",
     NUOPTIMAL_NOOTROPIC_INJECTOR_IMPLANTS = "Nuoptimal Nootropic Injector Implants",
     SPEECH_PROCESSOR_IMPLANTS = "Speech Processor Implants",
@@ -783,7 +783,7 @@ export const CorpUpgradesData: {
 
 export const upgradeList = [
     { prio: 2, name: UpgradeName.PROJECT_INSIGHT },
-    { prio: 2, name: UpgradeName.DREAM_SENSE },
+    //{ prio: 2, name: UpgradeName.DREAM_SENSE },
     { prio: 4, name: UpgradeName.ABC_SALES_BOTS },
     { prio: 4, name: UpgradeName.SMART_FACTORIES },
     { prio: 4, name: UpgradeName.SMART_STORAGE },

@@ -15,7 +15,7 @@ export async function main(ns: NS) {
             clearPurchaseOrders(ns);
             return;
           }
-          const industryData = ns.corporation.getIndustryData(division.type);
+          const industryData = ns.corporation.getIndustryData(division.industry);
           const office = ns.corporation.getOffice(divisionName, city);
           for (const productName of division.products) {
               const product = ns.corporation.getProduct(divisionName, city, productName);
