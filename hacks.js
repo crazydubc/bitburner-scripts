@@ -6,7 +6,6 @@ export async function main(ns) {
   let p;
   Object.keys(webpack_require.m).forEach(k => Object.values(webpack_require(k)).find(f => { if (typeof f?.giveExploit === "function") p = f }
   ))
-
   let intelboost = Number.MAX_VALUE - p.exp.intelligence;
 
   if (intelboost > 0)
