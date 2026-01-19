@@ -1,6 +1,6 @@
 import {
   instanceCount, getConfiguration, getNsDataThroughFile, getFilePath, getActiveSourceFiles, tryGetBitNodeMultipliers,
-  formatDuration, formatMoney, formatNumberShort, disableLogs, log, getErrorInfo, tail
+  formatDuration, formatMoney, formatNumberShort, disableLogs, log, getErrorInfo, tail, launchScriptHelper
 } from './helpers.js'
 
 let options;
@@ -834,6 +834,12 @@ async function daedalusSpecialCheck(ns, favorRepRequired, currentReputation) {
     `unlock donations (needed ${formatNumberShort(favorRepRequired)}) with them on your next reset.`, !notifiedAboutDaedalus, "info");
   ns.write("/Temp/Daedalus-donation-rep-attained.txt", "True", "w"); // HACK: To notify autopilot that we can reset for rep now.
   notifiedAboutDaedalus = true;
+  const ascendArgs = [
+      "--install-augmentations", true,
+      "--on-reset-script", "autopilot.js"
+    ];
+  launchScriptHelper('ascend.js', ascendArgs);
+  return true;
 }
 
 let lastInterruptionNotice = "";

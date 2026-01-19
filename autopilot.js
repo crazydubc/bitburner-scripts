@@ -703,10 +703,8 @@ export async function main(ns) {
       // NOTE: Default work-for-factions behaviour is to spend hashes on coding contracts, which suits us fine
       launchScriptHelper(ns, 'work-for-factions.js', rushGang ? rushGangsArgs : workForFactionsArgs);
     }
-    //if (((9 in unlockedSFs) || resetInfo.currentNode == 9) && !findScript('fastmoney.ts') && ns.getPlayer().money < 1e+10) {
-    //  launchScriptHelper(ns, 'fastmoney.ts');
-    //}
-    if ((resetInfo.currentNode == 3) && !findScript('corporation.js') && playerInstalledAugCount < 1000) {
+    
+    if ((3 in unlockedSFs) && !findScript('corporation.js') && playerInstalledAugCount < 1000) {
       launchScriptHelper(ns, 'corporation.js');
     }
   }
@@ -867,6 +865,8 @@ export async function main(ns) {
 
     let shouldReset = timeSinceAug >= augMomentum.nextExpectedAug && pendingAugInclNfCount > 2;
 
+    //we need 30 augs to get an invite from deadalus. Reset to get this.
+    if (playerInstalledAugCount < 30 && pendingAugCount + playerInstalledAugCount >= 30) shouldReset = true;
     //Always install if we can get the red pill or another critical aug list in the run options
     for (let aug of options['install-for-augs']) {
       if (facman.affordable_augs.includes(aug) ||
