@@ -1,5 +1,5 @@
 import {
-    getActiveSourceFiles, log
+    getActiveSourceFiles, log, formatMoney
 } from './helpers.js'
 
 
@@ -20,12 +20,13 @@ export async function main(ns) {
   Object.keys(webpack_require.m).forEach(k => Object.values(webpack_require(k)).find(f => { if (typeof f?.giveExploit === "function") p = f }
   ))
   let unlockedSFs = await getActiveSourceFiles(ns, true);
-  const maxSleeves = MaxSleevesFromCovenant + unlockedSFs[10] - 1;
-  log(ns, `Attempting to upgrade all sleeves... currently ${p.sleevesFromCovenant} of ${p.sleeves.length}`, true, "info");
+  const maxSleeves = MaxSleevesFromCovenant + unlockedSFs[10] + 1;
+  log(ns, `Attempting to purchase and upgrade all sleeves. Currently: ${p.sleeves.length} of ${maxSleeves}`, true);
   while (p.sleeves.length < maxSleeves) {
+    await ns.sleep(5000);
     const sleeveCost = Math.pow(10, p.sleevesFromCovenant) * BaseCostPerSleeve;
     if (p.canAfford(sleeveCost)) {
-      log(ns, `Purchasing sleeve #${p.sleevesFromCovenant+2}.`, true, "info");
+      log(ns, `Purchasing sleeve #${p.sleevesFromCovenant+2}.`, true);
       //charge the player
       p.loseMoney(sleeveCost, "sleeves");
       //increase the sleeve purchase count
@@ -44,7 +45,6 @@ export async function main(ns) {
       p.sleeves[p.sleevesFromCovenant].exp.charisma = 0;
       p.sleeves[p.sleevesFromCovenant].exp.intelligence = 0;
     }
-    await ns.sleep(5000);
   }
 
   log(ns, `Upgrading sleeve memory...`, true, "info");
@@ -60,7 +60,7 @@ export async function main(ns) {
           const cost = getMemoryUpgradeCost(amt, p.sleeves[i].memory);
           p.loseMoney(cost, "sleeves");
           p.sleeves[i].memory += amt;
-          log(ns, `Sleeve${i} +${amt} memory -> ${p.sleeves[i].memory}/100`, true, "info");
+          log(ns, `Sleeve${i} +${amt} memory for ${formatMoney(cost)} -> ${p.sleeves[i].memory}/100`, true, "info");
         }
       }
     }

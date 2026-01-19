@@ -4,7 +4,6 @@ import {
 
 const STATS_FILE = "/Temp/intFarmStats.txt";
 const CONFIG_FILE = "/Temp/intFarmConf.txt";
-// Stop when extra INT bonus is growing by less than this per hour:
 const FORECAST_HOURS = 1;
 
 function intBonus(intel) {
