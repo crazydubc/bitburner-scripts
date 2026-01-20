@@ -156,8 +156,8 @@ async function mainLoop(ns) {
   }
 
   // Gather the count of available contracts / operations
-  const contractCounts = await getBBDictByActionType(ns, 'getActionCountRemaining', "Contract", contractNames);
-  const operationCounts = await getBBDictByActionType(ns, 'getActionCountRemaining', "Operation", operationNames);
+  const contractCounts = await getBBDictByActionType(ns, 'getActionCountRemaining', "Contracts", contractNames);
+  const operationCounts = await getBBDictByActionType(ns, 'getActionCountRemaining', "Operations", operationNames);
   // Define a helper that gets the count for an action based only on the name (type is auto-determined)
   const getCount = actionName => contractNames.includes(actionName) ? contractCounts[actionName] :
     operationNames.includes(actionName) ? operationCounts[actionName] :
@@ -226,8 +226,8 @@ async function mainLoop(ns) {
     currentCity = goToCity;
 
   // Gather the success chance of contracts (based on our current city)
-  const contractChances = await getBBDictByActionType(ns, 'getActionEstimatedSuccessChance', "Contract", contractNames);
-  const operationChances = await getBBDictByActionType(ns, 'getActionEstimatedSuccessChance', "Operation", operationNames);
+  const contractChances = await getBBDictByActionType(ns, 'getActionEstimatedSuccessChance', "Contracts", contractNames);
+  const operationChances = await getBBDictByActionType(ns, 'getActionEstimatedSuccessChance', "Operations", operationNames);
   const blackOpsChance = nextBlackOp === null || rank < blackOpsRanks[nextBlackOp] ? [0, 0] : // Insufficient rank for blackops means chance is zero
     (await getBBDictByActionType(ns, 'getActionEstimatedSuccessChance', "Black Operations", [nextBlackOp]))[nextBlackOp];
   // Define some helpers for determining min/max chance for each action

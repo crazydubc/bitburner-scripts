@@ -703,7 +703,7 @@ export async function main(ns) {
       // NOTE: Default work-for-factions behaviour is to spend hashes on coding contracts, which suits us fine
       launchScriptHelper(ns, 'work-for-factions.js', rushGang ? rushGangsArgs : workForFactionsArgs);
     }
-    
+
     if ((3 in unlockedSFs) && !findScript('corporation.js') && playerInstalledAugCount < 1000) {
       launchScriptHelper(ns, 'corporation.js');
     }
@@ -822,22 +822,36 @@ export async function main(ns) {
     }
   }
   function updateAugMomentum(ns, pendingAugCount) {
+    if (pendingAugCount <= 0) return;
+
     const timeInAug = Math.max(1, getTimeInAug());
     const now = Date.now();
 
     if (pendingAugCount > augMomentum.lastAugCount) {
       augMomentum.lastAugCount = pendingAugCount;
       augMomentum.lastIncreaseTime = now;
-      //allow for a delay on the next augment to be earned by 5 times the average.
-      augMomentum.nextExpectedAug = getTimeInAug() + ((getTimeInAug() / pendingAugCount) * 5);
-      log(ns,
-        `INFO: ${formatDuration(getTimeInAug())} since last reset. ` +
-        `Pending augs: ${pendingAugCount}. Next update at ${formatDuration(augMomentum.nextExpectedAug)}.`, true);
+
+      // allow delay: up to 5x avg, reduced by 1 for every 2 augs, but never below 1x
+      const div = Math.max(1, 5 - Math.ceil(pendingAugCount / 2));
+
+      // "expected time since reset when the next aug should arrive"
+      augMomentum.nextExpectedAug = timeInAug + ((timeInAug / pendingAugCount) * div);
+
+      const eta = Math.max(0, augMomentum.nextExpectedAug - timeInAug);
+
+      log(
+        ns,
+        `INFO: ${formatDuration(timeInAug)} since last reset. ` +
+        `Pending augs: ${pendingAugCount}. Next expected in ${formatDuration(eta)} ` +
+        `(at T+${formatDuration(augMomentum.nextExpectedAug)}).`,
+        true
+      );
 
       const rate = pendingAugCount / timeInAug;
       augMomentum.bestRate = Math.max(augMomentum.bestRate, rate);
     }
   }
+
 
   /** Logic to detect if it's a good time to install augmentations, and if so, do so
   * @param {NS} ns
