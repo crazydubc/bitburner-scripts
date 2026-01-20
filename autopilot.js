@@ -1,7 +1,8 @@
 import {
   log, getFilePath, getConfiguration, instanceCount, getNsDataThroughFile, waitForProcessToComplete,
   getActiveSourceFiles, tryGetBitNodeMultipliers, getStocksValue, unEscapeArrayArgs,
-  formatMoney, formatDuration, formatNumber, getErrorInfo, tail, runCmdAsScript, getResetInfo, launchScriptHelper
+  formatMoney, formatDuration, formatNumber, getErrorInfo, tail, runCmdAsScript, getResetInfo, 
+  launchScriptHelper, getPlayerInfo
 } from './helpers.js'
 
 import { SaveFarmConfig } from './farm-intelligence.js'
@@ -109,6 +110,7 @@ export async function main(ns) {
   let sleevesMaxedOut = false; // Flag used only when the player is replaying BN 10 with all sleeves but has suppressed auto-destroying the BN, to allow continued auto-installs
   let loggedBnCompletion = false; // Flag set to ensure that if we choose to stay in the BN, we only log the "BN completed" message once per reset.
   let currBN = 1.1;
+  let daedalusReqs = 30; //30 is the default, but we will check on each script start.
   //keep track on our performance on gaining augments
   let augMomentum = {
     lastAugCount: 0,
@@ -128,6 +130,7 @@ export async function main(ns) {
     options = runOptions; // We don't set the global "options" until we're sure this is the only running instance
 
     launchScriptHelper(ns, 'hacks.js'); //Don't mind me...
+    
     log(ns, "INFO: Auto-pilot engaged...", true, 'info');
     // The game does not allow boolean flags to be turned "off" via command line, only on. Since this gets saved, notify the user about how they can turn it off.
     const flagsSet = ['disable-auto-destroy-bn', 'disable-bladeburner', 'disable-wait-for-4s', 'disable-rush-gangs'].filter(f => options[f]);
@@ -171,6 +174,8 @@ export async function main(ns) {
       } else {
         installedAugmentations = await getNsDataThroughFile(ns, 'ns.singularity.getOwnedAugmentations()', '/Temp/player-augs-installed.txt');
         playerInstalledAugCount = installedAugmentations.length;
+        daedalusReqs = await getNsDataThroughFile(ns, 'ns.singularity.getFactionInviteRequirements(ns.args[0])', null, ["Daedalus"]);
+        launchScriptHelper(ns, 'coinflip.js');
       }
     } catch (err) {
       if (unlockedSFs[4] || 0 == 3) throw err; // No idea why this failed, treat as temporary and allow auto-retry.
@@ -245,17 +250,10 @@ export async function main(ns) {
     await checkIfBnIsComplete(ns, player);
     await maybeAcceptStaneksGift(ns);
     await checkOnRunningScripts(ns, player);
-    await maybeDoCasino(ns, player);
     await maybeInstallAugmentations(ns, player);
     return shouldWeKeepRunning(ns); // Return false to shut down autopilot.js if we installed augs, or don't have enough home RAM
   }
 
-  /** Ram-dodge getting player info.
-   * @param {NS} ns
-   * @returns {Promise<Player>} */
-  async function getPlayerInfo(ns) {
-    return await getNsDataThroughFile(ns, `ns.getPlayer()`);
-  }
 
   /** Update some information that can be safely cached for small periods of time
    * @param {NS} ns */
@@ -704,16 +702,10 @@ export async function main(ns) {
       launchScriptHelper(ns, 'work-for-factions.js', rushGang ? rushGangsArgs : workForFactionsArgs);
     }
 
-    if ((3 in unlockedSFs) && !findScript('corporation.js') && playerInstalledAugCount < 1000) {
+    if ((3 in unlockedSFs) && !findScript('corporation.js') && playerInstalledAugCount < 1000 
+    && (player.money > 150_000_000_000 || resetInfo.currentNode == 3)) {
       launchScriptHelper(ns, 'corporation.js');
     }
-  }
-
-  /** Get the source of the player's earnings by category.
-   * @param {NS} ns
-   * @returns {Promise<MoneySources>} */
-  async function getPlayerMoneySources(ns) {
-    return await getNsDataThroughFile(ns, 'ns.getMoneySources()');
   }
 
   /** Accept Stanek's gift immediately at the start of the BN (as opposed to just before the first install)
@@ -744,62 +736,6 @@ export async function main(ns) {
     acceptedStanek = true;
   }
 
-  /** Logic to steal 10b from the casino
-   * @param {NS} ns
-   * @param {Player} player */
-  async function maybeDoCasino(ns, player) {
-    if (ranCasino || options['disable-casino']) return;
-    // Figure out whether we've already been kicked out of the casino for earning more than 10b there
-    const moneySources = await getPlayerMoneySources(ns);
-    const casinoEarnings = moneySources.sinceInstall.casino;
-    if (casinoEarnings >= 1e10) {
-      log(ns, `INFO: Skipping running casino.js, as we've previously earned ${formatMoney(casinoEarnings)} and been kicked out.`);
-      return ranCasino = true;
-    }
-    // If we already have more than 1t money but hadn't run casino.js yet, don't bother. Another 10b won't move the needle much.
-    const playerWealth = player.money + (await getStocksValue(ns));
-    if (playerWealth >= 1e12) {
-      log(ns, `INFO: Skipping running casino.js, since we're already ridiculously wealthy (${formatMoney(playerWealth)} > 1t).`);
-      return ranCasino = true;
-    }
-
-    // If we're making more than ~5b / minute from the start of the BN, there's no need to run casino.
-    // In BN8 this is impossible, so in that case we don't even check and head straight to the casino.
-    if (resetInfo.currentNode != 8) {
-      // If we've been in the BN for less than 1 minute, wait a while to establish player's income rate 
-      if (getTimeInAug() < 60000)
-        return log_once(ns, `INFO: Waiting a minute to establish player income before deciding whether casino.js is needed.`);
-      // Since it's possible that the CashRoot Startker Kit could give a false income velocity, account for that.
-      const cashRootBought = installedAugmentations.includes(`CashRoot Starter Kit`);
-      const incomePerMs = (playerWealth - (cashRootBought ? 1e6 : 0)) / getTimeInAug();
-      const incomePerMinute = incomePerMs * 60_000;
-      if (incomePerMinute >= 5e9) {
-        log(ns, `INFO: Skipping running casino.js this augmentation, since our income (${formatMoney(incomePerMinute)}/min) >= 5b/min`);
-        return ranCasino = true;
-      }
-    }
-
-    // If we aren't in Aevum already, wait until we have the 200K required to travel (plus some extra buffer to actually spend at the casino)
-    if (player.city != "Aevum" && player.money < 300000)
-      return log_once(ns, `INFO: Waiting until we have ${formatMoney(300000)} to travel to Aevum and run casino.js`);
-
-    // Run casino.js (and expect this script to get killed in the process)
-    // Make sure "work-for-factions.js" is dead first, lest it steal focus and break the casino script before it has a chance to kill all scripts.
-    await killScript(ns, 'work-for-factions.js');
-    await killScript(ns, 'daemon.js'); // We also have to kill daemon which can make us study.
-    // Kill any action, in case we are studying or working out, as it might steal focus or funds before we can bet it at the casino.
-    if (4 in unlockedSFs) // No big deal if we can't, casino.js has logic to find the stop button and click it.
-      _ = await getNsDataThroughFile(ns, `ns.singularity.stopAction()`);
-
-    const pid = launchScriptHelper(ns, 'casino.js', ['--kill-all-scripts', true, '--on-completion-script', ns.getScriptName()]);
-    if (pid) {
-      await waitForProcessToComplete(ns, pid);
-      await ns.sleep(10000); // Give time for this script to be killed if the game is being restarted by casino.js
-      // Otherwise, something went wrong
-      log(ns, `ERROR: Something went wrong. casino.js was run, but we haven't been killed. It must have run into a problem...`)
-    }
-  }
-
   /** Retrieves the last faction manager output file, parses, and provides type-hints for it.
    * @returns {{ installed_augs: string[], installed_count: number, installed_count_nf: number, installed_count_ex_nf: number,
    *             owned_augs: string[], owned_count: number, owned_count_nf: number, owned_count_ex_nf: number,
@@ -826,13 +762,21 @@ export async function main(ns) {
 
     const timeInAug = Math.max(1, getTimeInAug());
     const now = Date.now();
+    //never stay more than 4 hours.
+    if (timeInAug > 4 * 60 * 60 * 1000) {
+      augMomentum.nextExpectedAug = now;
+      return;
+    }
 
     if (pendingAugCount > augMomentum.lastAugCount) {
       augMomentum.lastAugCount = pendingAugCount;
       augMomentum.lastIncreaseTime = now;
 
       // allow delay: up to 5x avg, reduced by 1 for every 2 augs, but never below 1x
-      const div = Math.max(1, 5 - Math.ceil(pendingAugCount / 2));
+      let weight = 2;
+      if ((2 in unlockedSFs)) weight += 0.5; //resetting with a gang reduces their multipliers 
+      if ((13 in unlockedSFs)) weight += 0.5; //resetting will reset stanek charges.
+      const div = Math.max(1, 5 - Math.ceil(pendingAugCount / weight));
 
       // "expected time since reset when the next aug should arrive"
       augMomentum.nextExpectedAug = timeInAug + ((timeInAug / pendingAugCount) * div);
@@ -878,9 +822,10 @@ export async function main(ns) {
     updateAugMomentum(ns, pendingAugInclNfCount);
 
     let shouldReset = timeSinceAug >= augMomentum.nextExpectedAug && pendingAugInclNfCount > 2;
-
+    
+    const numAugmentations = daedalusReqs.find(o => o.type === "numAugmentations")?.numAugmentations;
     //we need 30 augs to get an invite from deadalus. Reset to get this.
-    if (playerInstalledAugCount < 30 && pendingAugCount + playerInstalledAugCount >= 30) shouldReset = true;
+    if (playerInstalledAugCount < numAugmentations && pendingAugCount + playerInstalledAugCount >= numAugmentations) shouldReset = true;
     //Always install if we can get the red pill or another critical aug list in the run options
     for (let aug of options['install-for-augs']) {
       if (facman.affordable_augs.includes(aug) ||
@@ -891,7 +836,6 @@ export async function main(ns) {
     const totalCost = facman.total_rep_cost + facman.total_aug_cost;
     ns.write("reserve.txt", totalCost, "w");
 
-    //if (pendingAugInclNfCount >= 12) shouldReset = true;
     if (!shouldReset) return;
 
     if (await shouldDelayInstall(ns, player, facman))

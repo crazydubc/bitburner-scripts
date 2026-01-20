@@ -163,10 +163,10 @@ async function mainLoop(ns) {
         bladeburnerCityChaos = await getNsDataThroughFile(ns, `ns.bladeburner.getCityChaos(ns.args[0])`, null, [bladeburnerCity]);
         bladeburnerContractChances = await getNsDataThroughFile(ns,
             // There is currently no way to get sleeve chance, so assume it is the same as player chance for now. (EDIT: This is a terrible assumption)
-            'Object.fromEntries(ns.args.map(c => [c, ns.bladeburner.getActionEstimatedSuccessChance("contract", c)[0]]))',
+            'Object.fromEntries(ns.args.map(c => [c, ns.bladeburner.getActionEstimatedSuccessChance("Contracts", c)[0]]))',
             '/Temp/sleeve-bladeburner-success-chances.txt', sleeveBbContractNames);
         bladeburnerContractCounts = await getNsDataThroughFile(ns,
-            'Object.fromEntries(ns.args.map(c => [c, ns.bladeburner.getActionCountRemaining("contract", c)]))',
+            'Object.fromEntries(ns.args.map(c => [c, ns.bladeburner.getActionCountRemaining("Contracts", c)]))',
             '/Temp/sleeve-bladeburner-contract-counts.txt', sleeveBbContractNames);
     } else
         bladeburnerCityChaos = 0, bladeburnerContractChances = {}, bladeburnerContractCounts = {};
@@ -253,8 +253,12 @@ async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrai
             }
             var trainStat = untrainedStats.reduce((min, s) => sleeve.skills[s] < sleeve.skills[min] ? s : min, untrainedStats[0]);
             var gym = ns.enums.LocationName.Sector12PowerhouseGym;
-            return [`train ${trainStat} (${gym})`, `ns.sleeve.setToGymWorkout(ns.args[0], ns.args[1], ns.args[2])`, [i, gym, trainStat],
-            /*   */ `training ${trainStat}... ${sleeve.skills[trainStat]}/${(options[`train-to-${trainStat}`])}`];
+            return [
+                `train ${trainStat} (${gym})`,
+                `ns.sleeve.setToGymWorkout(ns.args[0], ns.args[1], ns.args[2])`,
+                [i, gym, trainStat.slice(0, 3)], // Gym expects the short form stat names ('str', 'def', 'dex', 'agi')
+                `training ${trainStat}... ${sleeve.skills[trainStat]}/${(options[`train-to-${trainStat}`])}`
+            ];
             // if we're tough enough, flip over to studying to improve the mental stats
         } else if (untrainedSmarts.length > 0) {
             if (playerInfo.money < 5E6 && !promptedForTrainingBudget)
@@ -266,8 +270,12 @@ async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrai
             var trainSmart = untrainedSmarts.reduce((min, s) => sleeve.skills[s] < sleeve.skills[min] ? s : min, untrainedSmarts[0]);
             var univ = ns.enums.LocationName.VolhavenZBInstituteOfTechnology;
             var course = univClasses[trainSmart];
-            return [`study ${trainSmart} (${univ})`, `ns.sleeve.setToUniversityCourse(ns.args[0], ns.args[1], ns.args[2])`, [i, univ, course],
-            /*   */ `studying ${trainSmart}... ${sleeve.skills[trainSmart]}/${(options[`study-to-${trainSmart}`])}`];
+            return [
+                `study ${trainSmart} (${univ})`,
+                `ns.sleeve.setToUniversityCourse(ns.args[0], ns.args[1], ns.args[2])`,
+                [i, univ, course],
+                `studying ${trainSmart}... ${sleeve.skills[trainSmart]}/${(options[`study-to-${trainSmart}`])}`
+            ];
         }
     }
     // If player is currently working for faction or company rep, a sleeve can help him out (Note: Only one sleeve can work for a faction)
@@ -276,13 +284,21 @@ async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrai
         // We'll cycle through work types until we find one that is supported. TODO: Auto-determine the most productive faction work to do.
         const faction = playerWorkInfo.factionName;
         const work = works[workByFaction[faction] || 0];
-        return [`work for faction '${faction}' (${work})`, `ns.sleeve.setToFactionWork(ns.args[0], ns.args[1], ns.args[2])`, [i, faction, work],
-        /*   */ `helping earn rep with faction ${faction} by doing ${work} work.`];
+        return [
+            `work for faction '${faction}' (${work})`,
+            `ns.sleeve.setToFactionWork(ns.args[0], ns.args[1], ns.args[2])`,
+            [i, faction, work],
+            `helping earn rep with faction ${faction} by doing ${work} work.`
+        ];
     } // Same as above if player is currently working for a megacorp
     if (i == followPlayerSleeve && playerWorkInfo.type == "COMPANY") {
         const companyName = playerWorkInfo.companyName;
-        return [`work for company '${companyName}'`, `ns.sleeve.setToCompanyWork(ns.args[0], ns.args[1])`, [i, companyName],
-        /*   */ `helping earn rep with company ${companyName}.`];
+        return [
+            `work for company '${companyName}'`,
+            `ns.sleeve.setToCompanyWork(ns.args[0], ns.args[1])`,
+            [i, companyName],
+            `helping earn rep with company ${companyName}.`
+        ];
     }
     // If gangs are available, prioritize homicide until we've got the requisite -54K karma to unlock them
     if (!playerInGang && !options['disable-gang-homicide-priority'] && (2 in ownedSourceFiles) && ns.heart.break() > -54000)
@@ -292,12 +308,12 @@ async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrai
         // Hack: Without paying much attention to what's happening in bladeburner, pre-assign a variety of tasks by sleeve index
         const bbTasks = [
             // Note: Sleeve 0 might still be used for faction work (unless --disable-follow-player is set), so don't assign them a 'unique' task
-            /*0*/options['enable-bladeburner-team-building'] ? ["Support main sleeve"] : ["Infiltrate synthoids"],
+            /*0*/options['enable-bladeburner-team-building'] ? ["Support main sleeve"] : ["Infiltrate Synthoids"],
             // Note: Each contract type can only be performed by one sleeve at a time (similar to working for factions)
             /*1*/["Take on contracts", "Retirement"], /*2*/["Take on contracts", "Bounty Hunter"], /*3*/["Take on contracts", "Tracking"],
             // Other bladeburner work can be duplicated, but tackling a variety is probably useful. Overrides occur below
-            /*4*/["Infiltrate synthoids"], /*5*/["Diplomacy"], /*6*/["Field analysis"],
-            /*7*/options['enable-bladeburner-team-building'] ? ["Recruitment"] : ["Infiltrate synthoids"]
+            /*4*/["Infiltrate Synthoids"], /*5*/["Diplomacy"], /*6*/["Field Analysis"],
+            /*7*/options['enable-bladeburner-team-building'] ? ["Recruitment"] : ["Infiltrate Synthoids"]
         ];
         let [action, contractName] = bbTasks[i];
         const contractChance = bladeburnerContractChances[contractName] ?? 1;
@@ -324,7 +340,7 @@ async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrai
         // If the sleeve is on cooldown ,do not perform their designated bladeburner task
         else if (onCooldown()) { // When on cooldown from a failed task, recover shock if applicable, or else add contracts
             if (sleeve.shock > 0) return shockRecoveryTask(sleeve, i, `bladeburner task is on cooldown`);
-            [action, contractName] = ["Infiltrate synthoids"]; // Fall-back to something long-term useful
+            [action, contractName] = ["Infiltrate Synthoids"]; // Fall-back to something long-term useful
         }
         return [`Bladeburner ${action} ${contractName || ''}`.trimEnd(),
         /*   */ `ns.sleeve.setToBladeburnerAction(ns.args[0], ns.args[1], ns.args[2])`, [i, action, contractName ?? ''],

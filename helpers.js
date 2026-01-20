@@ -60,6 +60,14 @@ export function formatNumber(num, minSignificantFigures = 3, minDecimalPlaces = 
   return num == 0.0 ? "0" : num.toFixed(Math.max(minDecimalPlaces, Math.max(0, minSignificantFigures - Math.ceil(Math.log10(num)))));
 }
 
+
+/** Ram-dodge getting player info.
+ * @param {NS} ns
+ * @returns {Promise<Player>} */
+export async function getPlayerInfo(ns) {
+  return await getNsDataThroughFile(ns, `ns.getPlayer()`);
+}
+
 const memorySuffixes = ["GB", "TB", "PB", "EB"];
 
 /** Formats some RAM amount as a round number of GB/TB/PB/EB with thousands separators e.g. `1.028 TB` */
