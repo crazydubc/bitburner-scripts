@@ -9,7 +9,7 @@
  * - eithel
  * - Insight (alainbryden)
  */
-
+ 
 import {
   getConfiguration, instanceCount, log, getErrorInfo, getActiveSourceFiles, getNsDataThroughFile, tail
 } from './helpers.js'
@@ -381,7 +381,7 @@ export async function main(ns) {
       //For, say a 3x3 pattern, we do a grid of 0,0 -> 2, 2
       for (let cx = ((patternSize - 1) * -1); cx <= 0; cx++) { // We've added a wall around everything, so 0 is a wall
         if (cx + x + 1 < 0 || cx + x + 1 > size - 1) continue
-        for (let cy = ((patternSize - 1) * -1); cy <= 0 - 1; cy++) {
+        for (let cy = ((patternSize - 1) * -1); cy <= 0; cy++) {
           //We now have a cycle that will check each section of the grid against the pattern
           //Safety checks: We know 0,0 is safe, we were sent it, but each other section could be bad
           if (cy + y + 1 < 0 || cy + y + 1 > size - 1) continue
@@ -499,7 +499,7 @@ export async function main(ns) {
    * @param {string[]} pattern
    * @returns {string[]} */
   function verticalMirror(pattern) {
-    return pattern.toReversed();
+    return [...pattern].reverse();
   }
 
   /** @param {NS} ns
@@ -882,26 +882,30 @@ export async function main(ns) {
   /** @param {NS} ns
    * @returns {number} */
   function getChainValue(checkx, checky, player) {
-    const size = board[0].length
-    const otherPlayer = player === "X" ? "O" : "X"
-    const explored = new Set()
-    if (contested[checkx][checky] === "?" || board[checkx][checky] === otherPlayer) return 0
-    if (checkx < size - 1) explored.add(JSON.stringify([checkx + 1, checky]))
-    if (checkx > 0) explored.add(JSON.stringify([checkx - 1, checky]))
-    if (checky > 0) explored.add(JSON.stringify([checkx, checky - 1]))
-    if (checky < size - 1) explored.add(JSON.stringify([checkx, checky + 1]))
-    let count = 1
-    for (const explore of explored) {
-      const [x, y] = JSON.parse(explore)
-      if (contested[x][y] === "?" || contested[x][y] === "#" || board[x][y] === otherPlayer) continue
-      count++
-      if (x < size - 1) explored.add(JSON.stringify([x + 1, y]))
-      if (x > 0) explored.add(JSON.stringify([x - 1, y]))
-      if (y > 0) explored.add(JSON.stringify([x, y - 1]))
-      if (y < size - 1) explored.add(JSON.stringify([x, y + 1]))
+    const size = board[0].length;
+    if (board[checkx][checky] !== player) return 0;
+
+    const q = [[checkx, checky]];
+    const seen = new Set([`${checkx},${checky}`]);
+    let count = 0;
+
+    while (q.length) {
+      const [x, y] = q.pop();
+      count++;
+
+      const n = [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]];
+      for (const [nx, ny] of n) {
+        if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+        if (board[nx][ny] !== player) continue;
+        const k = `${nx},${ny}`;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        q.push([nx, ny]);
+      }
     }
-    return count
+    return count;
   }
+
   /** @param {NS} ns
    * @returns {number} */
   function getEyeValue(checkx, checky, player) {
@@ -1072,7 +1076,7 @@ export async function main(ns) {
 
     if (x > 0 && y > 0 && board[x - 1][y - 1] === "O") surround += getChainValue(x - 1, y - 1, "O")
     if (x < size - 1 && y > 0 && board[x + 1][y - 1] === "O") surround += getChainValue(x + 1, y - 1, "O")
-    if (y < size - 1 && x > 0 && board[x - 1][y + 1] === "O") surround += getChainValue(x - 1, y - 1, "O")
+    if (y < size - 1 && x > 0 && board[x - 1][y + 1] === "O") surround += getChainValue(x - 1, y + 1, "O")
     if (y < size - 1 && x < size - 1 && board[x + 1][y + 1] === "O") surround += getChainValue(x + 1, y + 1, "O")
 
     return surround
@@ -1132,7 +1136,7 @@ export async function main(ns) {
         (x > 0 && board[x - 1][y] === "O" && validLibMoves[x - 1][y] >= libsMin && validLibMoves[x - 1][y] <= libsMax) ||
         (x < size - 1 && board[x + 1][y] === "O" && validLibMoves[x + 1][y] >= libsMin && validLibMoves[x + 1][y] <= libsMax) ||
         (y > 0 && board[x][y - 1] === "O" && validLibMoves[x][y - 1] >= libsMin && validLibMoves[x][y - 1] <= libsMax) ||
-        (y < size - 1 && board[x][y + 1] === "O" && validLibMoves[x][y + 1] >= libsMin && validLibMoves <= libsMax)) ? true : false
+        (y < size - 1 && board[x][y + 1] === "O" && validLibMoves[x][y + 1] >= libsMin && validLibMoves[x][y + 1] <= libsMax)) ? true : false
       const surround = getSurroundLibs(x, y, "X")
       const freeSpace = getFreeSpace(x, y)
       if (freeSpace < minFreeSpace) continue
@@ -1180,7 +1184,7 @@ export async function main(ns) {
         (x > 0 && board[x - 1][y] === "O" && validLibMoves[x - 1][y] >= libsMin && validLibMoves[x - 1][y] <= libsMax) ||
         (x < size - 1 && board[x + 1][y] === "O" && validLibMoves[x + 1][y] >= libsMin && validLibMoves[x + 1][y] <= libsMax) ||
         (y > 0 && board[x][y - 1] === "O" && validLibMoves[x][y - 1] >= libsMin && validLibMoves[x][y - 1] <= libsMax) ||
-        (y < size - 1 && board[x][y + 1] === "O" && validLibMoves[x][y + 1] >= libsMin && validLibMoves <= libsMax)) ? true : false
+        (y < size - 1 && board[x][y + 1] === "O" && validLibMoves[x][y + 1] >= libsMin && validLibMoves[x][y + 1] <= libsMax)) ? true : false
       const surround = getSurroundLibs(x, y, "X")
       const freeSpace = getFreeSpace(x, y)
       if (freeSpace < minFreeSpace) continue
@@ -1345,20 +1349,17 @@ export async function main(ns) {
     return notMine ? currentValidContestedMoves : currentValidMoves
   }
   function createsLib(x, y, player) {
-    const size = board[0].length
+    const size = board[0].length;
+    let touchesTwoLibGroup = false;
 
-    if (x > 0 && board[x - 1][y] === player && validLibMoves[x - 1][y] > 2) return false
-    if (x < size - 1 && board[x + 1][y] === player && validLibMoves[x + 1][y] > 2) return false
-    if (y > 0 && board[x][y - 1] === player && validLibMoves[x][y - 1] > 2) return false
-    if (y < size - 1 && board[x][y + 1] === player && validLibMoves[x][y + 1] > 2) return false
+    if (x > 0 && board[x - 1][y] === player && validLibMoves[x - 1][y] === 2) touchesTwoLibGroup = true;
+    if (x < size - 1 && board[x + 1][y] === player && validLibMoves[x + 1][y] === 2) touchesTwoLibGroup = true;
+    if (y > 0 && board[x][y - 1] === player && validLibMoves[x][y - 1] === 2) touchesTwoLibGroup = true;
+    if (y < size - 1 && board[x][y + 1] === player && validLibMoves[x][y + 1] === 2) touchesTwoLibGroup = true;
 
-    if (x > 0 && board[x - 1][y] === player && validLibMoves[x - 1][y] === 2) return true
-    if (x < size - 1 && board[x + 1][y] === player && validLibMoves[x + 1][y] === 2) return true
-    if (y > 0 && board[x][y - 1] === player && validLibMoves[x][y - 1] === 2) return true
-    if (y < size - 1 && board[x][y + 1] === player && validLibMoves[x][y + 1] === 2) return true
-
-    return false
+    return touchesTwoLibGroup;
   }
+
   /** @returns {{coords: number[];msg: string;}} */
   function getOpeningMove() {
     const size = board[0].length
