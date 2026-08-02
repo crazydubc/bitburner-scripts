@@ -53,7 +53,7 @@ export async function main(ns) {
         return log(ns, `INFO: Shutting down due to host purchasing being disabled in this BN...`);
 
     // Get the maximum size of purchased servers in this bitnode
-    const purchasedServerMaxRam = await getNsDataThroughFile(ns, 'ns.cloud.getPurchasedServerMaxRam()');
+    const purchasedServerMaxRam = await getNsDataThroughFile(ns, 'ns.cloud.getRamLimit()');
     maxPurchasableServerRamExponent = Math.log2(purchasedServerMaxRam);
     log(ns, `INFO: Max purchasable RAM has been detected as 2^${maxPurchasableServerRamExponent} (${formatRam(2 ** maxPurchasableServerRamExponent)}).`);
 
