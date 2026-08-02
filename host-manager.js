@@ -47,7 +47,7 @@ export async function main(ns) {
     ns.disableLog('ALL')
 
     // Get the maximum number of purchased servers in this bitnode
-    maxPurchasedServers = await getNsDataThroughFile(ns, 'ns.getPurchasedServerLimit()');
+    maxPurchasedServers = await getNsDataThroughFile(ns, 'ns.cloud.getServerLimit()');
     log(ns, `INFO: Max purchasable servers has been detected as ${maxPurchasedServers.toFixed(0)}.`);
     if (maxPurchasedServers == 0)
         return log(ns, `INFO: Shutting down due to host purchasing being disabled in this BN...`);
