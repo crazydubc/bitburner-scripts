@@ -42,7 +42,6 @@ export async function bitflume(ns, bn, script) { return await runScriptLocal(ns,
 export async function setStasis(ns, shouldLink = true) { return await runScript(ns, "bin/setStasisLink.js", false, [shouldLink]) }
 
 export async function getOwnedAugs(ns, included = true) { return await runScript(ns, "bin/ownedAugs.js", false, [included]) }
-export async function getOwnedSF(ns) { return await runScript(ns, "bin/getOwnedSF.js", false, []) }
 export async function getFacInvReqs(ns, faction) { return await runScript(ns, "bin/getFacInvReqs.js", false, [faction]) }
 
 export async function crackHosts(ns) { return await runScript(ns, "Tasks/crack-host.js", false, []) }
@@ -183,7 +182,7 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
     if (thispid > 0) return thispid;
   }
   while (true) {
-    const servers = await getServersLight(ns)
+    const servers = await getServersLight(ns);
     let emergencyReserve = !persistent ? false : await getServerAvailRam(ns, "home") <= 16 ? true : false
     const maxRam = !persistent ? 0 : await maxRun(ns, persistent)
     const resRam = !persistent ? 0 : maxRam >= 256 ? 256 : maxRam >= 128 ? 128 : maxRam >= 64 ? 64 : maxRam >= 32 ? 32 : 16
@@ -466,6 +465,14 @@ export function getConfiguration(ns, argsSchema) {
           : `\nThis error may have been caused by your local overriding "${confName}" (especially if you changed the types of any options):\n${overrides}`), true);
     return null; // Caller should handle null and shut down elegantly.
   }
+}
+
+export async function getOwnedSF(ns) {
+  checkNsInstance(ns, '"getOwnedSF"');
+  const cost = ns.getScriptRam('bin/getOwnedSF.js');
+  //const bn = (await getReset(ns)).currentNode;
+  if (cost > 20) return { 1: 1 };
+  return await runScript(ns, "bin/getOwnedSF.js", false, []) 
 }
 /** Helper to check which of a set of files exist on a remote server in a single batch ram-dodging request
  * @param {NS} ns*/

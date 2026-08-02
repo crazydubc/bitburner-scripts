@@ -35,6 +35,7 @@ export async function main(ns) {
   ];
   //disableLogs(ns, ['getServerMaxRam', 'getServerUsedRam', 'getServerMoneyAvailable', 'getServerGrowth', 'getServerSecurityLevel', 'exec', 'scan', 'sleep', 'scp'])
 
+  await crackHosts(ns); //do an initial crack to run scripts on other servers
   const augTRP = "The Red Pill";
   const augStanek = `Stanek's Gift - Genesis`;
   let player = await getPlayerInfo(ns);
