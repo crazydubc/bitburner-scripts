@@ -1272,7 +1272,6 @@ export async function main(ns) {
   }
 
   /** return a "performance snapshot" (Ram required for the cycle) to compare against optimal, or another snapshot
-   * TODO: Better gauge of performance might be money stolen per (RAM * time) cost
    * @param {} currentTarget
    * @param {{ listOfServersFreeRam: number[]; totalMaxRam: number; totalFreeRam: number; totalUsedRam: number; }} networkStats */
   function getPerformanceSnapshot(currentTarget, networkStats) {
@@ -1394,6 +1393,23 @@ export async function main(ns) {
     }
     return 0.00;
   }
+  
+  function fitBatchToThreads(target, maxThreads) {
+  let H = target.getHackThreadsNeeded();
+  while (H >= 1) {
+    // You may need to add helper methods that compute grow/weaken from a chosen H.
+    const W1 = target.getWeakenThreadsNeededAfterTheft(H);
+    const G  = target.getGrowThreadsNeededAfterTheft(H);
+    const W2 = target.getWeakenThreadsNeededAfterGrowth(G, H);
+
+    const total = H + W1 + G + W2;
+    if (total <= maxThreads) return { H, W1, G, W2 };
+    H--;
+  }
+  return null;
+}
+
+
 
   /** @param {NS} ns **/
   async function performScheduling(ns, currentTarget, snapshot) {
@@ -1406,12 +1422,18 @@ export async function main(ns) {
     if (currentTarget.getHackThreadsNeeded() === 0)
       return log(ns, `WARNING: Attempted to schedule empty cycle ${maxCycles} x ${getTargetSummary(currentTarget)}? ${JSON.stringify(snapshot)}`, false, 'warning');
     let firstEnding = null, lastStart = null, lastBatch = 0, cyclesScheduled = 0;
+
+    // How many threads do we have free *right now*?
+const maxThreadsNow = getTool("hack").getMaxThreads(); // (or whichever tool has accurate "max threads across network")
+const batchPlan = fitBatchToThreads(currentTarget, maxThreadsNow);
+if (!batchPlan) return false;
+
     while (cyclesScheduled < maxCycles) {
       const newBatchStart = new Date((cyclesScheduled === 0) ? Date.now() + queueDelay : lastBatch.getTime() + cycleTimingDelay);
       lastBatch = new Date(newBatchStart.getTime());
       const batchTiming = getScheduleTiming(newBatchStart, currentTarget);
       if (verbose && runOnce) logSchedule(ns, batchTiming, currentTarget); // Special log for troubleshooting batches
-      const newBatch = getScheduleObject(ns, batchTiming, currentTarget, scheduledTasks.length);
+      const newBatch = getScheduleObject(ns, batchTiming, currentTarget, scheduledTasks.length, batchPlan);
       if (firstEnding === null) { // Can't start anything after this first hack completes (until back at min security), or we risk throwing off timing
         firstEnding = new Date(newBatch.hackEnd.valueOf());
       }
@@ -1430,7 +1452,7 @@ export async function main(ns) {
       for (const schedItem of schedObj.scheduleItems) {
         const discriminationArg = `Batch ${schedObj.batchNumber}-${schedItem.description}`;
         // Args spec: [0: Target, 1: DesiredStartTime (used to delay tool start), 2: ExpectedEndTime (informational), 3: Duration (informational), 4: DoStockManipulation, 5: DisableWarnings]
-        const args = [currentTarget.name, schedItem.start.getTime(), schedItem.end - schedItem.start, discriminationArg];
+        const args = [currentTarget.name, schedItem.start.getTime(), schedItem.end.getTime(), discriminationArg];
         args.push(...getFlagsArgs(schedItem.toolShortName, currentTarget.name));
         if (options.i && currentTerminalServer?.name == currentTarget.name && schedItem.toolShortName == "hack")
           schedItem.toolShortName = "manualhack";
@@ -1502,58 +1524,65 @@ export async function main(ns) {
     return schedule;
   }
 
-  function getScheduleObject(ns, batchTiming, currentTarget, batchNumber) {
-    let schedItems = [];
+  function getScheduleObject(ns, batchTiming, currentTarget, batchNumber, batchPlan = null) {
+  let schedItems = [];
 
-    const schedHack = getScheduleItem("hack", "hack", batchTiming.hackStart, batchTiming.hackEnd, currentTarget.getHackThreadsNeeded());
-    const schedWeak1 = getScheduleItem("weak1", "weak", batchTiming.firstWeakenStart, batchTiming.firstWeakenEnd, currentTarget.getWeakenThreadsNeededAfterTheft());
-    // Special end-game case, if we have no choice but to hack a server to zero money, schedule back-to-back grows to restore money
-    // TODO: This approach isn't necessary if we simply include the `growThreadsNeeded` logic to take into account the +1$ added before grow.
-    let schedGrow, schedWeak2;
-    if (currentTarget.percentageStolenPerHackThread() >= 1) {
-      // Use math and science to minimize total threads required to inject 1 dollar per threads, then grow that to max.
-      let calcThreadsForGrow = money => Math.ceil(((Math.log(1 / (money / currentTarget.getMaxMoney())) / Math.log(currentTarget.adjustedGrowthRate()))
-        / currentTarget.serverGrowthPercentage()).toPrecision(14));
-      let stepSize = Math.floor(currentTarget.getMaxMoney() / 4), injectThreads = stepSize, schedGrowThreads = calcThreadsForGrow(injectThreads);
-      for (let i = 0; i < 100 && stepSize > 0; i++) {
-        if (injectThreads + schedGrowThreads > (injectThreads + stepSize) + calcThreadsForGrow(injectThreads + stepSize))
-          injectThreads += stepSize;
-        else if (injectThreads + schedGrowThreads > (injectThreads - stepSize) + calcThreadsForGrow(injectThreads - stepSize))
-          injectThreads -= stepSize;
-        schedGrowThreads = calcThreadsForGrow(injectThreads);
-        stepSize = Math.floor(stepSize / 2);
-      }
-      schedItems.push(getScheduleItem("grow-from-zero", "grow", new Date(batchTiming.growStart.getTime() - (cycleTimingDelay / 8)),
-        new Date(batchTiming.growEnd.getTime() - (cycleTimingDelay / 8)), injectThreads)); // Will put $injectThreads on the server
-      // This will then grow from whatever % $injectThreads is back to 100%
-      schedGrow = getScheduleItem("grow", "grow", batchTiming.growStart, batchTiming.growEnd, schedGrowThreads);
-      schedWeak2 = getScheduleItem("weak2", "weak", batchTiming.secondWeakenStart, batchTiming.secondWeakenEnd,
-        Math.ceil(((injectThreads + schedGrowThreads) * growthThreadHardening / actualWeakenPotency()).toPrecision(14)));
-      if (verbose) log(ns, `INFO: Special grow strategy since percentage stolen per hack thread is 100%: G1: ${injectThreads}, G1: ${schedGrowThreads}, W2: ${schedWeak2.threadsNeeded} (${currentTarget.name})`);
-    } else {
-      schedGrow = getScheduleItem("grow", "grow", batchTiming.growStart, batchTiming.growEnd, currentTarget.getGrowThreadsNeededAfterTheft());
-      schedWeak2 = getScheduleItem("weak2", "weak", batchTiming.secondWeakenStart, batchTiming.secondWeakenEnd, currentTarget.getWeakenThreadsNeededAfterGrowth());
+  // Default to current behavior if no plan is provided
+  const hackThreads = batchPlan?.H ?? currentTarget.getHackThreadsNeeded();
+  const weak1Threads = batchPlan?.W1 ?? currentTarget.getWeakenThreadsNeededAfterTheft();
+
+  const schedHack  = getScheduleItem("hack",  "hack", batchTiming.hackStart,        batchTiming.hackEnd,        hackThreads);
+  const schedWeak1 = getScheduleItem("weak1", "weak", batchTiming.firstWeakenStart, batchTiming.firstWeakenEnd, weak1Threads);
+
+  let schedGrow, schedWeak2;
+
+  // Keep your special "hack steals 100%" logic intact unless you want to rework it too.
+  if (currentTarget.percentageStolenPerHackThread() >= 1 && !batchPlan) {
+    // (unchanged special case code)
+    let calcThreadsForGrow = money => Math.ceil(((Math.log(1 / (money / currentTarget.getMaxMoney())) / Math.log(currentTarget.adjustedGrowthRate()))
+      / currentTarget.serverGrowthPercentage()).toPrecision(14));
+    let stepSize = Math.floor(currentTarget.getMaxMoney() / 4), injectThreads = stepSize, schedGrowThreads = calcThreadsForGrow(injectThreads);
+    for (let i = 0; i < 100 && stepSize > 0; i++) {
+      if (injectThreads + schedGrowThreads > (injectThreads + stepSize) + calcThreadsForGrow(injectThreads + stepSize))
+        injectThreads += stepSize;
+      else if (injectThreads + schedGrowThreads > (injectThreads - stepSize) + calcThreadsForGrow(injectThreads - stepSize))
+        injectThreads -= stepSize;
+      schedGrowThreads = calcThreadsForGrow(injectThreads);
+      stepSize = Math.floor(stepSize / 2);
     }
+    schedItems.push(getScheduleItem("grow-from-zero", "grow",
+      new Date(batchTiming.growStart.getTime() - (cycleTimingDelay / 8)),
+      new Date(batchTiming.growEnd.getTime()   - (cycleTimingDelay / 8)),
+      injectThreads));
 
-    if (hackOnly) {
-      schedItems.push(schedHack);
-    } else {
-      // Schedule hack/grow first, because they cannot be split, and start with whichever requires the biggest chunk of free RAM
-      schedItems.push(...(schedHack.threadsNeeded > schedGrow.threadsNeeded ? [schedHack, schedGrow] : [schedGrow, schedHack]));
-      // Scheduler should ensure there's room for both, but splitting threads is annoying, so schedule the biggest first again to avoid fragmentation
-      schedItems.push(...(schedWeak1.threadsNeeded > schedWeak2.threadsNeeded ? [schedWeak1, schedWeak2] : [schedWeak2, schedWeak1]));
-    }
+    schedGrow  = getScheduleItem("grow",  "grow", batchTiming.growStart,        batchTiming.growEnd,        schedGrowThreads);
+    schedWeak2 = getScheduleItem("weak2", "weak", batchTiming.secondWeakenStart, batchTiming.secondWeakenEnd,
+      Math.ceil(((injectThreads + schedGrowThreads) * growthThreadHardening / actualWeakenPotency()).toPrecision(14)));
+  } else {
+    const growThreads  = batchPlan?.G  ?? currentTarget.getGrowThreadsNeededAfterTheft();
+    const weak2Threads = batchPlan?.W2 ?? currentTarget.getWeakenThreadsNeededAfterGrowth();
 
-    const scheduleObject = {
-      batchNumber: batchNumber,
-      batchStart: batchTiming.batchStart,
-      lastFire: batchTiming.lastFire,
-      hackEnd: batchTiming.hackEnd,
-      batchFinish: hackOnly ? batchTiming.hackEnd : batchTiming.secondWeakenEnd,
-      scheduleItems: schedItems
-    };
-    return scheduleObject;
+    schedGrow  = getScheduleItem("grow",  "grow", batchTiming.growStart,         batchTiming.growEnd,         growThreads);
+    schedWeak2 = getScheduleItem("weak2", "weak", batchTiming.secondWeakenStart, batchTiming.secondWeakenEnd, weak2Threads);
   }
+
+  if (hackOnly) {
+    schedItems.push(schedHack);
+  } else {
+    schedItems.push(...(schedHack.threadsNeeded > schedGrow.threadsNeeded ? [schedHack, schedGrow] : [schedGrow, schedHack]));
+    schedItems.push(...(schedWeak1.threadsNeeded > schedWeak2.threadsNeeded ? [schedWeak1, schedWeak2] : [schedWeak2, schedWeak1]));
+  }
+
+  return {
+    batchNumber,
+    batchStart: batchTiming.batchStart,
+    lastFire: batchTiming.lastFire,
+    hackEnd: batchTiming.hackEnd,
+    batchFinish: hackOnly ? batchTiming.hackEnd : batchTiming.secondWeakenEnd,
+    scheduleItems: schedItems
+  };
+}
+
 
   // initialize a new incomplete schedule item
   function getScheduleItem(description, toolShortName, start, end, threadsNeeded) {
@@ -1594,8 +1623,11 @@ export async function main(ns) {
     // Push all "hacknet servers" to the end of the preferred list, since they will lose productivity if used
     const anyHacknetNodes = [];
     let hnNodeIndex;
-    while (-1 !== (hnNodeIndex = preferredServerOrder.indexOf(s => s.name.startsWith('hacknet-server-') || s.name.startsWith('hacknet-node-'))))
+    while (-1 !== (hnNodeIndex = preferredServerOrder.findIndex(s =>
+      s.name.startsWith('hacknet-server-') || s.name.startsWith('hacknet-node-')
+    ))) {
       anyHacknetNodes.push(...preferredServerOrder.splice(hnNodeIndex, 1));
+    }
     preferredServerOrder.push(...anyHacknetNodes.sort((a, b) => b.totalRam(igRes) != a.totalRam(igRes) ? b.totalRam(igRes) - a.totalRam(igRes) : a.name.localeCompare(b.name)));
 
     // Allow for an overriding "preferred" server to be used in the arguments, and slot it to the front regardless of the above
