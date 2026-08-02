@@ -148,7 +148,7 @@ export async function runScript(ns, scriptName, persistent, args = []) {
   checkNsInstance(ns, '"runScript"');
 
   let pidof;
-  while ((pidof = await runScriptSomewhere(ns, scriptName, persistent, args, 0)) == 0) {
+  while ((pidof = await runScriptLocal(ns, scriptName, persistent, args, 0)) == 0) {
     if (persistent) return 0;
     await ns.sleep(100);
   }

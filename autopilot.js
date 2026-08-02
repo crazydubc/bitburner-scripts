@@ -9,6 +9,7 @@ import { recordBnStart, printBnRunSummary, RUNLOG_FILE } from './logger.js'
 
 /** @param {NS} ns */
 export async function main(ns) {
+  ns.ramOverride(4)
   const factionManagerOutputFile = "/Temp/affordable-augs.txt"; // Temp file produced by faction manager with status information
     const defaultBnOrder = [ // The order in which we intend to play bitnodes
     // 1st Priority: Key new features and/or major stat boosts
@@ -34,8 +35,9 @@ export async function main(ns) {
     12.9999999
   ];
   //disableLogs(ns, ['getServerMaxRam', 'getServerUsedRam', 'getServerMoneyAvailable', 'getServerGrowth', 'getServerSecurityLevel', 'exec', 'scan', 'sleep', 'scp'])
-
+  log(ns, `Cracking initial hosts..`, 'info')
   await crackHosts(ns); //do an initial crack to run scripts on other servers
+  log(ns, `Cracked!`, 'info')
   const augTRP = "The Red Pill";
   const augStanek = `Stanek's Gift - Genesis`;
   let player = await getPlayerInfo(ns);
