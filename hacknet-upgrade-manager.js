@@ -1,16 +1,15 @@
-import { getConfiguration, disableLogs, formatDuration, formatMoney, } from './helpers.js'
+import { getConfiguration, disableLogs, formatDuration, formatMoney, } from './utils.js'
 
 let haveHacknetServers = true; // Cached flag after detecting whether we do (or don't) have hacknet servers
 const argsSchema = [
-  ['max-payoff-time', '1h'], // Controls how far to upgrade hacknets. Can be a number of seconds, or an expression of minutes/hours (e.g. '123m', '4h')
+  ['max-payoff-time', '4h'], // Controls how far to upgrade hacknets. Can be a number of seconds, or an expression of minutes/hours (e.g. '123m', '4h')
   ['time', null], // alias for max-payoff-time
   ['c', false], // Set to true to run continuously, otherwise, it runs once
   ['continuous', false],
-  ['interval', 1000], // Rate at which the program purchases upgrades when running continuously
+  ['interval', 100], // Rate at which the program purchases upgrades when running continuously
   ['max-spend', Number.MAX_VALUE], // The maximum amount of money to spend on upgrades
   ['toast', false], // Set to true to toast purchases
   ['reserve', null], // Reserve this much cash (defaults to contents of reserve.txt if not specified)
-
 ];
 
 export function autocomplete(data, _) {
@@ -70,11 +69,11 @@ export function upgradeHacknet(ns, maxSpend, maxPayoffTimeSeconds = 3600 /* 3600
   const minCacheLevel = [...Array(ns.hacknet.numNodes()).keys()].reduce((min, i) => Math.min(min, ns.hacknet.getNodeStats(i).cache), Number.MAX_VALUE);
   // Note: Formulas API has a hashGainRate which should agree with these calcs, but this way they're available even without the formulas API
   const upgrades = [{ name: "none", cost: 0 }, {
-    name: "level", upgrade: ns.hacknet.upgradeLevel, cost: i => ns.hacknet.getLevelUpgradeCost(i, 1), nextValue: nodeStats => nodeStats.level + 1,
-    addedProduction: nodeStats => nodeStats.production * ((nodeStats.level + 1) / nodeStats.level - 1)
-  }, {
     name: "ram", upgrade: ns.hacknet.upgradeRam, cost: i => ns.hacknet.getRamUpgradeCost(i, 1), nextValue: nodeStats => nodeStats.ram * 2,
     addedProduction: nodeStats => nodeStats.production * 0.07
+  }, {
+    name: "level", upgrade: ns.hacknet.upgradeLevel, cost: i => ns.hacknet.getLevelUpgradeCost(i, 1), nextValue: nodeStats => nodeStats.level + 1,
+    addedProduction: nodeStats => nodeStats.production * ((nodeStats.level + 1) / nodeStats.level - 1)
   }, {
     name: "cores", upgrade: ns.hacknet.upgradeCore, cost: i => ns.hacknet.getCoreUpgradeCost(i, 1), nextValue: nodeStats => nodeStats.cores + 1,
     addedProduction: nodeStats => nodeStats.production * ((nodeStats.cores + 5) / (nodeStats.cores + 4) - 1)
@@ -136,7 +135,7 @@ export function upgradeHacknet(ns, maxSpend, maxPayoffTimeSeconds = 3600 /* 3600
     setStatus(ns, `The next best purchase would be ${strPurchase}, but the ${strPayoff} is worse than the limit (${formatDuration(1000 * maxPayoffTimeSeconds)})`);
     return false; // Shut-down. As long as maxPayoffTimeSeconds doesn't change, we will never purchase another upgrade
   }
-  const reserve = (options['reserve'] != null ? options['reserve'] : Number(ns.read("reserve.txt") || 0));
+  const reserve = Number(ns.read("reserve.txt") || 0);
   const playerMoney = ns.getPlayer().money;
   if (cost > playerMoney - reserve) {
     setStatus(ns, `The next best purchase would be ${strPurchase}, but the cost exceeds the our ` +

@@ -1,234 +1,276 @@
-import {
-  log, disableLogs, getFilePath, getConfiguration, formatNumberShort, formatRam,
-  getNsDataThroughFile, waitForProcessToComplete, getActiveSourceFiles, instanceCount, unEscapeArrayArgs,
-  tail
-} from './helpers.js'
-
-// Name of the external script that will be created and called to generate charges
-const chargeScript = "stanek.charge.js";
-let awakeningRep = 1E6, serenityRep = 100E6; // Base reputation cost - can be scaled by bitnode multipliers
+import { log, getConfiguration, getReset, stanekRun, bbRun } from './utils.js'
 
 const argsSchema = [
-  ['reserved-ram', 32], // Don't use this RAM
-  ['reserved-ram-ideal', 64], // Leave this amount of RAM free if it represents less than 5% of available RAM
-  ['max-charges', 120], // Stop charging when all fragments have this many charges (diminishing returns - num charges is ^0.07 )
-  // By default, starting an augmentation with stanek.js will still spawn daemon.js, but will instruct it not to schedule any hack cycles against home by 'reserving' all its RAM
-  // TODO: Set these defaults in some way that the user can explicitly specify that they want to run **no** startup script and **no** completion script
-  ['on-startup-script', null], // Spawn this script when stanek is launched
-  ['on-startup-script-args', []], // Args for the above
-  // When stanek completes, it will run daemon.js again (which will terminate the initial ram-starved daemon that is running)
-  ['on-completion-script', null], // Spawn this script when max-charges is reached
-  ['on-completion-script-args', []], // Optional args to pass to the script when launched
-  ['no-tail', false], // By default, keeps a tail window open, because it's pretty important to know when this script is running (can't use home for anything else)
-  ['reputation-threshold', 0.2], // By default, if we are this close to the rep needed for an unowned stanek upgrade (e.g. "Stanek's Gift - Serenity"), we will keep charging despite the 'max-charges' setting
+  ['clear', false], // If set to true, will clear whatever layout is already there and create a new one
+  ['force-width', null], // Force the layout less than or equal to the specified width
+  ['force-height', null], // Force the layout less than or equal to the specified height
 ];
-
 export function autocomplete(data, args) {
   data.flags(argsSchema);
   return [];
 }
 
-let options, maxCharges, idealReservedRam = 32, chargeAttempts, sf4Level, shouldContinueForAug;
-
-/** Maximizes charge on stanek fragments based on current home RAM.
- * NOTE: You should have no other scripts running on home while you do this to get the best peak charge possible
- *       Stanek stats benefit more from charges with a high avg RAM used per charge, rather than just more charges.
- * @param {NS} ns **/
-export async function main(ns) {
-  const runOptions = getConfiguration(ns, argsSchema);
-  if (!runOptions || await instanceCount(ns) > 1) return; // Prevent multiple instances of this script from being started, even with different args.
-  options = runOptions; // We don't set the global "options" until we're sure this is the only running instance
-  disableLogs(ns, ['sleep', 'run', 'getServerMaxRam', 'getServerUsedRam'])
-
-  // Validate whether we can run
-  if ((await getActiveFragments(ns)).length == 0) {
-    // Try to run our helper script to set up the grid
-    const pid = ns.run(getFilePath('stanek.js.create.js'));
-    if (pid) await waitForProcessToComplete(ns, pid);
-    else log(ns, "ERROR while attempting to run stanek.js.create.js (pid was 0)");
-    // Verify that this worked.
-    if ((await getActiveFragments(ns)).length == 0)
-      return log(ns, "ERROR: You must manually populate your stanek grid with your desired fragments before you run this script to charge them.", true, 'error');
-  }
-
-  //currentServer = await getNsDataThroughFile(ns, `ns.getHostname()`);
-  maxCharges = options['max-charges']; // Don't bother adding charges beyond this amount
-  //idealReservedRam = 32; // Reserve this much RAM, if it wouldnt make a big difference anyway. Leaves room for other temp-scripts to spawn.
-  let startupScript = options['on-startup-script'];
-  let startupArgs = unEscapeArrayArgs(options['on-startup-script-args']);
-  if (startupScript) {
-    // If so configured, launch the start-up script to run alongside stanek and let it consume the RAM it needs before initiating stanek loops.
-    if (ns.run(startupScript, 1, ...startupArgs)) {
-      log(ns, `INFO: Stanek.js is launching accompanying 'on-startup-script': ${startupScript}...`, false, 'info');
-      await ns.sleep(1000); // Give time for the accompanying script to start up and consume its required RAM footprint.
-    } else
-      log(ns, `WARNING: Stanek.js has started successfully, but failed to launch accompanying 'on-startup-script': ${startupScript}...`, false, 'warning');
-  }
-  chargeAttempts = {}; // We keep track of how many times we've charged each segment, to work around a placement bug where fragments can overlap, and then don't register charge
-
-  // Check what augs we own and establish the theshold to continue grinding REP if we're close to one.
-  const ownedSourceFiles = await getActiveSourceFiles(ns);
-  sf4Level = ownedSourceFiles[4] || 0;
-  shouldContinueForAug = () => false;
-  if (sf4Level == 0) {
-    log(ns, `INFO: SF4 required to get owned faction rep and augmentation info. Ignoring the --reputation-threshold setting.`);
-  } else {
-    const ownedAugmentations = await getNsDataThroughFile(ns, `ns.singularity.getOwnedAugmentations(true)`, '/Temp/player-augs-purchased.txt');
-    const [strAwakening, strSerenity] = ["Stanek's Gift - Awakening", "Stanek's Gift - Serenity"];
-    const [awakeningOwned, serenityOwned] = [ownedAugmentations.includes(strAwakening), ownedAugmentations.includes(strSerenity)];
-    if (!awakeningOwned || !serenityOwned) {
-      [awakeningRep, serenityRep] = await getNsDataThroughFile(ns,
-        `[${[strAwakening, strSerenity].map(a => `ns.singularity.getAugmentationRepReq(\"${a}\")`)}]`,
-        '/Temp/stanek-aug-rep-reqs.txt');
-      log(ns, `INFO: Stanek Augmentations Rep Requirements are Awakening: ${formatNumberShort(awakeningRep)}, ` +
-        `Serenity: ${formatNumberShort(serenityRep)} (--reputation-threshold = ${options['reputation-threshold']})`);
-    }
-    shouldContinueForAug = (currentRep) => // return true if currentRep is high enough that we should keep grinding for the next unowned aug
-      !awakeningOwned && options['reputation-threshold'] * awakeningRep <= currentRep && currentRep < awakeningRep ||
-      !serenityOwned && options['reputation-threshold'] * serenityRep <= currentRep && currentRep < serenityRep
-  }
-
-  // Start the main stanek loop
-  let lastLoopSuccessful = true;
-  while (true) {
-    await ns.sleep(lastLoopSuccessful ? 10 : 1000); // Only sleep a short while between charges if things are going well
-    lastLoopSuccessful = false;
-    try {
-      if (!options['no-tail']) tail(ns); // Keep a tail window open unless otherwise configured
-      const fragmentsToCharge = await getFragmentsToCharge(ns);
-      if (fragmentsToCharge === undefined) continue;
-      if (fragmentsToCharge.length == 0) break; // All fragments at max desired charge
-      lastLoopSuccessful = await tryChargeAllFragments(ns, fragmentsToCharge);
-    }
-    catch (err) {
-      log(ns, `WARNING: stanek.js Caught (and suppressed) an unexpected error in the main loop:\n` +
-        (typeof err === 'string' ? err : err.message || JSON.stringify(err)), false, 'warning');
-    }
-  }
-  log(ns, `SUCCESS: All stanek fragments at desired charge ${maxCharges}`, true, 'success');
-
-  // Run the completion script before shutting down
-  let completionScript = options['on-completion-script'];
-  let completionArgs = unEscapeArrayArgs(options['on-completion-script-args']);
-  if (completionScript) {
-    if (ns.run(completionScript, 1, ...completionArgs)) {
-      log(ns, `INFO: Stanek.js shutting down and launching ${completionScript}...`, false, 'info');
-      if (!options['no-tail'])
-        ns.ui.closeTail(); // Close the tail window if we opened it
-    } else
-      log(ns, `WARNING: Stanek.js shutting down, but failed to launch ${completionScript}...`, false, 'warning');
-  }
-}
-
-/** Get Fragments to Charge
- * @param {NS} ns
- * @returns {Promise<ActiveFragment[]>} whether all fragments were charged successfully **/
-async function getFragmentsToCharge(ns) {
-  // Make sure we have the latest information about all fragments
-  let fragments = await getActiveFragments(ns);
-  if (fragments.length == 0) {
-    log(ns, "ERROR: Stanek fragments were cleared. You must re-populate the grid before charging can continue.", true, 'error');
-    return undefined;
-  }
-  // If we have SF4, get our updated faction rep, and determine if we should continue past --max-charges to earn rep for the next augmentation
-  const churchRep = sf4Level ? await getNsDataThroughFile(ns, 'ns.singularity.getFactionRep(ns.args[0])', null, ["Church of the Machine God"]) : 0;
-  const shouldContinue = shouldContinueForAug(churchRep);
-
-  // Collect information about each fragment's charge status, and prepare a status update
-  let fragmentSummary = '';
-  let minCharges = Number.MAX_SAFE_INTEGER;
-  for (const fragment of fragments) {
-    fragmentSummary += `Fragment ${String(fragment.id).padStart(2)} at [${fragment.x},${fragment.y}] ` +
-      (fragment.id < 100 ? `Peak: ${formatNumberShort(fragment.highestCharge)} Charges: ${fragment.numCharge.toFixed(1)}` :
-        `(booster, no charge effect)`) + `\n`;
-    if (fragment.numCharge == 0 && (chargeAttempts[fragment.id] || 0) > 0) { // Ignore fragments that aren't accepting charge.
-      if (chargeAttempts[fragment.id] == 1 && fragment.id < 100) { // First time we do this, log a message
-        log(ns, `WARNING: Detected that fragment ${fragment.id} at [${fragment.x},${fragment.y}] is not accepting charge nano (root overlaps with another segment root?)`, true, 'warning');
-        chargeAttempts[fragment.id] = 2; // Hack: We will never try to charge this fragment again. Abuse this dict value so we don't see htis log again.
-      }
-    } else if (fragment.id < 100)
-      minCharges = Math.min(minCharges, fragment.numCharge) // Track the least-charged fragment (ignoring fragments that take no charge)
-  }
-  minCharges = Math.ceil(minCharges); // Fractional charges now occur. Round these up.
-  if (minCharges >= maxCharges && !shouldContinue && fragments.some(f => (chargeAttempts[f.id] || 0) > 0))
-    return []; // Max charges reached
-  // We will only charge non-booster fragments, and fragments that aren't stuck at 0 charge
-  const fragmentsToCharge = fragments.filter(f => f.id < 100 && ((chargeAttempts[f.id] || 0) < 2 || f.numCharge > 0));
-  // Log a status update
-  log(ns, `Charging ${fragmentsToCharge.length}/${fragments.length} fragments ` + (!shouldContinue ? `to ${maxCharges}` : `until faction has ` +
-    formatNumberShort(churchRep < awakeningRep ? awakeningRep : serenityRep) + ` rep (currently at ${formatNumberShort(churchRep)})`) +
-    `. Curent charges:\n${fragmentSummary}`);
-  return fragmentsToCharge;
-}
-
 /** @param {NS} ns */
-function getAllServers(ns) {
-  const visited = new Set(["home"]);
-  const queue = ["home"];
+export async function main(ns) {
+  const options = getConfiguration(ns, argsSchema);
+  if (!options) return;
 
-  while (queue.length) {
-    const s = queue.shift();
-    for (const n of ns.scan(s)) {
-      if (!visited.has(n)) {
-        visited.add(n);
-        queue.push(n);
-      }
+  // Find the saved layout that best matches
+  const height = options['force-height'] || ns.stanek.giftHeight();
+  const width = options['force-width'] || ns.stanek.giftWidth();
+  const usableLayouts = layouts.filter(l => l.height <= height && l.width <= width);
+  const bestLayout = usableLayouts.sort((l1, l2) => // Use the layout with the least amount of unused rows/columns
+    (height - l1.height + width - l1.width) - (height - l2.height + width - l2.width))[0];
+  log(ns, `Best layout found for current Stanek grid dimentions (height: ${height} width: ${width}) ` +
+    `has height: ${bestLayout.height} width: ${bestLayout.width} fragments: ${bestLayout.fragments.length}`);
+
+  // Clear any prior layout if needed, this allows for the blade burner peice if we are in bladeburners
+  const frags = await stanekRun(ns, 'activeFragments');
+  const bitnodeN = (await getReset(ns)).currentNode;
+  const inBB = (await bbRun(ns, 'inBladeburner'));
+  if (frags.length > 0) {
+    if (inBB && frags.some(p => p.id == 0) && !frags.some(p => p.id == 30)) {
+      log(ns, `Clearing stanek layout to allow for a bladeburner peice.`, true, 'info');
+      ns.stanek.clearGift(); //clear it so that we can repopulate with the bladeburner peice
     }
-  }
-  for (let i = 0; i < 100; i++) {
-    if (ns.serverExists('hacknet-server-'+i))visited.add('hacknet-server-'+i);
-    else break;
+    else return; //no need to repopulate
   }
 
-  return [...visited].sort((a, b) => {
-    const freeA = ns.getServerMaxRam(a) - ns.getServerUsedRam(a);
-    const freeB = ns.getServerMaxRam(b) - ns.getServerUsedRam(b);
-    return freeA - freeB;
-  });
+  // If we're in a bladeburner BN, and there's no bladeburner piece in our selected layout (id=30),
+  // replace the identically shaped hacking multi piece  with this one.
+  const has0butNot30 = bestLayout.fragments.some(p => p.id == 0) && !bestLayout.fragments.some(p => p.id == 30);
+  if (has0butNot30 && inBB) {
+    log(ns, `We're in a bladeburner node, replacing a hack piece with the bladeburner piece.`);
+    bestLayout.fragments.find(p => p.id == 0).id = 30;
+  }
+
+  // Place the layout
+  log(ns, `Placing ${bestLayout.fragments.length} fragments:\n` + JSON.stringify(bestLayout.fragments));
+  let result = true;
+  for (const f of bestLayout.fragments) {
+    if (!(await stanekRun(ns, 'placeFragment', f.x, f.y, f.rotation, f.id))) result = false;
+  }
+  //const result = bestLayout.fragments.reduce((t, f) => ns.stanek.placeFragment(f.x, f.y, f.rotation, f.id) && t, true);
+
+  if (result)
+    log(ns, `SUCCESS: Placed ${bestLayout.fragments.length} Stanek fragments.`, true, 'success');
+  else
+    log(ns, `ERROR: Failed to place one or more fragments. The layout may be invalid.`, true, 'error');
 }
 
-/** Try to charge all the specified fragments using available ram
- * @param {NS} ns
- * @returns {Promise<bool>} whether all fragments were charged successfully **/
-async function tryChargeAllFragments(ns, fragmentsToCharge) {
-  const servers = getAllServers(ns);
-  const pids = [];
-
-  for (const server of servers) {
-    if (!ns.hasRootAccess(server)) continue;
-    if (server === "home") continue;
-
-    ns.scp(chargeScript, server);
-
-    const availableRam =
-      ns.getServerMaxRam(server) - ns.getServerUsedRam(server);
-    const reservedRam = server.includes('hacknet') ? 8 : (idealReservedRam / availableRam < 0.05) ?
-    options['reserved-ram-ideal'] : options['reserved-ram'];
-    const scriptRam = 2; 
-    const threads = Math.floor((availableRam - reservedRam) / scriptRam);
-
-    if (threads <= 0) continue;
-
-    const pid = ns.exec(
-      chargeScript,
-      server,
-      threads,
-      JSON.stringify(fragmentsToCharge)
-    );
-
-    if (pid !== 0) pids.push(pid);
+// DISCLAIMER: These layouts are mostly hack focused, but bring in additional important stats as there is room
+const layouts = [ // NOTE: Width appears to be always the same as, or one more than height.
+  {
+    "height": 2, "width": 3, "fragments": [ // BN 13.1 is this small
+      { "id": 0, "x": 0, "y": 0, "rotation": 0 } // Hacking Mult
+    ]
+  }, {
+    "height": 3, "width": 3, "fragments": [
+      { "id": 1, "x": 0, "y": 0, "rotation": 3 }, // Hacking Mult
+      { "id": 25, "x": 1, "y": 0, "rotation": 3 }, // Reputation
+    ]
+  }, {
+    "height": 3, "width": 4, "fragments": [ // Note: Possible to fit 3 fragments, see "alternative layouts" below
+      { "id": 0, "x": 0, "y": 0, "rotation": 1 }, // Hacking Mult
+      { "id": 1, "x": 2, "y": 0, "rotation": 1 } // Hacking Mult
+    ]
+  }, {
+    "height": 4, "width": 4, "fragments": [ // Note: Possible to fit 4 fragments, but have to sacrifice a hacking mult piece
+      { "id": 0, "x": 0, "y": 0, "rotation": 0 }, // Hacking Mult
+      { "id": 1, "x": 0, "y": 2, "rotation": 0 }, // Hacking Mult
+      { "id": 25, "x": 2, "y": 0, "rotation": 3 } // Reputation
+    ]
+  }, {
+    "height": 4, "width": 5, "fragments": [
+      { "id": 0, "x": 0, "y": 0, "rotation": 0 }, // Hacking Mult
+      { "id": 1, "x": 0, "y": 2, "rotation": 0 }, // Hacking Mult
+      { "id": 25, "x": 3, "y": 1, "rotation": 3 }, // Reputation
+      { "id": 104, "x": 2, "y": 0, "rotation": 0 }, // Booster *new*
+    ]
+  }, {
+    "height": 5, "width": 5, "fragments": [
+      { "id": 0, "x": 0, "y": 0, "rotation": 0 }, // Hacking Mult
+      { "id": 1, "x": 1, "y": 2, "rotation": 0 }, // Hacking Mult
+      { "id": 25, "x": 3, "y": 2, "rotation": 3 }, // Reputation
+      { "id": 105, "x": 0, "y": 2, "rotation": 1 }, // Booster
+      { "id": 100, "x": 2, "y": 0, "rotation": 0 }, // Booster *new*
+    ]
+  }, {
+    // NOTE: Things get pretty subjective after this. Should we prioritize boosting hacking multi or adding more stats?
+    //       I've decided to start by adding in Hacking Speed, Hacknet Production + Cost as 3 stats more important than just more boost
+    "height": 5, "width": 6, "fragments": [
+      { "id": 0, "x": 3, "y": 0, "rotation": 0 }, // Hacking Mult
+      { "id": 1, "x": 3, "y": 3, "rotation": 0 }, // Hacking Mult
+      { "id": 5, "x": 4, "y": 1, "rotation": 1 }, // Hacking Speed *new*
+      { "id": 20, "x": 0, "y": 4, "rotation": 0 }, // Hacknet Production *new*
+      { "id": 21, "x": 0, "y": 1, "rotation": 0 }, // Hacknet Cost Reduction *new*
+      { "id": 25, "x": 0, "y": 0, "rotation": 2 }, // Reputation
+      { "id": 102, "x": 0, "y": 2, "rotation": 2 } // Booster
+    ]
+  }, {
+    "height": 6, "width": 6, "fragments": [
+      { "id": 0, "x": 0, "y": 2, "rotation": 0 }, // Hacking Mult
+      { "id": 1, "x": 2, "y": 2, "rotation": 1 }, // Hacking Mult
+      { "id": 5, "x": 3, "y": 3, "rotation": 1 }, // Hacking Speed
+      { "id": 20, "x": 5, "y": 2, "rotation": 1 }, // Hacknet Production
+      { "id": 21, "x": 0, "y": 0, "rotation": 0 }, // Hacknet Cost Reduction
+      { "id": 25, "x": 3, "y": 0, "rotation": 2 }, // Reputation
+      { "id": 103, "x": 0, "y": 4, "rotation": 2 }, // Booster
+      { "id": 104, "x": 2, "y": 0, "rotation": 1 } // Booster *new*
+    ]
+  }, { // Special thanks to @Ansopedi (a.k.a. Zoëkeeper) for solving for this layout
+    "height": 6, "width": 7, "fragments": [
+      { "id": 0, "x": 3, "y": 2, "rotation": 1 }, // Hacking Mult
+      { "id": 1, "x": 1, "y": 3, "rotation": 0 }, // Hacking Mult
+      { "id": 5, "x": 4, "y": 1, "rotation": 1 }, // Hacking Speed
+      { "id": 6, "x": 0, "y": 0, "rotation": 0 }, // Hack power *new*
+      { "id": 7, "x": 4, "y": 0, "rotation": 2 }, // Grow power *new*
+      { "id": 20, "x": 6, "y": 2, "rotation": 1 }, // Hacknet Production
+      { "id": 21, "x": 0, "y": 4, "rotation": 0 }, // Hacknet Cost Reduction
+      { "id": 25, "x": 0, "y": 1, "rotation": 1 }, // Reputation
+      { "id": 101, "x": 2, "y": 4, "rotation": 2 }, // Booster
+      { "id": 102, "x": 1, "y": 1, "rotation": 0 }, // Booster
+    ]
+  }, { // Note: Late BN12, as Stanek gets bigger, Bladeburner also becomes a faster win condition, so we start adding those stats
+    "height": 7, "width": 7, "fragments": [
+      { "id": 0, "x": 1, "y": 5, "rotation": 2 }, // Hacking Mult
+      { "id": 1, "x": 3, "y": 3, "rotation": 0 }, // Hacking Mult
+      { "id": 5, "x": 0, "y": 4, "rotation": 3 }, // Hacking Speed
+      { "id": 6, "x": 0, "y": 0, "rotation": 1 }, // Hack power
+      { "id": 7, "x": 1, "y": 1, "rotation": 1 }, // Grow power
+      { "id": 20, "x": 1, "y": 0, "rotation": 2 }, // Hacknet Production
+      { "id": 21, "x": 3, "y": 1, "rotation": 0 }, // Hacknet Cost Reduction
+      { "id": 25, "x": 5, "y": 4, "rotation": 3 }, // Reputation
+      { "id": 30, "x": 3, "y": 5, "rotation": 2 }, // Bladeburner Stats *new*
+      { "id": 101, "x": 5, "y": 0, "rotation": 3 }, // Booster
+      { "id": 106, "x": 1, "y": 2, "rotation": 3 }, // Booster
+    ]
+  }, {
+    "height": 7, "width": 8, "fragments": [
+      { "id": 0, "x": 4, "y": 1, "rotation": 0 }, // Hacking Mult
+      { "id": 1, "x": 4, "y": 4, "rotation": 3 }, // Hacking Mult
+      { "id": 5, "x": 0, "y": 2, "rotation": 0 }, // Hacking Speed
+      { "id": 6, "x": 3, "y": 0, "rotation": 2 }, // Hack power
+      { "id": 7, "x": 2, "y": 0, "rotation": 0 }, // Grow power
+      { "id": 14, "x": 0, "y": 3, "rotation": 1 }, // Dexterity *new*
+      { "id": 16, "x": 5, "y": 5, "rotation": 2 }, // Agility *new*
+      { "id": 20, "x": 0, "y": 6, "rotation": 0 }, // Hacknet Production
+      { "id": 21, "x": 0, "y": 0, "rotation": 0 }, // Hacknet Cost Reduction
+      { "id": 25, "x": 6, "y": 0, "rotation": 3 }, // Reputation
+      { "id": 30, "x": 2, "y": 4, "rotation": 0 }, // Bladeburner Stats
+      { "id": 103, "x": 4, "y": 3, "rotation": 0 }, // Booster
+      { "id": 105, "x": 1, "y": 2, "rotation": 0 }, // Booster
+    ]
+  }, { // Adds Charisma, which even a small boost makes a huge difference (hours) in grinding company rep
+    // TODO: Consider adding charisma boosts a little earlier on in the prior 2 layouts.
+    "height": 8, "width": 8, "fragments": [ // ~BN 12.50
+      { "id": 0, "x": 3, "y": 0, "rotation": 0 }, // Hacking Mult
+      { "id": 1, "x": 2, "y": 2, "rotation": 1 }, // Hacking Mult
+      { "id": 5, "x": 0, "y": 0, "rotation": 3 }, // Hacking Speed
+      { "id": 6, "x": 7, "y": 2, "rotation": 1 }, // Hack power
+      { "id": 7, "x": 4, "y": 5, "rotation": 3 }, // Grow power
+      { "id": 14, "x": 3, "y": 4, "rotation": 3 }, // Dexterity
+      { "id": 16, "x": 5, "y": 1, "rotation": 1 }, // Agility
+      { "id": 18, "x": 6, "y": 5, "rotation": 1 }, // Charisma *new*
+      { "id": 20, "x": 0, "y": 3, "rotation": 3 }, // Hacknet Production
+      { "id": 21, "x": 6, "y": 0, "rotation": 0 }, // Hacknet Cost Reduction
+      { "id": 25, "x": 2, "y": 5, "rotation": 3 }, // Reputation
+      { "id": 30, "x": 0, "y": 6, "rotation": 0 }, // Bladeburner Stats
+      { "id": 101, "x": 1, "y": 2, "rotation": 3 }, // Booster
+      { "id": 105, "x": 4, "y": 2, "rotation": 1 }, // Booster
+      { "id": 106, "x": 1, "y": 0, "rotation": 1 }, // Booster *new* (Thanks @aeroleo)
+    ]
+  }, { // Took a minute and found a way to cram Defense and Strength in
+    "height": 8, "width": 9, "fragments": [
+      { "id": 0, "x": 4, "y": 1, "rotation": 0 }, // Hacking Mult
+      { "id": 1, "x": 4, "y": 4, "rotation": 0 }, // Hacking Mult
+      { "id": 5, "x": 0, "y": 2, "rotation": 0 }, // Hacking Speed
+      { "id": 6, "x": 3, "y": 0, "rotation": 2 }, // Hack power
+      { "id": 7, "x": 2, "y": 0, "rotation": 0 }, // Grow power
+      { "id": 10, "x": 4, "y": 6, "rotation": 2 }, // Strength *new*
+      { "id": 12, "x": 6, "y": 5, "rotation": 0 }, // Defense *new*
+      { "id": 14, "x": 1, "y": 5, "rotation": 1 }, // Dexterity
+      { "id": 16, "x": 7, "y": 0, "rotation": 3 }, // Agility
+      { "id": 18, "x": 3, "y": 4, "rotation": 1 }, // Charisma
+      { "id": 20, "x": 0, "y": 3, "rotation": 3 }, // Hacknet Production
+      { "id": 21, "x": 0, "y": 0, "rotation": 0 }, // Hacknet Cost Reduction
+      { "id": 25, "x": 4, "y": 3, "rotation": 2 }, // Reputation
+      { "id": 30, "x": 2, "y": 5, "rotation": 1 }, // Bladeburner Stats
+      { "id": 101, "x": 6, "y": 2, "rotation": 1 }, // Booster
+      { "id": 105, "x": 1, "y": 2, "rotation": 0 } // Booster
+    ]
+  }, { // Ample Space ~ BN 12.85 to get more boosts on all stats
+    "height": 9, "width": 9, "fragments": [
+      { "id": 0, "x": 4, "y": 1, "rotation": 0 }, // Hacking Mult
+      { "id": 1, "x": 4, "y": 4, "rotation": 0 }, // Hacking Mult
+      { "id": 5, "x": 0, "y": 2, "rotation": 0 }, // Hacking Speed
+      { "id": 6, "x": 4, "y": 0, "rotation": 0 }, // Hack power
+      { "id": 7, "x": 2, "y": 0, "rotation": 0 }, // Grow power
+      { "id": 10, "x": 7, "y": 2, "rotation": 1 }, // Strength
+      { "id": 12, "x": 5, "y": 7, "rotation": 0 }, // Defense
+      { "id": 14, "x": 1, "y": 5, "rotation": 1 }, // Dexterity
+      { "id": 16, "x": 5, "y": 6, "rotation": 0 }, // Agility
+      { "id": 18, "x": 3, "y": 4, "rotation": 1 }, // Charisma
+      { "id": 20, "x": 0, "y": 3, "rotation": 3 }, // Hacknet Production
+      { "id": 21, "x": 0, "y": 0, "rotation": 0 }, // Hacknet Cost Reduction
+      { "id": 25, "x": 4, "y": 3, "rotation": 2 }, // Reputation
+      { "id": 30, "x": 2, "y": 5, "rotation": 1 }, // Bladeburner Stats
+      { "id": 101, "x": 1, "y": 7, "rotation": 2 }, // Booster *new*
+      { "id": 101, "x": 7, "y": 5, "rotation": 1 }, // Booster
+      { "id": 105, "x": 1, "y": 2, "rotation": 0 }, // Booster
+      { "id": 105, "x": 6, "y": 0, "rotation": 0 } // Booster *new*
+    ]
   }
-  for (const pid of pids) {
-    await waitForProcessToComplete(ns, pid);
+
+];
+
+// Not used for anything, but captures our rough priorities when designing the above layouts
+const priorities = [
+  { id: 25, weight: 13.0 }, /* Faction Rep */
+  { id: 0, weight: 12.0 }, /* Hack Mult */
+  { id: 1, weight: 11.0 }, /* Hack Mult */
+  // Generally prefer adding one of these stats over triple-boosting the above
+  { id: 5, weight: 1.15 }, /* Hack Speed */
+  { id: 20, weight: 1.14 }, /* Hacknet Prod */
+  { id: 21, weight: 1.13 }, /* Hacknet Cost */
+  { id: 6, weight: 1.12 }, /* Hack Power */
+  { id: 7, weight: 1.11 }, /* Grow Power */
+  { id: 30, weight: 1.10 }, /* Bladeburner */
+  { id: 16, weight: 1.09 }, /* Agi */
+  { id: 14, weight: 1.08 }, /* Dex */
+  // Generally prefer additional boost over the below
+  { id: 28, weight: 0.99 }, /* Crime Money */
+  { id: 18, weight: 0.98 }, /* Cha */
+  { id: 10, weight: 0.97 }, /* Str */
+  { id: 12, weight: 0.96 }, /* Def */
+  { id: 28, weight: 0.95 }, /* Work Money */
+]
+
+// Not used, but these alternative layouts favour fitting more stat pieces vs. boosting most important stats, use if you please
+const alternativeLayouts = [
+  {
+    "height": 3, "width": 4, "fragments": [
+      { "id": 0, "x": 1, "y": 0, "rotation": 0 }, // Hacking Chance
+      { "id": 25, "x": 0, "y": 0, "rotation": 1 }, // Reputation
+      { "id": 28, "x": 1, "y": 1, "rotation": 0 }, // Crime Money
+    ]
+  }, {
+    "height": 4, "width": 4, "fragments": [
+      { "id": 0, "x": 0, "y": 2, "rotation": 2 }, // Hacking Chance
+      { "id": 7, "x": 2, "y": 1, "rotation": 3 }, // Grow power
+      { "id": 25, "x": 0, "y": 0, "rotation": 1 }, // Reputation
+      { "id": 30, "x": 1, "y": 0, "rotation": 0 }, // Bladeburner
+    ]
+  }, {
+    "height": 6, "width": 6, "fragments": [
+      { "id": 0, "x": 0, "y": 2, "rotation": 0 }, // Hacking Chance
+      { "id": 1, "x": 0, "y": 4, "rotation": 0 }, // Hacking Chance
+      { "id": 5, "x": 2, "y": 1, "rotation": 0 }, // Hacking Speed
+      { "id": 6, "x": 2, "y": 0, "rotation": 0 }, // Hack power
+      { "id": 7, "x": 2, "y": 3, "rotation": 2 }, // Grow power
+      { "id": 20, "x": 5, "y": 1, "rotation": 1 }, // Hacknet Production
+      { "id": 21, "x": 0, "y": 0, "rotation": 0 }, // Hacknet Cost Reduction
+      { "id": 25, "x": 3, "y": 4, "rotation": 0 }, // Reputation
+    ]
   }
-
-  return pids.length > 0;
-}
-
-
-/** Get the current active stanek fragments
- * @param {NS} ns
- * @returns {Promise<ActiveFragment[]>} **/
-async function getActiveFragments(ns) {
-  return await getNsDataThroughFile(ns, 'ns.stanek.activeFragments()');
-}
+]

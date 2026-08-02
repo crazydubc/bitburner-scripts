@@ -9,10 +9,12 @@
  * - eithel
  * - Insight (alainbryden)
  */
- 
+
 import {
-  getConfiguration, instanceCount, log, getErrorInfo, getActiveSourceFiles, getNsDataThroughFile, tail
-} from './helpers.js'
+  getConfiguration, log, getErrorInfo, getActiveSourceFiles, whichServerIsRunning,
+  getBoard, getControlledENodes, goMove, goValidMoves, goCheatChance, play2Moves,
+  goLiberties, goChains, destroyND, disableLogs
+} from './utils.js'
 
 const argsSchema = [
   ['cheats', true], // (Now true by default - but still an option for backwards compatibility) This is only possible if you have BN14.2
@@ -32,6 +34,7 @@ export function autocomplete(data, args) {
  * Note that to protect against "shared global memory", the entire script is wrapped in the body of the main function.
  * @param {NS} ns */
 export async function main(ns) {
+  //await disableLogs(ns, ["ALL"]);
   let cheats = false;
   let cheatChanceThreshold = 1.0;
   let logtime = false;
@@ -80,24 +83,22 @@ export async function main(ns) {
     ["?WWW?", "W.*.W", "WXXXW", "?????", "?????"], //Take the 3x3 back corner
   ];
 
-  // Testing
-  //const opponent = ["Slum Snakes", "Tetrads", "Daedalus", "Illuminati"]
-  //const opponent2 = ["????????????"]
   // Original
   const opponent = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"];
   const opponent2 = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati", "????????????"];
 
+  const sourceFiles = await getActiveSourceFiles(ns, true);
   await start();
 
   /** @param {NS} ns */
   async function start() {
     const runOptions = getConfiguration(ns, argsSchema);
-    if (!runOptions || (await instanceCount(ns)) > 1) return; // Prevent multiple instances of this script from being started, even with different args.
+    const instance = await whichServerIsRunning(ns, ns.getScriptName())
+    if (!runOptions || instance[1] !== ns.pid) return; // Prevent multiple instances of this script from being started, even with different args.
 
     logtime = runOptions.logtime;
     runOnce = runOptions.runOnce;
 
-    const sourceFiles = await getActiveSourceFiles(ns, true);
     // Enable cheats if we have SF14.2 or higher (unless the user disabled cheats).
     cheats = !runOptions['disable-cheats'] && (sourceFiles[14] ?? 0) >= 2;
     cheatChanceThreshold = runOptions['cheat-chance-threshold'];
@@ -118,46 +119,9 @@ export async function main(ns) {
     }
   }
 
-  // Ram-dodging helpers (Allows the script to only require as much RAM as its most expensive function)
-  /** @param {NS} ns @returns {Promise<string[]>} */
-  async function go_getBoardState(ns) {
-    return await getNsDataThroughFile(ns, `ns.go.getBoardState()`);
-  }
-  /** @param {NS} ns @returns {Promise<string[]>} */
-  async function go_analysis_getControlledEmptyNodes(ns) {
-    return await getNsDataThroughFile(ns, `ns.go.analysis.getControlledEmptyNodes()`);
-  }
-  /** @param {NS} ns @returns {Promise<boolean[][]>} */
-  async function go_analysis_getValidMoves(ns) {
-    return await getNsDataThroughFile(ns, `ns.go.analysis.getValidMoves()`);
-  }
-  /** @param {NS} ns @returns {Promise<number[][]>} */
-  async function go_analysis_getLiberties(ns) {
-    return await getNsDataThroughFile(ns, `ns.go.analysis.getLiberties()`);
-  }
-  /** @param {NS} ns @returns {Promise<number[][]>} */
-  async function go_analysis_getChains(ns) {
-    return await getNsDataThroughFile(ns, `ns.go.analysis.getChains()`);
-  }
-  /** @param {NS} ns @returns {Promise<number>} */
-  async function go_cheat_getCheatSuccessChance(ns) {
-    return await getNsDataThroughFile(ns, `ns.go.cheat.getCheatSuccessChance()`);
-  }
-  /** @param {NS} ns @param {number} x1 @param {number} y1 @param {number} x2 @param {number} y2
-   * @returns {Promise<{type: "move" | "pass" | "gameOver";x: number;y: number;}>} */
-  async function go_cheat_playTwoMoves(ns, x1, y1, x2, y2) {
-    return await getNsDataThroughFile(ns, `await ns.go.cheat.playTwoMoves(...ns.args)`, null, [x1, y1, x2, y2]);
-  }
-  /** @param {NS} ns @param {number} x1 @param {number} y1 @param {number} x2 @param {number} y2
-   * @returns {Promise<{type: "move" | "pass" | "gameOver";x: number;y: number;}>} */
-  async function go_makeMove(ns, x, y) {
-    return await ns.go.makeMove(x, y);
-    //return await getNsDataThroughFile(ns, `await ns.go.makeMove(...ns.args)`, null, [x, y]);
-  }
-
   /** @param {NS} ns */
   async function playGo(ns) {
-    const startBoard = await go_getBoardState(ns)
+    const startBoard = await getBoard(ns)
     let inProgress = false
     turn = 0
     START = performance.now()
@@ -177,11 +141,11 @@ export async function main(ns) {
     const playStyle = getStyle(ns);
     while (true) {
       turn++
-      board = await go_getBoardState(ns);
-      contested = await go_analysis_getControlledEmptyNodes(ns);
-      validMove = await go_analysis_getValidMoves(ns);
-      validLibMoves = await go_analysis_getLiberties(ns);
-      chains = await go_analysis_getChains(ns);
+      board = await getBoard(ns);
+      contested = await getControlledENodes(ns);
+      validMove = await goValidMoves(ns);
+      validLibMoves = await goLiberties(ns);
+      chains = await goChains(ns);
       const size = board[0].length
       //Build a test board with walls
       let testWall = "W".repeat(size + 2);
@@ -193,16 +157,16 @@ export async function main(ns) {
       //We have our test board
 
       let results;
-      if (turn < 3)
+      if (turn < 2)
         results = await movePiece(ns, getOpeningMove(ns))
 
-      if (turn >= 3) {
+      if (turn >= 2) {
         switch (playStyle) {
           case 0:  //Netburners
             if (results = await movePiece(ns, getRandomCounterLib())) break
             if (results = await movePiece(ns, getRandomLibAttack(88))) break
             if (results = await movePiece(ns, getRandomLibDefend())) break
-            if (results = await moveSnakeEyes(ns, getSnakeEyes(6))) break
+            if (results = await moveSnakeEyes(ns, getSnakeEyes(8))) break
             if (results = await movePiece(ns, getAggroAttack(2, 2, 2))) break
             if (results = await movePiece(ns, disruptEyes())) break
             if (results = await movePiece(ns, getDefPattern())) break
@@ -215,6 +179,9 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomBolster(2, 1, false, 1))) break
             if (results = await movePiece(ns, getRandomLibAttack())) break
             if (results = await movePiece(ns, getRandomStrat())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(4))) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(-1))) break
             ns.print("Turn Passed")
             results = await ns.go.passTurn()
             break
@@ -222,7 +189,7 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomCounterLib())) break
             if (results = await movePiece(ns, getRandomLibAttack(88))) break
             if (results = await movePiece(ns, getRandomLibDefend())) break
-            if (results = await moveSnakeEyes(ns, getSnakeEyes(6))) break
+            if (results = await moveSnakeEyes(ns, getSnakeEyes(8))) break
             if (results = await movePiece(ns, getAggroAttack(2, 2, 2))) break
             if (results = await movePiece(ns, disruptEyes())) break
             if (results = await movePiece(ns, getDefPattern())) break
@@ -234,6 +201,9 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomBolster(2, 1, false, 1))) break
             if (results = await movePiece(ns, getRandomLibAttack())) break
             if (results = await movePiece(ns, getRandomStrat())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(4))) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(-1))) break
             ns.print("Turn Passed")
             results = await ns.go.passTurn()
             break
@@ -241,7 +211,7 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomCounterLib())) break
             if (results = await movePiece(ns, getRandomLibAttack(88))) break
             if (results = await movePiece(ns, getRandomLibDefend())) break
-            if (results = await moveSnakeEyes(ns, getSnakeEyes(6))) break
+            if (results = await moveSnakeEyes(ns, getSnakeEyes(8))) break
             if (results = await movePiece(ns, getAggroAttack(2, 2, 2))) break
             if (results = await movePiece(ns, disruptEyes())) break
             if (results = await movePiece(ns, getDefPattern())) break
@@ -253,6 +223,9 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomBolster(2, 1, false, 1))) break
             if (results = await movePiece(ns, getRandomLibAttack())) break
             if (results = await movePiece(ns, getRandomStrat())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(4))) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(-1))) break
             ns.print("Turn Passed")
             results = await ns.go.passTurn()
             break
@@ -260,7 +233,7 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomCounterLib())) break
             if (results = await movePiece(ns, getRandomLibAttack(88))) break
             if (results = await movePiece(ns, getRandomLibDefend())) break
-            if (results = await moveSnakeEyes(ns, getSnakeEyes(6))) break
+            if (results = await moveSnakeEyes(ns, getSnakeEyes(8))) break
             if (results = await movePiece(ns, getAggroAttack(2, 2, 2))) break
             if (results = await movePiece(ns, disruptEyes())) break
             if (results = await movePiece(ns, getDefPattern())) break
@@ -272,6 +245,9 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomBolster(2, 1, false, 1))) break
             if (results = await movePiece(ns, getRandomLibAttack())) break
             if (results = await movePiece(ns, getRandomStrat())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(4))) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(-1))) break
             ns.print("Turn Passed")
             results = await ns.go.passTurn()
             break
@@ -279,7 +255,7 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomCounterLib())) break
             if (results = await movePiece(ns, getRandomLibAttack(88))) break
             if (results = await movePiece(ns, getRandomLibDefend())) break
-            if (results = await moveSnakeEyes(ns, getSnakeEyes(6))) break
+            if (results = await moveSnakeEyes(ns, getSnakeEyes(8))) break
             if (results = await movePiece(ns, getAggroAttack(2, 2, 2))) break
             if (results = await movePiece(ns, disruptEyes())) break
             if (results = await movePiece(ns, getDefPattern())) break
@@ -291,6 +267,9 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomBolster(2, 1, false))) break
             if (results = await movePiece(ns, getRandomLibAttack())) break
             if (results = await movePiece(ns, getRandomStrat(),)) break
+            if (results = await moveWallBreaker(ns, getWallBreaker())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(4))) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(-1))) break
             ns.print("Turn Passed")
             results = await ns.go.passTurn()
             break
@@ -298,7 +277,7 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomCounterLib())) break
             if (results = await movePiece(ns, getRandomLibAttack(88))) break
             if (results = await movePiece(ns, getRandomLibDefend())) break
-            if (results = await moveSnakeEyes(ns, getSnakeEyes(6))) break
+            if (results = await moveSnakeEyes(ns, getSnakeEyes(8))) break
             if (results = await movePiece(ns, getAggroAttack(2, 2, 2))) break
             if (results = await movePiece(ns, disruptEyes())) break
             if (results = await movePiece(ns, getDefPattern())) break
@@ -309,6 +288,9 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomBolster(2, 1, false))) break
             if (results = await movePiece(ns, getRandomLibAttack())) break
             if (results = await movePiece(ns, getRandomStrat())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(4))) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(-1))) break
             ns.print("Turn Passed")
             results = await ns.go.passTurn()
             break
@@ -316,7 +298,7 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomCounterLib())) break
             if (results = await movePiece(ns, getRandomLibAttack(88))) break
             if (results = await movePiece(ns, getRandomLibDefend())) break
-            if (results = await moveSnakeEyes(ns, getSnakeEyes(6))) break
+            if (results = await moveSnakeEyes(ns, getSnakeEyes(8))) break
             if (results = await movePiece(ns, getAggroAttack(2, 2, 2))) break
             if (results = await movePiece(ns, disruptEyes())) break
             if (results = await movePiece(ns, getDefPattern())) break
@@ -328,6 +310,9 @@ export async function main(ns) {
             if (results = await movePiece(ns, getRandomBolster(2, 1, false))) break
             if (results = await movePiece(ns, getRandomLibAttack())) break
             if (results = await movePiece(ns, getRandomStrat())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker())) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(4))) break
+            if (results = await moveWallBreaker(ns, getWallBreaker(-1))) break
             ns.print("Turn Passed")
             results = await ns.go.passTurn()
             break
@@ -1302,12 +1287,93 @@ export async function main(ns) {
     const [x, y] = attack.coords
     if (x === undefined) return false
     let mid = performance.now()
-    ns.printf("%s", attack.msg)
-    const results = await go_makeMove(ns, x, y);
+    ns.printf("%s moving..", attack.msg)
+    const results = await goMove(ns, x, y);
     let END = performance.now()
-    if (logtime) ns.printf("Time: Me: %s  Them: %s", ns.tFormat(mid - START, true), ns.tFormat(END - mid, true))
+    ns.printf("Time: Me: %s  Them: %s", ns.format.time(mid - START, true), ns.format.time(END - mid, true))
     START = performance.now()
     return results
+  }
+  /** @param {NS} ns */
+  async function moveWallBreaker(ns, attack) {
+    if (attack.coords === undefined || !cheats || !(4 in sourceFiles)) return false
+    const [s1x, s1y] = attack.coords
+    if (s1x === undefined) return false
+    const chance = await goCheatChance(ns);
+    if (chance < .7) return false
+    let mid = performance.now()
+    ns.printf("%s", attack.msg)
+    const results = await destroyND(ns, s1x, s1y)
+
+    let END = performance.now()
+    ns.sprintf("Time: Me: %s  Them: %s", ns.format.time(mid - START, true), ns.format.time(END - mid, true))
+    START = performance.now()
+    return results
+  }
+  /** @param {NS} ns */
+  function getWallBreaker(eyesToBreak = 3) {
+    if (!cheats || !(4 in sourceFiles)) return []
+    const moveOptions = []
+    const size = board[0].length
+    let highValue = 1;
+    const me = "X";
+    const you = "O";
+    const checked = new Set
+
+    for (let x = 0; x < size - 1; x++)
+      for (let y = 0; y < size - 1; y++) {
+        if (contested[x][y] === me || board[x][y] !== you || (validLibMoves[x][y] !== eyesToBreak && eyesToBreak > 0) || checked.has(JSON.stringify([x, y]))) continue
+        //Is it the enemy, with 2 libs (we can kill) and we have not checked this spot and the chain is large enough
+        const chain = getChainValue(x, y, you, true)
+        checked.add(JSON.stringify([x, y]))
+        //We have a winner!  Check all it's spots and find the 2 killing blows.  Add the checked spots to the checked list so we don't recheck
+        const enemySearch = new Set
+        const moves = []
+        enemySearch.add(JSON.stringify([x, y]))
+        for (const explore of enemySearch) {
+          const [fx, fy] = JSON.parse(explore)
+          //Find your eyes
+          if (board[fx][fy] === ".") {
+            moves.push([fx, fy])
+            checked.add(JSON.stringify([fx, fy]))
+            continue
+          }
+
+          //Find more of yourself to search...
+          if (fx < size - 1 && [you, "."].includes(board[fx + 1][fy])) {
+            enemySearch.add(JSON.stringify([fx + 1, fy]))
+            checked.add(JSON.stringify([fx, fy]))
+          }
+          if (fx > 0 && [you, "."].includes(board[fx - 1][fy])) {
+            enemySearch.add(JSON.stringify([fx - 1, fy]))
+            checked.add(JSON.stringify([fx, fy]))
+          }
+          if (fy > 0 && [you, "."].includes(board[fx][fy - 1])) {
+            enemySearch.add(JSON.stringify([fx, fy - 1]))
+            checked.add(JSON.stringify([fx, fy]))
+          }
+          if (fy < size - 1 && [you, "."].includes(board[fx][fy + 1])) {
+            enemySearch.add(JSON.stringify([fx, fy + 1]))
+            checked.add(JSON.stringify([fx, fy]))
+          }
+        } // End of searching the enemy
+
+        if (chain > highValue) {
+          highValue = chain
+          moveOptions.length = 0
+          moveOptions.push(...moves)
+        }
+        else if (chain === highValue) {
+          moveOptions.push(...moves)
+        }
+      } // Search whole board
+
+    // Choose one of the found moves at random
+    const randomIndex = Math.floor(Math.random() * moveOptions.length)
+    return moveOptions[randomIndex] ? {
+      coords: moveOptions[randomIndex],
+      msg: "WallBreaker Cheat"
+    } : []
   }
   /** @param {NS} ns
    * @returns {Promise<false | {type:"move"|"pass"|"gameOver"; x:number; y:number;}} */
@@ -1315,18 +1381,15 @@ export async function main(ns) {
     if (attack.coords === undefined || !cheats) return false
     const [s1x, s1y, s2x, s2y] = attack.coords
     if (s1x === undefined) return false
-    const chance = await go_cheat_getCheatSuccessChance(ns);
+    const chance = await goCheatChance(ns);
     if (chance < cheatChanceThreshold) return false
-    try {
-      let mid = performance.now()
-      const results = await go_cheat_playTwoMoves(ns, s1x, s1y, s2x, s2y)
-      ns.printf("%s  Chance: %.2f%%  Result: %s", attack.msg, chance * 100, results.type);
-      let END = performance.now()
-      if (logtime) ns.printf("Time: Me: %s  Them: %s", ns.tFormat(mid - START, true), ns.tFormat(END - mid, true))
-      START = performance.now()
-      return results
-    }
-    catch { return false }
+    let mid = performance.now()
+    const results = await play2Moves(ns, s1x, s1y, s2x, s2y)
+    ns.printf("%s  Chance: %.2f%%  Result: %s", attack.msg, chance * 100, results.type);
+    let END = performance.now()
+    ns.printf("Time: Me: %s  Them: %s", ns.format.time(mid - START, true), ns.format.time(END - mid, true))
+    START = performance.now()
+    return results
   }
   function getAllValidMoves(notMine = false) {
     if (currentValidMovesTurn === turn) return notMine ? currentValidContestedMoves : currentValidMoves

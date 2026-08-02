@@ -1,6 +1,6 @@
-import {getResetInfo} from './helpers.js';
+import { getReset, doSCP } from './utils.js';
 
-const RUNLOG_FILE = "/data/bn-run-log.json";
+export const RUNLOG_FILE = "/data/bn-run-log.json";
 
 function loadLog(ns) {
   const raw = ns.read(RUNLOG_FILE);
@@ -8,8 +8,9 @@ function loadLog(ns) {
   try { return JSON.parse(raw); } catch { return { runs: [] }; }
 }
 
-function saveLog(ns, log) {
+async function saveLog(ns, log) {
   ns.write(RUNLOG_FILE, JSON.stringify(log, null, 2), "w");
+  await doSCP(ns, RUNLOG_FILE, "home", ns.getHostname());
 }
 
 function nowIso() {
@@ -26,7 +27,7 @@ function closeRun(run, endReason, extra = {}) {
 
 /** Call once early in your main script */
 export async function recordBnStart(ns, currentNode = '1.1', extra = {}) {
-  const r = await getResetInfo(ns);
+  const r = await getReset(ns);
 
   const log = loadLog(ns);
   const last = log.runs.length ? log.runs[log.runs.length - 1] : null;
@@ -40,9 +41,10 @@ export async function recordBnStart(ns, currentNode = '1.1', extra = {}) {
   // 2) If we already have an open run for this BN, do nothing
   const last2 = log.runs.length ? log.runs[log.runs.length - 1] : null;
   if (last2 && !last2.endTime && last.currentNode == currentNode) {
-        Object.assign(last2, extra);
-        saveLog(ns, log);
-        return;}
+    Object.assign(last2, extra);
+    await saveLog(ns, log);
+    return;
+  }
 
 
   // 3) Start a new run entry
@@ -56,7 +58,7 @@ export async function recordBnStart(ns, currentNode = '1.1', extra = {}) {
     ...extra,
   });
 
-  saveLog(ns, log);
+  await saveLog(ns, log);
 }
 
 

@@ -1,11 +1,21 @@
-import { scanAllServers } from './helpers.js'
 
+///this is here strictly for ram savings.
+/** @param {NS} ns */
+export function getServersLight(ns) {
+  const serverList = new Set(["home"])
+  for (const server of serverList) {
+    for (const connection of ns.scan(server)) {
+      serverList.add(connection)
+    }
+  }  
+  return Array.from(serverList)
+}
 // the purpose of cascade kill is to kill all scripts running on any server in the game
 // but saving the host that you run it on for last (so that it doesn't kill itself prematurely)
 /** @param {NS} ns **/
 export async function main(ns) {
     var startingNode = ns.getHostname();
-    const serverList = scanAllServers(ns);
+    const serverList = getServersLight(ns);
 
     // Send the kill command to all servers
     for (const server of serverList) {

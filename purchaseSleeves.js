@@ -1,116 +1,89 @@
-import {
-    getActiveSourceFiles, log, formatMoney
-} from './helpers.js'
-
-
-const MaxSleevesFromCovenant = 5;
-const BaseCostPerSleeve = 10e12;
-
-/* THis cheeky little script simulates the act of buying sleeves and memory upgrades
-by getting the player object, checking if the play has enough money, charging them, 
-and manually setting thier data to show they bought the upgrade.
-
-Is it cheating? Probably. But since there is no API call for this, I do what I want.*/
+import { log, formatMoney, getPlayerInfo, sleeveRun } from "./utils.js";
 
 /** @param {NS} ns */
 export async function main(ns) {
-  globalThis.webpack_require ?? webpackChunkbitburner.push([[-1], {}, w => globalThis.webpack_require = w]);
-  
-  let p;
-  Object.keys(webpack_require.m).forEach(k => Object.values(webpack_require(k)).find(f => { if (typeof f?.giveExploit === "function") p = f }
-  ))
-  let unlockedSFs = await getActiveSourceFiles(ns, true);
-  const maxSleeves = MaxSleevesFromCovenant + unlockedSFs[10] + 1;
-  log(ns, `Attempting to purchase and upgrade all sleeves. Currently: ${p.sleeves.length} of ${maxSleeves}`, true);
-  while (p.sleeves.length < maxSleeves) {
-    await ns.sleep(5000);
-    const sleeveCost = Math.pow(10, p.sleevesFromCovenant) * BaseCostPerSleeve;
-    if (p.canAfford(sleeveCost)) {
-      log(ns, `Purchasing sleeve #${p.sleevesFromCovenant+2}.`, true);
-      //charge the player
-      p.loseMoney(sleeveCost, "sleeves");
-      //increase the sleeve purchase count
-      p.sleevesFromCovenant += 1;
-      //copy the first sleeve into a new one
-      p.sleeves.push(p.sleeves[0]);
+  // Buy sleeves until the game reports no more can be bought (cost becomes Infinity)
+  let sleeveCost = await sleeveRun(ns, "getSleeveCost");
+  let player = await getPlayerInfo(ns);
 
-      //change values to default to simulate a fresh sleeve
-      p.sleeves[p.sleevesFromCovenant].memory = 0;
-      p.sleeves[p.sleevesFromCovenant].shock = 100;
-      p.sleeves[p.sleevesFromCovenant].exp.hacking = 0;
-      p.sleeves[p.sleevesFromCovenant].exp.strength = 0;
-      p.sleeves[p.sleevesFromCovenant].exp.defense = 0;
-      p.sleeves[p.sleevesFromCovenant].exp.dexterity = 0;
-      p.sleeves[p.sleevesFromCovenant].exp.agility = 0;
-      p.sleeves[p.sleevesFromCovenant].exp.charisma = 0;
-      p.sleeves[p.sleevesFromCovenant].exp.intelligence = 0;
-    }
+  while (!player.factions.includes(ns.enums.FactionName.TheCovenant)) {
+    await ns.sleep(5000);
+    player = await getPlayerInfo(ns);
+  }
+  while (sleeveCost < Number.POSITIVE_INFINITY) {
+    await ns.sleep(5000);
+
+
+    if (player.money < sleeveCost) continue;
+
+    const ok = await sleeveRun(ns, "purchaseSleeve"); // usually boolean in vanilla API
+    sleeveCost = await sleeveRun(ns, "getSleeveCost");
+
+    if (ok) log(ns, `Purchased a sleeve. Next sleeve cost: ${formatMoney(sleeveCost)}`, true, "info");
   }
 
   log(ns, `Upgrading sleeve memory...`, true, "info");
-  let allUpgraded = false;
-  while (!allUpgraded) {
-    allUpgraded = true;
-    for (let i = 0; i < p.sleeves.length; i++) {
 
-      if (p.sleeves[i].memory < 100) {
-        allUpgraded = false;
-        const amt = maxAffordableMemoryUpgrades(p, p.sleeves[i].memory);
+  while (true) {
+    let player = await getPlayerInfo(ns);
+
+    const numSleeves = await sleeveRun(ns, "getNumSleeves");
+    for (let i = 0; i < numSleeves; i++) {
+      const sleeve = await sleeveRun(ns, "getSleeve", i);
+
+      if (sleeve.memory < 100) {
+
+        const amt = await maxAffordableMemoryUpgrades(ns, i, sleeve.memory, player.money);
         if (amt > 0) {
-          const cost = getMemoryUpgradeCost(amt, p.sleeves[i].memory);
-          p.loseMoney(cost, "sleeves");
-          p.sleeves[i].memory += amt;
-          log(ns, `Sleeve${i} +${amt} memory for ${formatMoney(cost)} -> ${p.sleeves[i].memory}/100`, true, "info");
+          const cost = await sleeveRun(ns, "getMemoryUpgradeCost", i, amt);
+          const ok = await sleeveRun(ns, "upgradeMemory", i, amt);
+
+          if (ok) {
+            // sleeve.memory doesn't auto-update; compute expected new value or re-fetch sleeve
+            const newMem = sleeve.memory + amt;
+            log(ns, `Sleeve${i} +${amt} memory for ${formatMoney(cost)} -> ${newMem}/100`, true, "info");
+          } else {
+            log(ns, `Sleeve${i} failed to upgrade memory by ${amt}.`, true, "warn");
+          }
+
+          player = await getPlayerInfo(ns); // refresh money after spending
         }
       }
     }
+
     await ns.sleep(1000);
   }
 }
 
-function maxAffordableMemoryUpgrades(p, memory) {
+/** @param {NS} ns */
+async function maxAffordableMemoryUpgrades(ns, sleeveNum, memory, money) {
   const remaining = 100 - memory;
   if (remaining <= 0) return 0;
 
   // Quick check: can we afford at least 1?
-  if (!p.canAfford(getMemoryUpgradeCost(1, memory))) return 0;
+  const cost1 = await sleeveRun(ns, "getMemoryUpgradeCost", sleeveNum, 1);
+  if (money < cost1) return 0;
 
-  //Exponential search for high bound
+  // Exponential search for high bound
   let lo = 1;
   let hi = 2;
-  while (hi < remaining && p.canAfford(getMemoryUpgradeCost(hi, memory))) {
-    lo = hi;
-    hi *= 2;
+  while (hi < remaining) {
+    const costHi = await sleeveRun(ns, "getMemoryUpgradeCost", sleeveNum, hi);
+    if (money >= costHi) {
+      lo = hi;
+      hi *= 2;
+    } else {
+      break;
+    }
   }
   if (hi > remaining) hi = remaining;
 
-  //Binary search between lo..hi
+  // Binary search between lo..hi
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
-    if (p.canAfford(getMemoryUpgradeCost(mid, memory))) lo = mid;
+    const costMid = await sleeveRun(ns, "getMemoryUpgradeCost", sleeveNum, mid);
+    if (money >= costMid) lo = mid;
     else hi = mid - 1;
   }
   return lo;
-}
-
-function getMemoryUpgradeCost(n, memory) {
-  const amt = Math.round(n);
-  if (amt < 0) {
-    return 0;
-  }
-
-  if (memory + amt > 100) {
-    return getMemoryUpgradeCost(100 - memory, memory);
-  }
-
-  const mult = 1.02;
-  const baseCost = 1e12;
-  let currCost = 0;
-  let currMemory = memory;
-  for (let i = 0; i < amt; ++i) {
-    currCost += Math.pow(mult, currMemory);
-    ++currMemory;
-  }
-
-  return currCost * baseCost;
 }

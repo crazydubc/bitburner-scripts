@@ -1,4 +1,7 @@
-import { log, disableLogs, getConfiguration, instanceCount, getNsDataThroughFile, getFilePath, getActiveSourceFiles, formatNumberShort, formatDuration } from './helpers.js'
+import {
+  log, disableLogs, getConfiguration, getFilePath, getActiveSourceFiles,
+  formatNumberShort, formatDuration, findPids, getPlayerInfo, getReset, bbRun, singRun
+} from './utils.js'
 
 const cityNames = ["Sector-12", "Aevum", "Volhaven", "Chongqing", "New Tokyo", "Ishima"];
 const antiChaosOperation = "Stealth Retirement Operation"; // Note: Faster and more effective than Diplomacy at reducing city chaos
@@ -50,11 +53,11 @@ export function autocomplete(data, _) {
 /** @param {NS} ns */
 export async function main(ns) {
   const runOptions = getConfiguration(ns, argsSchema);
-  if (!runOptions || await instanceCount(ns) > 1) return; // Prevent multiple instances of this script from being started, even with different args.
+  if (!runOptions || (await findPids(ns, 'bladeburner.js')).length > 1) return; // Prevent multiple instances of this script from being started, even with different args.
   options = runOptions; // We don't set the global "options" until we're sure this is the only running instance
   disableLogs(ns, ['sleep'])
-  player = await getNsDataThroughFile(ns, 'ns.getPlayer()');
-  resetInfo = await getNsDataThroughFile(ns, 'ns.getResetInfo()');
+  player = await getPlayerInfo(ns);
+  resetInfo = await getReset(ns);
   // Ensure we have access to bladeburner
   ownedSourceFiles = await getActiveSourceFiles(ns);
   //if (!(6 in ownedSourceFiles) && resetInfo.currentNode != 7) // NOTE: Despite the SF6 description, it seems you don't need SF6
@@ -82,30 +85,31 @@ export async function main(ns) {
 // Calculate how long we've been in the current bitnode
 function getTimeInBitnode() { return Date.now() - resetInfo.lastNodeReset; }
 
-// Ram dodging helper to execute a parameterless bladeburner function
-const getBBInfo = async (ns, strFunction, ...args) =>
-  await getNsDataThroughFile(ns, `ns.bladeburner.${strFunction}`, null, args);
 // Ram-dodging helper to get information for each item in a list (bit hacky). Temp script will be created such that
 // the first argument recieved is an array of values to map, and any additional arguments are appended afterwards.
-// The strFunction should contain a '%' sign indicating where the elements from the list should be mapped to a single call.
-const getBBDict = async (ns, strFunction, elements, ...args) => await getNsDataThroughFile(ns,
-  `Object.fromEntries(JSON.parse(ns.args[0]).map(e => [e, ns.bladeburner.${strFunction.replace('%', 'e')}]))`,
-  `/Temp/bladeburner-${strFunction.split('(')[0]}-all.txt`, [JSON.stringify(elements), ...args]);
+const getBBDict = async (ns, strFunction, elements, actionType = undefined) => {
+  const results = {}
+  for (const elm of elements) {
+    results[elm] = actionType ? await bbRun(ns, strFunction, actionType, elm) : await bbRun(ns, strFunction, elm);
+  }
+  return results;
+}
 // Helper for dual-parameter bladeburner functions e.g. getActionCountRemaining(actionType, action)
-const getBBDictByActionType = async (ns, strFunction, actionType, elements) =>
-  await getBBDict(ns, `${strFunction}(ns.args[1], %)`, elements, actionType);
+const getBBDictByActionType = async (ns, strFunction, elements, actionType) => {
+  return await getBBDict(ns, strFunction, elements, actionType);
+}
 
 /** @param {NS} ns
  * Gather all one-time bladeburner info using ram-dodging scripts. */
 async function gatherBladeburnerInfo(ns) {
-  skillNames = await getBBInfo(ns, 'getSkillNames()');
-  generalActionNames = await getBBInfo(ns, 'getGeneralActionNames()');
-  contractNames = (await getBBInfo(ns, 'getContractNames()')).reverse(); // Reversed to put in order of highest rep to lowest
-  operationNames = (await getBBInfo(ns, 'getOperationNames()')).reverse(); // Reversed to put in order of highest rep to lowest
+  skillNames = await bbRun(ns, 'getSkillNames');
+  generalActionNames = await bbRun(ns, 'getGeneralActionNames');
+  contractNames = (await bbRun(ns, 'getContractNames')).reverse(); // Reversed to put in order of highest rep to lowest
+  operationNames = (await bbRun(ns, 'getOperationNames')).reverse(); // Reversed to put in order of highest rep to lowest
   // Blackops data is a bit special, each can be completed one time, they should be done in order
-  const blackOpsNames = await getBBInfo(ns, 'getBlackOpNames()');
-  blackOpsRanks = await getBBDict(ns, 'getBlackOpRank(%)', blackOpsNames);
-  const blackOpsToBeDone = await getBBDictByActionType(ns, 'getActionCountRemaining', "Black Operations", blackOpsNames);
+  const blackOpsNames = await bbRun(ns, 'getBlackOpNames');
+  blackOpsRanks = await getBBDict(ns, 'getBlackOpRank', blackOpsNames);
+  const blackOpsToBeDone = await getBBDictByActionType(ns, 'getActionCountRemaining', blackOpsNames, "Black Operations");
   remainingBlackOpsNames = blackOpsNames.filter(n => blackOpsToBeDone[n] === 1)
     .sort((b1, b2) => blackOpsRanks[b1] - blackOpsRanks[b2]);
   log(ns, `There are ${remainingBlackOpsNames.length} remaining BlackOps operations to complete in order:\n` +
@@ -113,7 +117,7 @@ async function gatherBladeburnerInfo(ns) {
   maxRankNeeded = blackOpsRanks[remainingBlackOpsNames[remainingBlackOpsNames.length - 1]];
   // Check if we have the aug that lets us do bladeburner while otherwise busy
   haveSimulacrum = !(4 in ownedSourceFiles) ? true : // If player doesn't have SF4, we cannot check, so hope for the best.
-    await getNsDataThroughFile(ns, `ns.singularity.getOwnedAugmentations().includes("${simulacrumAugName}")`, '/Temp/bladeburner-hasSimulacrum.txt');
+    (await singRun(ns, `getOwnedAugmentations`)).includes(simulacrumAugName);
   // Initialize some flags that may change over time
   lastAssignedTask = null;
   lastBlackOpComplete = false; // Flag will track whether we've notified the user that the last black-op is ready
@@ -133,7 +137,7 @@ const getMaxKeyValue = (dict, filteredKeys = null) => (filteredKeys || Object.ke
  * The main loop that decides what we should be doing in bladeburner. */
 async function mainLoop(ns) {
   // Get player's updated rank
-  const rank = await getBBInfo(ns, 'getRank()');
+  const rank = await bbRun(ns, 'getRank');
   // Ensure we're in the bladeburner faction ASAP
   if (!inFaction) await tryJoinFaction(ns, rank);
   // Spend any un-spent skill points
@@ -143,7 +147,7 @@ async function mainLoop(ns) {
 
   // NEXT STEP: Gather data needed to determine what and where to work
   // If any blackops have been completed, remove them from the list of remaining blackops
-  const blackOpsToBeDone = await getBBDictByActionType(ns, 'getActionCountRemaining', "Black Operations", remainingBlackOpsNames);
+  const blackOpsToBeDone = await getBBDictByActionType(ns, 'getActionCountRemaining', remainingBlackOpsNames, "Black Operations");
   remainingBlackOpsNames = remainingBlackOpsNames.filter(n => blackOpsToBeDone[n] === 1);
   const nextBlackOp = remainingBlackOpsNames.length === 0 ? null : remainingBlackOpsNames[0];
   // If we have completed the last bladeburner operation notify the user that they can leave the BN
@@ -156,8 +160,8 @@ async function mainLoop(ns) {
   }
 
   // Gather the count of available contracts / operations
-  const contractCounts = await getBBDictByActionType(ns, 'getActionCountRemaining', "Contracts", contractNames);
-  const operationCounts = await getBBDictByActionType(ns, 'getActionCountRemaining', "Operations", operationNames);
+  const contractCounts = await getBBDictByActionType(ns, 'getActionCountRemaining', contractNames, "Contracts");
+  const operationCounts = await getBBDictByActionType(ns, 'getActionCountRemaining', operationNames, "Operations");
   // Define a helper that gets the count for an action based only on the name (type is auto-determined)
   const getCount = actionName => contractNames.includes(actionName) ? contractCounts[actionName] :
     operationNames.includes(actionName) ? operationCounts[actionName] :
@@ -177,9 +181,9 @@ async function mainLoop(ns) {
 
   // NEXT STEP: Determine which city to work in
   // Get the population, communities, and chaos in each city
-  const populationByCity = await getBBDict(ns, 'getCityEstimatedPopulation(%)', cityNames);
-  const communitiesByCity = await getBBDict(ns, 'getCityCommunities(%)', cityNames);
-  const chaosByCity = await getBBDict(ns, 'getCityChaos(%)', cityNames);
+  const populationByCity = await getBBDict(ns, 'getCityEstimatedPopulation', cityNames);
+  const communitiesByCity = await getBBDict(ns, 'getCityCommunities', cityNames);
+  const chaosByCity = await getBBDict(ns, 'getCityChaos', cityNames);
   let goToCity, population, travelReason, goingRaiding = false;
 
   // SPECIAL CASE: GO TO LOWEST-POPULATION CITY
@@ -220,16 +224,16 @@ async function mainLoop(ns) {
       (acceptableCities.length == 0 ? ` (all cities above chaos threshold of ${options['chaos-recovery-threshold']})` : '');
   }
 
-  let currentCity = await getBBInfo(ns, 'getCity()');
+  let currentCity = await bbRun(ns, 'getCity');
   // Change cities if we aren't blocked on our last task, and found a better city to work in
   if (currentCity != goToCity && Date.now() > currentTaskEndTime && (await switchToCity(ns, goToCity, travelReason)))
     currentCity = goToCity;
 
   // Gather the success chance of contracts (based on our current city)
-  const contractChances = await getBBDictByActionType(ns, 'getActionEstimatedSuccessChance', "Contracts", contractNames);
-  const operationChances = await getBBDictByActionType(ns, 'getActionEstimatedSuccessChance', "Operations", operationNames);
+  const contractChances = await getBBDictByActionType(ns, 'getActionEstimatedSuccessChance', contractNames, "Contracts");
+  const operationChances = await getBBDictByActionType(ns, 'getActionEstimatedSuccessChance', operationNames, "Operations");
   const blackOpsChance = nextBlackOp === null || rank < blackOpsRanks[nextBlackOp] ? [0, 0] : // Insufficient rank for blackops means chance is zero
-    (await getBBDictByActionType(ns, 'getActionEstimatedSuccessChance', "Black Operations", [nextBlackOp]))[nextBlackOp];
+    (await getBBDictByActionType(ns, 'getActionEstimatedSuccessChance', [nextBlackOp], "Black Operations"))[nextBlackOp];
   // Define some helpers for determining min/max chance for each action
   const getChance = actionName => contractNames.includes(actionName) ? contractChances[actionName] :
     operationNames.includes(actionName) ? operationChances[actionName] :
@@ -243,7 +247,7 @@ async function mainLoop(ns) {
     (maxChance(action) - minChance(action) < 0.001 ? '' : ` to ${(100 * maxChance(action)).toFixed(1)}%`) + `, Remaining: ${getCount(action)}`
 
   // Trigger stamina recovery if we drop below our --low-stamina-pct configuration, and remain trigered until we've recovered to --high-stamina-pct
-  const stamina = await getBBInfo(ns, `getStamina()`); // Returns [current, max];
+  const stamina = await bbRun(ns, `getStamina`); // Returns [current, max];
   const staminaPct = stamina[0] / stamina[1];
   lowStaminaTriggered = staminaPct < options['low-stamina-pct'] || lowStaminaTriggered && staminaPct < options['high-stamina-pct'];
   // If we are suffering a stamina penalty, perform an action that consumes no stamina
@@ -316,7 +320,7 @@ async function mainLoop(ns) {
   }
 
   // Detect our current action (API returns an object like { "type":"Operation", "name":"Investigation" })
-  const currentAction = await getBBInfo(ns, `getCurrentAction()`);
+  const currentAction = await bbRun(ns, `getCurrentAction`);
   // Special case: If the user has manually kicked off the last BlackOps, don't interrupt it, let it be our last task
   if (currentAction?.name == remainingBlackOpsNames[remainingBlackOpsNames - 1]) lastAssignedTask = currentAction;
   // Warn the user if it looks like a task was interrupted by something else (user activity or bladeburner automation). Ignore if our last assigned task has run out of actions.
@@ -324,7 +328,7 @@ async function mainLoop(ns) {
     log(ns, `WARNING: The last task this script assigned was "${lastAssignedTask}", but you're now doing "${currentAction?.name || '(nothing)'}". ` +
       `Have you been using Bladeburner Automation? If so, try typing "automate dis" in the Bladeburner Console.`, false, 'warning');
   } else if (currentAction?.name) {
-    const currentDuration = await getBBInfo(ns, `getActionTime(ns.args[0], ns.args[1])`, currentAction.type, currentAction.name);
+    const currentDuration = await bbRun(ns, `getActionTime`, currentAction.type, currentAction.name);
     if (!lastAssignedTask) { // Leave a log acknowledging if we just started up and there was an activity already underway.
       log(ns, `INFO: At startup, Bladeburner was already doing "${currentAction?.name}", ` +
         (bestActionName != currentAction.name ? `but we would prefer to do "${bestActionName}", so we will be switching.` :
@@ -342,8 +346,8 @@ async function mainLoop(ns) {
   // Change actions if we're not currently doing the desired action
   const bestActionType = nextBlackOp == bestActionName ? "Black Operations" : contractNames.includes(bestActionName) ? "Contracts" :
     operationNames.includes(bestActionName) ? "Operations" : "General";
-  const success = await getBBInfo(ns, `startAction(ns.args[0], ns.args[1])`, bestActionType, bestActionName);
-  const expectedDuration = await getBBInfo(ns, `getActionTime(ns.args[0], ns.args[1])`, bestActionType, bestActionName);
+  const success = await bbRun(ns, `startAction`, bestActionType, bestActionName);
+  const expectedDuration = await bbRun(ns, `getActionTime`, bestActionType, bestActionName);
   log(ns, (success ? `INFO: Switched to Bladeburner ${bestActionType} "${bestActionName}" (${reason}). ETA: ${formatDuration(expectedDuration)}` :
     `ERROR: Failed to switch to Bladeburner ${bestActionType} "${bestActionName}" (Count: ${getCount(bestActionName)}, ` +
     `ETA: ${formatDuration(expectedDuration)}, Details: ${reason})`),
@@ -356,7 +360,7 @@ async function mainLoop(ns) {
 /** @param {NS} ns
  * Helper to switch cities. */
 async function switchToCity(ns, city, reason) {
-  const success = await getBBInfo(ns, `switchCity(ns.args[0])`, city);
+  const success = await bbRun(ns, `switchCity`, city);
   log(ns, (success ? 'INFO: Switched' : 'ERROR: Failed to switch') + ` to Bladeburner city "${city}" (${reason})`,
     !success, success ? (options['toast-relocations'] ? 'info' : undefined) : 'error');
   return success;
@@ -366,10 +370,10 @@ async function switchToCity(ns, city, reason) {
  * Decides how to spend skill points. */
 async function spendSkillPoints(ns) {
   while (true) { // Loop until we determine there's nothing left to spend skill points on
-    const unspent = await getBBInfo(ns, 'getSkillPoints()');
+    const unspent = await bbRun(ns, 'getSkillPoints');
     if (unspent == 0) return;
-    const skillLevels = await getBBDict(ns, 'getSkillLevel(%)', skillNames);
-    const skillCosts = await getBBDict(ns, 'getSkillUpgradeCost(%)', skillNames);
+    const skillLevels = await getBBDict(ns, 'getSkillLevel', skillNames);
+    const skillCosts = await getBBDict(ns, 'getSkillUpgradeCost', skillNames);
     // Find the next lowest skill cost
     let skillToUpgrade, minPercievedCost = Number.MAX_SAFE_INTEGER;
     for (const skillName of skillNames) {
@@ -383,7 +387,7 @@ async function spendSkillPoints(ns) {
     // If the percieved or actual cost of the next best upgrade is too high, save our remaining points for later
     if (minPercievedCost > unspent || skillCosts[skillToUpgrade] > unspent) return;
     // Otherwise, purchase the upgrade
-    if (await getBBInfo(ns, `upgradeSkill(ns.args[0])`, skillToUpgrade))
+    if (await bbRun(ns, `upgradeSkill`, skillToUpgrade))
       log(ns, `SUCCESS: Upgraded Bladeburner skill ${skillToUpgrade}`, false, options['toast-upgrades'] ? 'success' : undefined);
     else
       log(ns, `WARNING: Something went wrong while trying to upgrade Bladeburner skill ${skillToUpgrade}. ` +
@@ -396,7 +400,7 @@ async function spendSkillPoints(ns) {
  * Helper to try and join the Bladeburner faction ASAP. */
 async function tryJoinFaction(ns, rank) {
   if (inFaction) return;
-  if (rank >= 25 && await getBBInfo(ns, 'joinBladeburnerFaction()')) {
+  if (rank >= 25 && await bbRun(ns, 'joinBladeburnerFaction')) {
     log(ns, 'SUCCESS: Joined the Bladeburner Faction!', false, 'success');
     inFaction = true;
   } else if (rank >= 25)
@@ -410,7 +414,7 @@ let lastCanWorkCheckIdle = true;
 async function canDoBladeburnerWork(ns) {
   if (options['ignore-busy-status'] || haveSimulacrum) return true;
   // Check if the player is busy doing something else
-  const busy = await getNsDataThroughFile(ns, 'ns.singularity.isBusy()');
+  const busy = await singRun(ns, 'isBusy');
   if (!busy) return lastCanWorkCheckIdle = true;
   if (lastCanWorkCheckIdle)
     log(ns, `WARNING: Cannot perform Bladeburner actions because the player is busy ` +
@@ -422,12 +426,12 @@ async function canDoBladeburnerWork(ns) {
  * Ensure we're in the Bladeburner division */
 async function beingInBladeburner(ns) {
   // Ensure we're in the Bladeburner division. If not, wait until we've joined it.
-  while (!(await getNsDataThroughFile(ns, 'ns.bladeburner.inBladeburner()'))) {
+  while (!(await bbRun(ns, 'inBladeburner'))) {
     try {
       if (player.skills.strength < 100 || player.skills.defense < 100 || player.skills.dexterity < 100 || player.skills.agility < 100)
         log(ns, `Waiting for physical stats >100 to join bladeburner ` +
           `(Currently Str: ${player.skills.strength}, Def: ${player.skills.defense}, Dex: ${player.skills.dexterity}, Agi: ${player.skills.agility})`);
-      else if (await getBBInfo(ns, 'joinBladeburnerDivision()')) {
+      else if (await bbRun(ns, 'joinBladeburnerDivision')) {
         let message = `SUCCESS: Joined Bladeburner (At ${formatDuration(getTimeInBitnode())} into BitNode)`;
         if (9 in ownedSourceFiles && options['disable-spending-hashes'])
           message += ' --disable-spending-hashes is set, but consider running the following command to give it a boost:\n' +
@@ -436,7 +440,7 @@ async function beingInBladeburner(ns) {
         break;
       } else
         log(ns, 'WARNING: Failed to joined Bladeburner despite physical stats. Will try again...', false, 'warning');
-      player = await getNsDataThroughFile(ns, 'ns.getPlayer()');
+      player = await getPlayerInfo(ns);
     }
     catch (err) {
       log(ns, `WARNING: bladeburner.js Caught (and suppressed) an unexpected error while waiting to join bladeburner, but will keep going:\n` +

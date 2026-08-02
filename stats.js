@@ -1,7 +1,8 @@
 import {
-  log, disableLogs, instanceCount, getConfiguration, getNsDataThroughFile, getActiveSourceFiles,
-  getStocksValue, formatNumberShort, formatNumber, formatMoney, formatRam, getFilePath, formatDuration
-} from './helpers.js'
+  log, disableLogs, findPids, getConfiguration, getActiveSourceFiles,
+  getStocksValue, formatNumberShort, formatNumber, formatMoney, formatRam, getFilePath,
+  formatDuration, getReset, getPlayerInfo, getServers, bbRun, hnRun, gangRun, corpRun, doSCP
+} from './utils.js'
 
 const argsSchema = [
   ['show-peoplekilled', false],
@@ -21,10 +22,10 @@ let resetInfo
 /** @param {NS} ns **/
 export async function main(ns) {
   const options = getConfiguration(ns, argsSchema);
-  if (!options || (await instanceCount(ns)) > 1) return; // Prevent multiple instances of this script from being started, even with different args.
+  if (!options || (await findPids(ns, 'stats.js')).length > 1) return; // Prevent multiple instances of this script from being started, even with different args.
 
   const dictSourceFiles = await getActiveSourceFiles(ns, false); // Find out what source files the user has unlocked
-  resetInfo = await getNsDataThroughFile(ns, 'ns.getResetInfo()');
+  resetInfo = await getReset(ns);
   const bitNode = resetInfo.currentNode;
   disableLogs(ns, ['sleep']);
 
@@ -132,25 +133,25 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
   // Show what bitNode we're currently playing in
   {
     const val = ["BitNode", true, `${bitNode}.${1 + (dictSourceFiles[bitNode] || 0)}`,
-      `Detected as being one more than your current owned SF level (${dictSourceFiles[bitNode] || 0}) in the current bitnode (${bitNode}).`]
+      `Your current BitNode.`]
     hudData.push(val)
   }
 
   // Show Hashes
   {
     const val1 = ["Hashes"];
-    const val2 = [" "]; // Blank line placeholder for when hashes are being liquidated
+    const val2 = [" "]; // Blank line placeholder for when hashes are being liquidated
     if (9 in dictSourceFiles || 9 == bitNode) { // Section not relevant if you don't have access to hacknet servers
-      const hashes = await getNsDataThroughFile(ns, '[ns.hacknet.numHashes(), ns.hacknet.hashCapacity()]', '/Temp/hash-stats.txt')
+      const hashes = [];
+      hashes.push(await hnRun(ns, 'numHashes'));
+      hashes.push(await hnRun(ns, 'hashCapacity'));
       if (hashes[1] > 0) {
         val1.push(true, `${formatNumberShort(hashes[0], 3, 1)}/${formatNumberShort(hashes[1], 3, 1)}`,
           `Current Hashes ${hashes[0].toLocaleString('en')} / Current Hash Capacity ${hashes[1].toLocaleString('en')}`)
         // Detect and notify the HUD if any scripts are liquidating hashes (selling them as quickly as possible)
         const spendHashesScript = getFilePath('spend-hacknet-hashes.js');
         const liquidatingHashes = await (/**@returns{Promise<ProcessInfo[]>}*/async () =>
-          await getNsDataThroughFile(ns,
-            `ns.ps('home').filter(p => p.filename == ns.args[0] && (p.args.includes('--liquidate') || p.args.includes('-l')))`,
-            '/Temp/hash-liquidation-scripts.txt', [spendHashesScript])
+          ns.ps('home').filter(p => p.filename == spendHashesScript && (p.args.includes('--liquidate') || p.args.includes('-l')))
         )();
         if (liquidatingHashes.length > 0)
           val2.push(true, "Liquidating", `You have ${liquidatingHashes.length} script` +
@@ -177,17 +178,18 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
   }
 
   // Show total instantaneous script income and experience per second (values provided directly by the game)
-  const totalScriptInc = await getNsDataThroughFile(ns, 'ns.getTotalScriptIncome()');
-  const totalScriptExp = await getNsDataThroughFile(ns, 'ns.getTotalScriptExpGain()');
+  const totalScriptInc = ns.getTotalScriptIncome();
+  const totalScriptExp = ns.getTotalScriptExpGain();
   hudData.push(["Scr Inc", true, formatMoney(totalScriptInc[0], 3, 2) + '/sec', "Total 'instantaneous' income per second being earned across all scripts running on all servers."]);
   hudData.push(["Scr Exp", true, formatNumberShort(totalScriptExp, 3, 2) + '/sec', "Total 'instantaneous' hack experience per second being earned across all scripts running on all servers."]);
 
   // Show reserved money
   {
-    const val = ["Reserve"]
+    const val = ["Reserve"];
+    if (ns.getHostname() !== 'home') await doSCP(ns, 'reserve.txt', ns.getHostname(), "home");
     const reserve = Number(ns.read("reserve.txt") || 0);
     if (reserve > 0) {
-      val.push(true, formatNumberShort(reserve, 3, 2), "Most scripts will leave this much money unspent. Remove with `run reserve.js 0`");
+      val.push(true, formatNumberShort(reserve, 3, 2), "Most scripts will leave this much money unspent.");
     } else val.push(false)
     hudData.push(val)
   }
@@ -239,7 +241,7 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
   {
     const val = ["Kills"]
     if (options['show-peoplekilled']) {
-      const playerInfo = await getNsDataThroughFile(ns, 'ns.getPlayer()');
+      const playerInfo = await getPlayerInfo(ns);
       const numPeopleKilled = playerInfo.numPeopleKilled;
       val.push(true, formatSixSigFigs(numPeopleKilled), "Count of successful Homicides. Note: The most kills you need is 30 for 'Speakers for the Dead'");
     } else val.push(false)
@@ -253,9 +255,9 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
     // Bladeburner API unlocked
     if ((7 in dictSourceFiles || 7 == bitNode)
       // Check if we're in bladeburner. Once we find we are, we don't have to check again.
-      && (playerInBladeburner = playerInBladeburner || await getNsDataThroughFile(ns, 'ns.bladeburner.inBladeburner()'))) {
-      const bbRank = await getNsDataThroughFile(ns, 'ns.bladeburner.getRank()');
-      const bbSP = await getNsDataThroughFile(ns, 'ns.bladeburner.getSkillPoints()');
+      && (playerInBladeburner = playerInBladeburner || await bbRun(ns, 'inBladeburner'))) {
+      const bbRank = await bbRun(ns, 'getRank');
+      const bbSP = await bbRun(ns, 'getSkillPoints');
       val1.push(true, formatSixSigFigs(bbRank), "Your current bladeburner rank");
       val2.push(true, formatSixSigFigs(bbSP), "Your current unspent bladeburner skill points");
     } else {
@@ -312,7 +314,7 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
   // Show current share power
   {
     const val = ["Share Pwr"]
-    const sharePower = await getNsDataThroughFile(ns, 'ns.getSharePower()');
+    const sharePower = ns.getSharePower();
     // Bitburner bug: Trace amounts of share power sometimes left over after we stop sharing
     if (sharePower > 1.0001) {
       val.push(true, formatNumberShort(sharePower, 3, 2),
@@ -321,20 +323,36 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
     } else val.push(false)
     hudData.push(val);
   }
+  const hasCorp = ns.corporation.hasCorporation();
   //Show corp data
   {
     const val = ["Corp Inc"];
-    const hasCorp = ns.corporation.hasCorporation();
     if (hasCorp) {
-      const corp = await getNsDataThroughFile(ns, 'ns.corporation.getCorporation()', '/Temp/corp-stats.txt');
+      const corp = await corpRun(ns, 'getCorporation');
       val.push(true, formatMoney(corp.revenue - corp.expenses, 3, 2) + '/sec', "Total corporation revenue per second.");
+    } else val.push(false);
+    hudData.push(val);
+  }
+  {
+    const val = ["Corp Round"];
+    if (hasCorp) {
+      const round = (await corpRun(ns, 'getInvestmentOffer')).round;
+      val.push(true, formatNumber(round, 0, 1), "Current investment round.");
+    } else val.push(false);
+    hudData.push(val);
+  }
+  {
+    const val = ["Corp Offer"];
+    if (hasCorp) {
+      const funds = (await corpRun(ns, 'getInvestmentOffer')).funds;
+      val.push(true, formatMoney(funds, 3, 2), "Total investment offer.");
     } else val.push(false);
     hudData.push(val);
   }
   //Show intel boost value
   {
     const val = ["Intel Boost"];
-    const data = await getNsDataThroughFile(ns, 'ns.getPlayer()');
+    const data = await getPlayerInfo(ns);
     const intel = data.skills.intelligence;
     if (intel > 1) {
       val.push(true, (formatNumber((Math.pow(intel, 0.8) / 600) * 100, 4, 2)) + "%", "Boost to stats provided by intellegence.");
@@ -360,14 +378,13 @@ function formatSixSigFigs(value, minDecimalPlaces = 0, maxDecimalPlaces = 0) {
 /** @param {NS} ns
  *  @returns {Promise<GangGenInfo|boolean>} Gang information, if we're in a gang, or False */
 async function getGangInfo(ns) {
-  return await getNsDataThroughFile(ns, 'ns.gang.inGang() ? ns.gang.getGangInformation() : false', '/Temp/gang-stats.txt')
+  return await gangRun(ns, 'inGang') ? await gangRun(ns, 'getGangInformation') : false
 }
 
 /** @param {NS} ns
  * @returns {Promise<Server[]>} **/
 async function getAllServersInfo(ns) {
-  const serverNames = await getNsDataThroughFile(ns, 'scanAllServers(ns)');
-  return await getNsDataThroughFile(ns, 'ns.args.map(ns.getServer)', '/Temp/getServers.txt', serverNames);
+  return await getServers(ns);
 }
 
 /** Inject the CSS that controls how custom HUD elements are displayed. */

@@ -1,11 +1,27 @@
-/** @param {NS} ns
- * Blindly try to open all ports and crack the specified target, regardless of owned tools. */
+/** @param {NS} ns **/
 export async function main(ns) {
-    const target = ns.args[0];
-    try { ns.brutessh(target); } catch { }
-    try { ns.ftpcrack(target); } catch { }
-    try { ns.relaysmtp(target); } catch { }
-    try { ns.httpworm(target); } catch { }
-    try { ns.sqlinject(target); } catch { }
-    try { ns.nuke(target); } catch { }
+  const servers = getServersLight(ns)
+  for (const server of servers) {
+    if (server.startsWith('hacknet')) continue;
+    ns.brutessh(server)
+    ns.ftpcrack(server)
+    ns.relaysmtp(server)
+    ns.httpworm(server)
+    ns.sqlinject(server)
+    ns.nuke(server)
+  }
+  const port = ns.getPortHandle(ns.pid)
+  ns.atExit(() => port.write(1))
+}
+
+///this is here strictly for ram savings.
+/** @param {NS} ns */
+export function getServersLight(ns) {
+  const serverList = new Set(["home"])
+  for (const server of serverList) {
+    for (const connection of ns.scan(server)) {
+      serverList.add(connection)
+    }
+  }
+  return Array.from(serverList)
 }
