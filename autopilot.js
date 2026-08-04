@@ -75,15 +75,15 @@ export async function main(ns) {
   //in order by importance!
   const asynchronousHelpers = [
     {
-      name: "kernel.js",
-      shouldRun: () => true,
-      args: () => []
-    },
-    {
       name: "work-for-faction2.js",
       shouldRun: () => 4 in unlockedSFs,
       args: () => 2 in unlockedSFs && !playerInGang ? ['--fast-crimes-only', '--get-invited-to-every-faction', "--crime-focus",
         "--training-stat-per-multi-threshold", 200, "--prioritize-invites"] : ['--fast-crimes-only', '--get-invited-to-every-faction']
+    },
+    {
+      name: "kernel.js",
+      shouldRun: () => true,
+      args: () => []
     },
     {
       name: "host-manager.js",
@@ -338,7 +338,7 @@ export async function main(ns) {
         if (script.name == "darknet.js")
           await runScriptLocal(ns, script.name, true, script.args())
         else
-          await launchScriptHelper(ns, script.name, script.args());
+          await runScriptSomewhere(ns, script.name, true, script.args());
       }
     }
   }

@@ -4,7 +4,7 @@ export async function getBNMults(ns) { return await runScript(ns, "bin/getbnmult
 export async function getServersLight(ns) { return await runScriptLocal(ns, "bin/getServersLight.js", false, []) }
 export async function getServerAvailRam(ns, hostname) { return await runScriptLocal(ns, "bin/getServerAvailRam.js", false, [hostname]) }
 export async function getServerMaxRam(ns, hostname) { return await runScript(ns, "bin/getServerMaxRam.js", false, [hostname]) }
-export async function getServers(ns) { return await runScript(ns, "bin/getServers.js", false, []) }
+export async function getServers(ns) { return await runScriptLocal(ns, "bin/getServers.js", false, []) }
 export async function doSCP(ns, script, hostname, source = "home") { return await runScriptLocal(ns, "bin/scp.js", false, [script, hostname, source]) }
 export async function getOptimalTarget(ns, first = false) { return await runScript(ns, "bin/getOptimalServer.js", false, [first]) }
 export async function getServ(ns, hostname) { return await runScript(ns, "bin/getServer.js", false, [hostname]) }
@@ -146,7 +146,7 @@ export function disableLogs(ns, listOfLogs) { ['disableLog'].concat(...listOfLog
 //runs a script to conclusion and passes the result
 export async function runScript(ns, scriptName, persistent, args = []) {
   checkNsInstance(ns, '"runScript"');
-  return await runScriptSomewhere(ns, scriptName, persistent, args);
+  return await runScriptLocal(ns, scriptName, persistent, args);
 }
 
 /** @param {NS} ns */
@@ -195,6 +195,7 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
       if (threadsonserver < 1) continue
       await doSCP(ns, script, server, "home");
       await doSCP(ns, "utils.js", server, "home");
+      await doSCP(ns, "faction-route-planner.js", server, "home");
       await doSCP(ns, "logger.js", server, "home");
       thispid = ns.exec(script, server, { threads: 1, temporary: true }, ...argmts)
       if (thispid > 0) return thispid;
@@ -463,7 +464,7 @@ export async function getOwnedSF(ns) {
   checkNsInstance(ns, '"getOwnedSF"');
   const cost = ns.getScriptRam('bin/getOwnedSF.js');
   //const bn = (await getReset(ns)).currentNode;
-  if (cost > 20) return { 1: 1 };
+  if (cost > 20) return { 1 : 1 };
   return await runScript(ns, "bin/getOwnedSF.js", false, []) 
 }
 /** Helper to check which of a set of files exist on a remote server in a single batch ram-dodging request
