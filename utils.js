@@ -146,15 +146,7 @@ export function disableLogs(ns, listOfLogs) { ['disableLog'].concat(...listOfLog
 //runs a script to conclusion and passes the result
 export async function runScript(ns, scriptName, persistent, args = []) {
   checkNsInstance(ns, '"runScript"');
-
-  let pidof;
-  while ((pidof = await runScriptLocal(ns, scriptName, persistent, args, 0)) == 0) {
-    if (persistent) return 0;
-    await ns.sleep(100);
-  }
-  if (persistent) return pidof;
-  await ns.nextPortWrite(pidof);
-  return ns.readPort(pidof);
+  return await runScriptLocal(ns, scriptName, persistent, args);
 }
 
 /** @param {NS} ns */
