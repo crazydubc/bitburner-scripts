@@ -12,6 +12,12 @@ export async function main(ns) {
   let preferAugs = false;
   let nextStrategySwap = 0;
   const breakToMainLoop = () => Date.now() < mainLoopStart + checkForNewPrioritiesInterval;
+  const getNumericFlag = (flag, fallback) => {
+    const index = ns.args.indexOf(flag);
+    if (index < 0 || index + 1 >= ns.args.length) return fallback;
+    const value = Number(ns.args[index + 1]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  };
   const factions = ["Illuminati", "Daedalus", "The Covenant", "ECorp", "MegaCorp", "Bachman & Associates", "Blade Industries", "NWO", "Clarke Incorporated", "OmniTek Incorporated",
     "Four Sigma", "KuaiGong International", "Fulcrum Secret Technologies", "BitRunners", "The Black Hand", "NiteSec", "Aevum", "Chongqing", "Ishima", "New Tokyo", "Sector-12",
     "Volhaven", "Speakers for the Dead", "The Dark Army", "The Syndicate", "Silhouette", "Tetrads", "Slum Snakes", "Netburners", "Tian Di Hui", "CyberSec"];
@@ -83,25 +89,37 @@ export async function main(ns) {
   const preferredCrimeFactionOrder = ["Slum Snakes", "Tetrads", "Speakers for the Dead", "The Syndicate", "The Dark Army", "The Covenant", "Daedalus", "Netburners", "NiteSec", "The Black Hand"];
   // Gang factions in order of ease-of-invite. If gangs are available, as we near 54K Karma to unlock gangs (as per --karma-threshold-for-gang-invites), we will attempt to get into any/all of these.
   const desiredGangFactions = ["Slum Snakes", "The Syndicate", "The Dark Army", "Speakers for the Dead"];
+  const gangCreationFactions = ["Speakers for the Dead", "The Dark Army", "The Syndicate", "Tetrads", "Slum Snakes", "The Black Hand"];
+  const gangKarmaRequirement = -54_000;
   const dictSourceFiles = await getActiveSourceFiles(ns, true); // Find out what source files the user has unlocked
   const resetInfo = await getReset(ns);
   const currentBitnode = resetInfo.currentNode;
   const bitNodeMults = await getBNMults(ns);
   const favorToDonate = bitNodeMults.FavorToDonateToFaction * 150;
   const daedAugReqs = bitNodeMults.DaedalusAugsRequirement;
+  const crimeFocused = ns.args.includes('--crime-focus');
+  const trainingStatPerMultiThreshold = getNumericFlag('--training-stat-per-multi-threshold', 100);
+  const combatStats = ['strength', 'defense', 'dexterity', 'agility'];
+  const combatLevelMultiplierKeys = {
+    strength: 'StrengthLevelMultiplier',
+    defense: 'DefenseLevelMultiplier',
+    dexterity: 'DexterityLevelMultiplier',
+    agility: 'AgilityLevelMultiplier'
+  };
   //globally required vars
   let dictFactionFavors, mostExpensiveAugByFaction, mostExpensiveDesiredAugByFaction,
     completedFactions, softCompletedFactions, skipFactions, playerInGang, installedAugmentations,
     shouldFocus, currentWork, dictFactionAugs, dictAugRepReqs, dictAugStats, dictFactionRep, playerInfo;
   let dictFacWork = {}, dictFacRep = {};
   let lastTravel = 0, scope = 0;
+  let waitingForGangLogged = false;
+  const skippedCombatFactions = new Set();
 
-  if ((await findPids(ns, 'work-for-factions2.js')).length > 1) return; //don't run more than one instance
+  if ((await findPids(ns, ns.getScriptName())).length > 1) return; //don't run more than one instance
   if (!(4 in dictSourceFiles)) return; //we need signularity to run
   else if (dictSourceFiles[4] < 3)
     log(ns, `WARNING: Singularity functions are much more expensive with lower levels of SF4 (you have SF4.${dictSourceFiles[4]}). ` +
       `You may encounter RAM issues with and have to wait until you have more RAM available to run this script successfully.`, false, 'warning');
-  const crimeFocused = 2 in dictSourceFiles; //we can start a gang and should prioritize this
   async function buildLibSing(ns, fn, items) {
     let ret = {};
     for (const item of items) {
@@ -244,7 +262,7 @@ export async function main(ns) {
     const playerInfo = await getPlayerInfo(ns);
     const myFactions = playerInfo.factions ?? [];
 
-    let best = null; // { faction, aug, repGap }
+    let best = null; // { faction, aug, repGap, eta }
 
     for (const fac of myFactions) {
       const work = dictFacWork[fac] ?? await detectBestFactionWork(ns, fac);
@@ -260,7 +278,8 @@ export async function main(ns) {
         const repGap = getRepGapForAug(fac, aug);
         if (repGap <= 0) continue; // already have enough rep to buy
 
-        if (!best || repGap < best.repGap) best = { faction: fac, aug, repGap: repGap / currentRepGainRate };
+        const eta = repGap / Math.max(currentRepGainRate, Number.EPSILON);
+        if (!best || eta < best.eta) best = { faction: fac, aug, repGap, eta };
       }
     }
 
@@ -329,11 +348,37 @@ export async function main(ns) {
     }
     return false;
   }
+  function combatTrainingHeuristic(stat) {
+    return Math.sqrt(
+      (playerInfo.mults?.[stat] ?? 1) *
+      (playerInfo.mults?.[`${stat}_exp`] ?? 1) *
+      (bitNodeMults[combatLevelMultiplierKeys[stat]] ?? 1) *
+      (bitNodeMults.CrimeExpGain ?? 1)
+    );
+  }
+  function canTrainCombatInReasonableTime(requirement) {
+    if (crimeFocused) return true;
+    const requiredHeuristic = requirement / trainingStatPerMultiThreshold;
+    return combatStats
+      .filter(stat => playerInfo.skills[stat] < requirement)
+      .every(stat => combatTrainingHeuristic(stat) >= requiredHeuristic);
+  }
   /** @param {NS} ns */
   async function workForFactionInvite(ns, faction) {
     if (preferredCompanyFactionOrder.includes(faction)) return workForCompanyFactionInvite(ns, faction);
     const combatReq = requiredCombatByFaction[faction] || 0;
     //log(ns, `${faction} requires combat stats of ${combatReq} of ${JSON.stringify(playerInfo.skills)}`, true);
+    if (combatReq && !canTrainCombatInReasonableTime(combatReq)) {
+      if (!skippedCombatFactions.has(faction)) {
+        skippedCombatFactions.add(faction);
+        const weakestHeuristic = Math.min(...combatStats
+          .filter(stat => playerInfo.skills[stat] < combatReq)
+          .map(combatTrainingHeuristic));
+        log(ns, `Skipping ${faction}: combat ${combatReq} is not practical at the current multipliers ` +
+          `(${weakestHeuristic.toFixed(2)} < ${(combatReq / trainingStatPerMultiThreshold).toFixed(2)}).`, false, 'info');
+      }
+      return false;
+    }
     if (combatReq) {
       if (playerInfo.skills.strength < combatReq
         && playerInfo.skills.agility < combatReq
@@ -369,6 +414,27 @@ export async function main(ns) {
     else if (["Aevum", "Chongqing", "Sector-12", "New Tokyo", "Ishima", "Volhaven"].includes(faction))
       return await travel2City(ns, faction);
   }
+  async function workTowardGang(ns) {
+    const hasGangFaction = gangCreationFactions.some(faction => playerInfo.factions.includes(faction));
+
+    if (!hasGangFaction) {
+      const targetFaction = desiredGangFactions[0]; // Slum Snakes is the cheapest reliable gang faction.
+      if (await workForFactionInvite(ns, targetFaction)) {
+        log(ns, `Working toward a ${targetFaction} invite before finishing the gang karma grind.`, false, 'info');
+        return true;
+      }
+    }
+
+    if (ns.heart.break() > gangKarmaRequirement || !hasGangFaction)
+      return await doBestCrimePossible(ns, true);
+
+    if (currentWork?.type === "CRIME") await stop(ns);
+    if (!waitingForGangLogged) {
+      waitingForGangLogged = true;
+      log(ns, `Gang karma requirement reached; waiting for gangs.js to create a gang.`, false, 'info');
+    }
+    return true;
+  }
   async function mainLoop(ns) {
     //we run this loop perioidically and check to see if enough time has elapsed to evaluate a new task in priority order.
     if (breakToMainLoop()) return; //break if not enough time has elapsed
@@ -398,17 +464,7 @@ export async function main(ns) {
       }
     }
     // Work to gang factions if gangs unlocked. If not created, do crimes till we can start a gang.
-    if (crimeFocused && !playerInGang) { //note: we do not constantly check if the gang has been created as the game will soft reset unpon creation of a gang.
-      /*for (const faction of preferredCrimeFactionOrder) {
-        if (playerInfo.factions.includes(faction)) continue;
-        if (await workForFactionInvite(ns, faction)) {
-          log(ns, `Working for crime faction invite on faction ${faction}`, true)
-          return; //get invited to priority gang factions
-        }
-      }
-      log(ns, `All crime factions obtained, doing crime.`, true)*/
-      return await doBestCrimePossible(ns, true);
-    }
+    if (crimeFocused && !playerInGang) return await workTowardGang(ns);
     updateStrategyMode();
 
     const startedPrimary = preferAugs
