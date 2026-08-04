@@ -10,7 +10,7 @@ import {
 
 const LOOP_SLEEP = 1000;
 const REPLAN_INTERVAL = 60 * 1000;
-const RATE_CACHE_TIME = 5 * 60 * 1000;
+const RATE_CACHE_TIME = 15 * 60 * 1000;
 const PROGRESS_CHECK_INTERVAL = 5 * 1000;
 const INVITE_REPLAN_INTERVAL = 15 * 1000;
 const GANG_KARMA_REQUIREMENT = -54_000;
@@ -95,6 +95,16 @@ function getNumericFlag(args, flag, fallback) {
 
 function asArray(value) { return Array.isArray(value) ? value : []; }
 function isTrue(value) { return value === true; }
+function isApiError(value) { return typeof value === "string" && value.startsWith("ERROR:"); }
+function requireArray(value, label) {
+  if (isApiError(value) || !Array.isArray(value)) throw new Error(`${label} returned ${String(value)}`);
+  return value;
+}
+function requireObject(value, label) {
+  if (isApiError(value) || !value || typeof value !== "object" || Array.isArray(value))
+    throw new Error(`${label} returned ${String(value)}`);
+  return value;
+}
 function median(values, fallback = 1) {
   const sorted = values.filter(v => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
   if (sorted.length === 0) return fallback;
@@ -110,7 +120,7 @@ export async function main(ns) {
 
   const resetInfo = await getReset(ns);
   const bitNodeMults = await getBNMults(ns);
-  const favorToDonate = (bitNodeMults.FavorToDonateToFaction ?? 1) * 150;
+  const favorToDonate = ns.getFavorToDonate();
   const crimeFocused = ns.args.includes("--crime-focus");
   const fastCrimesOnly = ns.args.includes("--fast-crimes-only");
   const prioritizeInvites = ns.args.includes("--prioritize-invites");
@@ -141,6 +151,9 @@ export async function main(ns) {
   let augRepReqs = {};
   let augStats = {};
   let augPrereqs = {};
+  let augmentationNames = [];
+  let staticFactionKey = "";
+  let staticGangFaction;
   let desiredAugSet = new Set();
   let augUtility = {};
   let donationFactions = new Set();
@@ -157,6 +170,9 @@ export async function main(ns) {
   const repRateMeasuredAt = {};
   const skippedCombatFactions = new Set();
   const companyFactionRepRequirementCache = {};
+  const companyFieldCache = {};
+  const companyRepRateCache = {};
+  const companyRepRateMeasuredAt = {};
 
   function combatTrainingHeuristic(stat) {
     return Math.sqrt(
@@ -176,7 +192,11 @@ export async function main(ns) {
 
   async function buildLibSing(fn, items) {
     const result = {};
-    for (const item of items) result[item] = await singRun(ns, fn, item);
+    for (const item of items) {
+      const value = await singRun(ns, fn, item);
+      if (isApiError(value)) throw new Error(`${fn}(${String(item)}) failed: ${value}`);
+      result[item] = value;
+    }
     return result;
   }
 
@@ -233,38 +253,54 @@ export async function main(ns) {
   }
 
   async function loadData() {
-    pendingInvites = asArray(await singRun(ns, "checkFactionInvitations"));
-    playerInfo = await getPlayerInfo(ns);
+    pendingInvites = requireArray(await singRun(ns, "checkFactionInvitations"), "checkFactionInvitations");
+    playerInfo = requireObject(await getPlayerInfo(ns), "getPlayerInfo");
+    const gangStatus = await gangRun(ns, "inGang");
+    if (isApiError(gangStatus)) throw new Error(gangStatus);
+    playerInGang = isTrue(gangStatus);
+    const gangInfo = playerInGang ? requireObject(await gangRun(ns, "getGangInformation"), "getGangInformation") : null;
+    const nextGangFaction = gangInfo?.faction ?? null;
     const allKnownFactions = [...new Set([...FACTIONS, ...(playerInfo.factions ?? []), ...pendingInvites])];
-    factionFavor = await buildLibSing("getFactionFavor", allKnownFactions);
-    factionAugs = await buildLibSing("getAugmentationsFromFaction", allKnownFactions);
-    factionRep = await buildLibSing("getFactionRep", allKnownFactions);
-    for (const faction of allKnownFactions) {
-      factionAugs[faction] = asArray(factionAugs[faction]);
-      factionFavor[faction] = Number(factionFavor[faction]) || 0;
-      factionRep[faction] = Number(factionRep[faction]) || 0;
-    }
-    const augmentationNames = [...new Set(Object.values(factionAugs).flat())];
-    augRepReqs = await buildLibSing("getAugmentationRepReq", augmentationNames);
-    augStats = await buildLibSing("getAugmentationStats", augmentationNames);
-    augPrereqs = await buildLibSing("getAugmentationPrereq", augmentationNames);
-    for (const aug of augmentationNames) {
-      const repRequirement = Number(augRepReqs[aug]);
-      augRepReqs[aug] = Number.isFinite(repRequirement) ? repRequirement : Infinity;
-      if (!augStats[aug] || typeof augStats[aug] !== "object" || Array.isArray(augStats[aug])) augStats[aug] = {};
-      augPrereqs[aug] = asArray(augPrereqs[aug]);
-    }
-    ownedAugs = asArray(await getOwnedAugs(ns, true));
-    installedAugs = asArray(await getOwnedAugs(ns, false));
+    const nextStaticKey = allKnownFactions.slice().sort().join("|");
 
-    playerInGang = isTrue(await gangRun(ns, "inGang"));
-    gangFaction = null;
-    gangAugs = new Set();
-    if (playerInGang) {
-      const gangInfo = await gangRun(ns, "getGangInformation");
-      gangFaction = gangInfo?.faction ?? null;
-      gangAugs = new Set(factionAugs[gangFaction] ?? []);
+    // Faction offerings and augmentation metadata are static during an install. Refresh only if a new
+    // faction appears or gang membership changes the gang faction's available augmentations.
+    if (nextStaticKey !== staticFactionKey || nextGangFaction !== staticGangFaction) {
+      factionAugs = await buildLibSing("getAugmentationsFromFaction", allKnownFactions);
+      factionFavor = await buildLibSing("getFactionFavor", allKnownFactions);
+      for (const faction of allKnownFactions) {
+        factionAugs[faction] = asArray(factionAugs[faction]);
+        factionFavor[faction] = Number(factionFavor[faction]) || 0;
+      }
+      // The game can report The Red Pill as a gang augmentation outside BN2 even though it cannot be bought there.
+      if (nextGangFaction && resetInfo.currentNode !== 2)
+        factionAugs[nextGangFaction] = factionAugs[nextGangFaction].filter(aug => aug !== "The Red Pill");
+      augmentationNames = [...new Set(Object.values(factionAugs).flat())];
+      augRepReqs = await buildLibSing("getAugmentationRepReq", augmentationNames);
+      augStats = await buildLibSing("getAugmentationStats", augmentationNames);
+      augPrereqs = await buildLibSing("getAugmentationPrereq", augmentationNames);
+      for (const aug of augmentationNames) {
+        const repRequirement = Number(augRepReqs[aug]);
+        augRepReqs[aug] = Number.isFinite(repRequirement) ? repRequirement : Infinity;
+        if (!augStats[aug] || typeof augStats[aug] !== "object" || Array.isArray(augStats[aug])) augStats[aug] = {};
+        augPrereqs[aug] = asArray(augPrereqs[aug]);
+      }
+      staticFactionKey = nextStaticKey;
+      staticGangFaction = nextGangFaction;
     }
+
+    factionRep = Object.fromEntries(allKnownFactions.map(faction => [faction, 0]));
+    const joinedFactions = playerInfo.factions ?? [];
+    const joinedRep = await buildLibSing("getFactionRep", joinedFactions);
+    for (const faction of joinedFactions) factionRep[faction] = Number(joinedRep[faction]) || 0;
+    ownedAugs = requireArray(await getOwnedAugs(ns, true), "getOwnedAugs(true)");
+    installedAugs = requireArray(await getOwnedAugs(ns, false), "getOwnedAugs(false)");
+
+    gangFaction = nextGangFaction;
+    // Treat the gang as an alternate provider only after its current reputation actually unlocks the augmentation.
+    // Until then, another faction can still be the faster route.
+    gangAugs = new Set(gangFaction ? (factionAugs[gangFaction] ?? [])
+      .filter(aug => (factionRep[gangFaction] ?? 0) >= (augRepReqs[aug] ?? Infinity)) : []);
 
     const desiredStats = desiredStatOverrides.length ? desiredStatOverrides : getDefaultDesiredStats({
       bitNode: resetInfo.currentNode,
@@ -353,23 +389,36 @@ export async function main(ns) {
     return typeof result === "number" && result >= 0;
   }
 
+  async function canObtainFulcrumInvite() {
+    const server = await getServ(ns, "fulcrumassets");
+    if (!server || typeof server !== "object") return false;
+    return server.backdoorInstalled || playerInfo.skills.hacking >= (server.requiredHackingSkill ?? Infinity);
+  }
+
   async function companyFactionRepRequirement(faction) {
-    if (companyFactionRepRequirementCache[faction]) return companyFactionRepRequirementCache[faction];
+    const cached = companyFactionRepRequirementCache[faction];
+    if (cached?.backdoored || (cached && Date.now() - cached.checkedAt < REPLAN_INTERVAL)) return cached.requirement;
     const serverName = COMPANY_SERVER_BY_FACTION[faction];
-    let requirement = COMPANY_FACTION_REP;
-    if (serverName) {
-      const server = await getServ(ns, serverName);
-      if (server?.backdoorInstalled) requirement *= 0.75;
-    }
-    companyFactionRepRequirementCache[faction] = requirement;
+    const server = serverName ? await getServ(ns, serverName) : null;
+    const backdoored = server?.backdoorInstalled === true;
+    const requirement = COMPANY_FACTION_REP * (backdoored ? 0.75 : 1);
+    companyFactionRepRequirementCache[faction] = { requirement, backdoored, checkedAt: Date.now() };
     return requirement;
   }
 
   async function workForCompanyFactionInvite(faction) {
+    if (faction === "Fulcrum Secret Technologies" && !(await canObtainFulcrumInvite())) return false;
     const company = COMPANY_NAME_BY_FACTION[faction] ?? faction;
     const companyRep = Number(await singRun(ns, "getCompanyRep", company)) || 0;
     const requiredRep = await companyFactionRepRequirement(faction);
     if (companyRep >= requiredRep) return false;
+    const focus = !installedAugs.includes("Neuroreceptor Management Implant");
+    const cachedField = companyFieldCache[company];
+    const cachedRateIsFresh = companyRepRateCache[company] > 0 &&
+      Date.now() - (companyRepRateMeasuredAt[company] ?? 0) < RATE_CACHE_TIME;
+    if (cachedField && cachedRateIsFresh && isTrue(await singRun(ns, "applyToCompany", company, cachedField)))
+      return isTrue(await singRun(ns, "workForCompany", company, focus));
+
     const positions = asArray(await singRun(ns, "getCompanyPositions", company));
     const hack = playerInfo.skills.hacking;
     const charisma = playerInfo.skills.charisma;
@@ -383,19 +432,35 @@ export async function main(ns) {
         default: return 0;
       }
     };
-    let bestField = null;
-    let bestScore = -1;
+    const eligibleFields = new Set();
     for (const position of positions) {
       const info = await singRun(ns, "getCompanyPositionInfo", company, position);
       if (!info || typeof info !== "object" || companyRep < (info.requiredReputation ?? 0)) continue;
       const lacksSkill = Object.entries(info.requiredSkills ?? {})
         .some(([skill, requirement]) => (playerInfo.skills?.[skill] ?? 0) < (requirement ?? 0));
-      if (lacksSkill) continue;
-      const score = fieldScore(info.field);
-      if (score > bestScore) { bestScore = score; bestField = info.field; }
+      if (!lacksSkill) eligibleFields.add(info.field);
     }
+
+    let bestField = null;
+    let bestRate = 0;
+    for (const field of eligibleFields) {
+      if (!isTrue(await singRun(ns, "applyToCompany", company, field)) ||
+        !isTrue(await singRun(ns, "workForCompany", company, focus))) continue;
+      const rate = await measureRepGainRate(async () => Number(await singRun(ns, "getCompanyRep", company)) || 0);
+      if (rate > bestRate || (rate === bestRate && fieldScore(field) > fieldScore(bestField))) {
+        bestRate = rate;
+        bestField = field;
+      }
+    }
+    if (!bestField && eligibleFields.size)
+      bestField = [...eligibleFields].sort((a, b) => fieldScore(b) - fieldScore(a))[0];
     if (!bestField || !isTrue(await singRun(ns, "applyToCompany", company, bestField))) return false;
-    return isTrue(await singRun(ns, "workForCompany", company, !installedAugs.includes("Neuroreceptor Management Implant")));
+    companyFieldCache[company] = bestField;
+    if (bestRate > 0) {
+      companyRepRateCache[company] = bestRate;
+      companyRepRateMeasuredAt[company] = Date.now();
+    }
+    return isTrue(await singRun(ns, "workForCompany", company, focus));
   }
 
   function hasLateGameAugRequirement(faction) {
@@ -452,11 +517,18 @@ export async function main(ns) {
         continue;
       }
       if (COMPANY_FACTIONS.includes(faction)) {
-        if (playerInfo.skills.hacking < 225) { efforts[faction] = Infinity; continue; }
+        if (playerInfo.skills.hacking < 225 ||
+          (faction === "Fulcrum Secret Technologies" && !(await canObtainFulcrumInvite()))) {
+          efforts[faction] = Infinity;
+          continue;
+        }
         const company = COMPANY_NAME_BY_FACTION[faction] ?? faction;
         const rep = Number(await singRun(ns, "getCompanyRep", company)) || 0;
         const requiredRep = await companyFactionRepRequirement(faction);
-        efforts[faction] = 60 + Math.max(0, requiredRep - rep) / Math.max(estimatedWorkRate, 0.1);
+        const companyRate = companyRepRateCache[company] > 0 &&
+          Date.now() - (companyRepRateMeasuredAt[company] ?? 0) < RATE_CACHE_TIME
+          ? companyRepRateCache[company] : estimatedWorkRate;
+        efforts[faction] = 60 + Math.max(0, requiredRep - rep) / Math.max(companyRate, 0.1);
         continue;
       }
       if (BACKDOOR_FACTIONS.has(faction)) {
@@ -557,10 +629,12 @@ export async function main(ns) {
       (!CITY_FACTIONS.has(faction) || !activeCityGroup || CITY_GROUPS[activeCityGroup]?.includes(faction)));
     const estimatedWorkRate = median(Object.values(repRateCache), 1);
     const inviteEffort = await estimateInviteEfforts(inviteCandidates, estimatedWorkRate);
+    const donationAfterInviteFactions = inviteCandidates.filter(faction => !CANNOT_DONATE.has(faction) &&
+      (favorToDonate === 0 || (factionFavor[faction] ?? 0) >= favorToDonate));
     let inviteRoutes = rankFactionInviteRoutes({
       candidateFactions: inviteCandidates, factionAugs, desiredAugSet, ownedAugs, augRepReqs, augUtility,
       joinedFactions: playerInfo.factions, factionRep, donationFactions, gangAugs, inviteEffort,
-      estimatedFactionRepRate: estimatedWorkRate, staticOrder: ROUTE_ORDER,
+      donationAfterInviteFactions, estimatedFactionRepRate: estimatedWorkRate, staticOrder: ROUTE_ORDER,
       augPrereqs, priorityAugs
     });
     if (!activeCityGroup) {
