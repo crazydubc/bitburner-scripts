@@ -229,7 +229,7 @@ export async function main(ns) {
     if (ns.getHostname() == 'home') {
       if (await getServerMaxRam(ns, 'home') < 64) {
         log(ns, "INFO: Bootstrapping autopilot.", true, 'info');
-        const pid = await launchScriptHelper(ns, 'autopilot.js');
+        const pid = await runScriptSomewhere(ns, 'autopilot.js', true, []);
         if (pid != 0) return;
       }
     }

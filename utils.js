@@ -146,7 +146,7 @@ export function disableLogs(ns, listOfLogs) { ['disableLog'].concat(...listOfLog
 //runs a script to conclusion and passes the result
 export async function runScript(ns, scriptName, persistent, args = []) {
   checkNsInstance(ns, '"runScript"');
-  return await runScriptLocal(ns, scriptName, persistent, args);
+  return await runScriptSomewhere(ns, scriptName, persistent, args);
 }
 
 /** @param {NS} ns */

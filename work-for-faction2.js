@@ -8,7 +8,7 @@ import {
   rankFactionInviteRoutes, selectBestExclusiveFactionGroup, chooseBestRoute
 } from './faction-route-planner.js';
 
-const LOOP_SLEEP = 1000;
+const LOOP_SLEEP = 10000;
 const REPLAN_INTERVAL = 60 * 1000;
 const RATE_CACHE_TIME = 15 * 60 * 1000;
 const PROGRESS_CHECK_INTERVAL = 5 * 1000;
