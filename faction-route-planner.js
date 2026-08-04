@@ -249,6 +249,7 @@ export function rankFactionInviteRoutes({
   donationFactions,
   gangAugs,
   inviteEffort,
+  donationAfterInviteFactions = [],
   estimatedFactionRepRate = 1,
   staticOrder = [],
   augPrereqs = {},
@@ -259,6 +260,7 @@ export function rankFactionInviteRoutes({
   const donations = asSet(donationFactions);
   const gangProvided = asSet(gangAugs);
   const priority = asSet(priorityAugs);
+  const donationAfterInvite = asSet(donationAfterInviteFactions);
   const safeRate = Math.max(estimatedFactionRepRate, 0.01);
   for (const faction of candidateFactions ?? []) {
     const useful = getUsefulAugsForFaction({
@@ -278,7 +280,7 @@ export function rankFactionInviteRoutes({
           joinedFactions, factionRep, donationFactions: donations, gangAugs: gangProvided,
         }));
       const utility = unlockedAugs.reduce((sum, aug) => sum + (augUtility?.[aug] ?? 0.25), 0);
-      const eta = effort + targetRep / safeRate;
+      const eta = effort + (donationAfterInvite.has(faction) ? 0 : targetRep / safeRate);
       if (unlockedAugs.length === 0) continue;
       const priorityCount = unlockedAugs.filter(aug => priority.has(aug)).length;
       const score = utility / Math.max(eta, 30);
