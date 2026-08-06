@@ -7,7 +7,7 @@ import {
 
 import { recordBnStart, printBnRunSummary, RUNLOG_FILE } from './logger.js'
 import {
-  buildAscendArgs, getActiveNearDonationFavorProgress, getFreshDonationFavorProgress, updateDonationFavorDelayState
+  buildAscendArgs, getFreshDonationFavorProgress, NEUROFLUX
 } from './donation-favor.js'
 
 /** @param {NS} ns */
@@ -53,6 +53,7 @@ export async function main(ns) {
   let ownedCracks = [];
   const STAGGER = 1000; //default staggering of routine scripts
   const PERIOD = 30000; //timeframe in which we will attempt to rerun routine scripts. (30 sec)
+  const MAX_AUGMENTATION_WAIT = 4 * 60 * 60 * 1000;
   let bitNodeMults = 5 in unlockedSFs ? await getBNMults(ns) : getHardCodedBNMultis(resetInfo.currentNode);
   let installedAugmentations = [];
   let playerInstalledAugCount;
@@ -62,8 +63,7 @@ export async function main(ns) {
   let reservedPurchase = 0;
   let wdHack = null;
   let maxRam = 8;
-  let lastDonationFavorDelayLog = 0;
-  let donationFavorDelayState = null;
+  let lastFactionManagerWarning = 0;
   const lastRestart = Date.now();
   let augMomentum = {
     lastAugCount: 0,
@@ -71,6 +71,7 @@ export async function main(ns) {
     bestRate: 0,
     lastAugReset: 0,
     nextExpectedAug: 0,
+    hardCapLogged: false,
   };
   const shouldUpgradeHacknet = () =>
     bitNodeMults.HacknetNodeMoney > 0 && // Ensure hacknet is not disabled in this BN
@@ -201,7 +202,11 @@ export async function main(ns) {
   ];
 
   let kernelStartTime = 0; // The time we personally launched daemon.
-  function getTimeInAug() { return Date.now() - lastRestart; }
+  function getAugmentationCycleStart() {
+    const lastAugReset = Number(resetInfo?.lastAugReset);
+    return Number.isFinite(lastAugReset) && lastAugReset > 0 ? lastAugReset : lastRestart;
+  }
+  function getTimeInAug() { return Math.max(0, Date.now() - getAugmentationCycleStart()); }
   function getTimeInBitnode() { return Date.now() - resetInfo.lastNodeReset; }
 
 
@@ -486,12 +491,15 @@ export async function main(ns) {
     }).map(([mult, values]) => [mult, values[bn - 1]]));
   }
   function resetAugTrackersIfNeeded() {
-    if (augMomentum.lastAugReset !== lastRestart) {
+    const augmentationCycleStart = getAugmentationCycleStart();
+    if (augMomentum.lastAugReset !== augmentationCycleStart) {
       augMomentum = {
-        lastAugReset: lastRestart,
+        lastAugReset: augmentationCycleStart,
         lastAugCount: 0,
-        lastIncreaseTime: lastRestart,
-        bestRate: 0
+        lastIncreaseTime: Date.now(),
+        bestRate: 0,
+        nextExpectedAug: 0,
+        hardCapLogged: false,
       };
     }
   }
@@ -500,11 +508,7 @@ export async function main(ns) {
 
     const now = Date.now();
     const timeInAug = Math.max(1, getTimeInAug());
-    //never stay more than 4 hours.
-    if (timeInAug > 4 * 60 * 60 * 1000) {
-      augMomentum.nextExpectedAug = now;
-      return;
-    }
+    const hardCapReached = timeInAug >= MAX_AUGMENTATION_WAIT;
 
     if (pendingAugCount > augMomentum.lastAugCount) {
       augMomentum.lastAugCount = pendingAugCount;
@@ -532,6 +536,18 @@ export async function main(ns) {
       const rate = pendingAugCount / timeInAug;
       augMomentum.bestRate = Math.max(augMomentum.bestRate, rate);
     }
+
+    // nextExpectedAug is always expressed as elapsed T+ milliseconds. The previous code stored
+    // Date.now() here after four hours, then compared it with elapsed time, making the reset
+    // unreachable and suppressing all subsequent queue logs.
+    if (hardCapReached) {
+      augMomentum.nextExpectedAug = timeInAug;
+      if (!augMomentum.hardCapLogged) {
+        augMomentum.hardCapLogged = true;
+        log(ns, `INFO: Pending augs: ${pendingAugCount}. The four-hour augmentation wait cap has been reached; ` +
+          `the next safe reset check will ascend.`, true, 'info');
+      }
+    }
   }
   /** Retrieves the last faction ma    r output file, parses, and provides  ype-hints for it 
 * @returns {{ installed_augs: string[], installed_count: number, installe _count_nf: number, installed_count_ex_nf: number 
@@ -543,7 +559,42 @@ export async function main(ns) {
 *             total_rep_cost: number, total_aug_cost: number, unown d_cou t: number }} */
   function getFactionManagerOutput(ns) {
     const facmanOutput = ns.read(factionManagerOutputFile)
-    return !facmanOutput ? null : JSON.parse(facmanOutput)
+    if (!facmanOutput) return null;
+    try {
+      return JSON.parse(facmanOutput);
+    } catch (error) {
+      warnAboutFactionManagerOutput(ns, `Could not parse ${factionManagerOutputFile}: ${String(error)}`);
+      return null;
+    }
+  }
+  function warnAboutFactionManagerOutput(ns, message) {
+    const now = Date.now();
+    if (now - lastFactionManagerWarning < 60_000) return;
+    lastFactionManagerWarning = now;
+    log(ns, `WARNING: ${message}`, true, 'warning');
+  }
+  /** Read queued augmentations from the canonical name arrays, with count-field fallback for older output. */
+  function getPendingAugmentationCounts(facman) {
+    if (Array.isArray(facman.affordable_augs) && Array.isArray(facman.awaiting_install_augs) &&
+      facman.affordable_augs.every(aug => typeof aug === "string") &&
+      facman.awaiting_install_augs.every(aug => typeof aug === "string")) {
+      const queuedAugs = facman.affordable_augs.concat(facman.awaiting_install_augs);
+      const pendingNfCount = queuedAugs.filter(aug => aug === NEUROFLUX).length;
+      return {
+        pendingAugCount: queuedAugs.length - pendingNfCount,
+        pendingNfCount,
+      };
+    }
+
+    const fields = [
+      "affordable_count_ex_nf", "awaiting_install_count_ex_nf",
+      "affordable_count_nf", "awaiting_install_count_nf",
+    ].map(field => Number(facman[field]));
+    if (!fields.every(value => Number.isInteger(value) && value >= 0)) return null;
+    return {
+      pendingAugCount: fields[0] + fields[1],
+      pendingNfCount: fields[2] + fields[3],
+    };
   }
   /** Logic to detect if it's a goo    me to install augmentations, and if  so, do so    
    * * @param {NS} ns    
@@ -557,13 +608,34 @@ export async function main(ns) {
     const facman = getFactionManagerOutput(ns);
     if (!facman) return;
 
-    const pendingAugCount =
-      facman.affordable_count_ex_nf +
-      facman.awaiting_install_count_ex_nf;
+    const queue = getPendingAugmentationCounts(facman);
+    if (!queue) {
+      warnAboutFactionManagerOutput(ns, `The faction-manager output has no valid augmentation queue. ` +
+        `Restart faction-manager.js after updating all PR files.`);
+      return;
+    }
+    const { pendingAugCount, pendingNfCount } = queue;
 
-    const pendingNfCount =
-      facman.affordable_count_nf +
-      facman.awaiting_install_count_nf;
+    const generatedAt = Number(facman.generated_at);
+    const outputNode = Number(facman.current_node);
+    const outputAugReset = Number(facman.last_aug_reset);
+    const hasSnapshotMetadata = Number.isFinite(generatedAt) && Number.isFinite(outputNode) && Number.isFinite(outputAugReset);
+    if (hasSnapshotMetadata) {
+      const snapshotAge = Date.now() - generatedAt;
+      if (outputNode !== Number(resetInfo.currentNode) || outputAugReset !== Number(resetInfo.lastAugReset)) {
+        warnAboutFactionManagerOutput(ns, `Ignoring an augmentation queue from a different BitNode or augmentation reset.`);
+        return;
+      }
+      if (snapshotAge < -5_000 || snapshotAge > 2 * 60_000) {
+        warnAboutFactionManagerOutput(ns, `Ignoring a faction-manager augmentation queue that is ` +
+          `${formatDuration(Math.abs(snapshotAge))} ${snapshotAge < 0 ? "in the future" : "old"}. ` +
+          `faction-manager.js may not be relaunching successfully.`);
+        return;
+      }
+    } else {
+      warnAboutFactionManagerOutput(ns, `The faction-manager output has no freshness metadata. ` +
+        `Using its augmentation queue for compatibility; update and restart faction-manager.js.`);
+    }
 
     const pendingAugInclNfCount = pendingAugCount + pendingNfCount;
     const donationFavorProgress = getFreshDonationFavorProgress(facman, resetInfo);
@@ -595,11 +667,11 @@ export async function main(ns) {
       return await installAugs(ns, true);
     }
 
-    if (pendingAugInclNfCount < augMomentum.lastAugCount) return false; //likely spent the money
+    const hardCapReached = timeSinceAug >= MAX_AUGMENTATION_WAIT;
+    if (!(pendingAugInclNfCount > 0 && (hardCapReached ||
+      (timeSinceAug >= augMomentum.nextExpectedAug && pendingAugInclNfCount > 2)))) return;
 
-    if (!(timeSinceAug >= augMomentum.nextExpectedAug && pendingAugInclNfCount > 2)) return;
-
-    if (await shouldDelayInstall(ns, player, facman))
+    if (await shouldDelayInstall(ns, player, facman, { forceReset: hardCapReached }))
       return;
 
     return await installAugs(ns);
@@ -683,10 +755,14 @@ export async function main(ns) {
   /** Logic to detect if we are close to a milestone and should postpone installing augmentations
      * @param {NS} ns
      * @param {Player} player **/
-  async function shouldDelayInstall(ns, player, facmanOutput, { favorMilestoneReady = false } = {}) {
-    // Donation favor is already a completed reset milestone, so do not let the 4S optimization
-    // postpone it indefinitely. Daedalus and active BlackOps remain higher-priority safeguards.
-    if (!favorMilestoneReady && !have4sApi) {
+  async function shouldDelayInstall(ns, player, facmanOutput, {
+    favorMilestoneReady = false,
+    forceReset = false,
+  } = {}) {
+    const bypassOptimizationDelays = favorMilestoneReady || forceReset;
+    // A completed donation milestone or the four-hour hard cap must not be postponed by 4S/BN8
+    // optimization. Daedalus and active BlackOps remain higher-priority safety safeguards.
+    if (!bypassOptimizationDelays && !have4sApi) {
       const totalWorth = player.money + await getStocksValue(ns);
       const has4S = ns.stock.has4SData();
       const totalCost = 25E9 * bitNodeMults.FourSigmaMarketDataApiCost +
@@ -699,7 +775,7 @@ export async function main(ns) {
         return true;
       }
     }
-    if (!favorMilestoneReady && resetInfo.currentNode == 8) { // Many special rules for this special Bitnode
+    if (!bypassOptimizationDelays && resetInfo.currentNode == 8) { // Many special rules for this special Bitnode
       if (player.factions.includes("Daedalus")) { // If we've already joined Daedalus
         // In BN8, large sums of money are hard to accumulate, so if we've made it into Daedalus, but can't purchase TRP rep yet,
         // remain in the BN until we have enough rep and/or money to buy TRP (Reminder: in BN8, donations are immediately unlocked for all factions)    
@@ -725,35 +801,9 @@ export async function main(ns) {
 
     if (await bbRun(ns, 'inBladeburner') && (await bbRun(ns, 'getCurrentAction'))?.type == 'Black Operations') return true;
 
-    // A completed favor milestone should not wait for another faction that is merely close.
-    // The Daedalus reserve and active-BlackOp checks above are the only remaining safety blockers.
-    if (favorMilestoneReady) return false;
-
-    // work-for-faction2.js owns the final 90%-to-100% favor grind. Protect it from a normal
-    // momentum reset only while that exact faction-work route is still active, so a stalled or
-    // abandoned route cannot postpone augmentation installs forever.
-    const favorProgress = getFreshDonationFavorProgress(facmanOutput, resetInfo);
-    if (favorProgress.some(progress => !progress.ready)) {
-      const currentWork = await singRun(ns, 'getCurrentWork');
-      const activeProgress = getActiveNearDonationFavorProgress(favorProgress, currentWork);
-      if (activeProgress) {
-        const now = Date.now();
-        const delay = updateDonationFavorDelayState(donationFavorDelayState, activeProgress, { now });
-        donationFavorDelayState = delay.state;
-        if (delay.stalled) {
-          log(ns, `WARNING: No projected-favor progress has been observed for ${activeProgress.faction} in two minutes; ` +
-            `allowing the augmentation install to proceed.`, false, 'warning');
-          return false;
-        }
-        if (now - lastDonationFavorDelayLog >= 60_000) {
-          lastDonationFavorDelayLog = now;
-          log(ns, `INFO: Delaying augmentation install while finishing ${activeProgress.faction}'s donation favor ` +
-            `(${activeProgress.projected_favor.toFixed(1)}/${activeProgress.required_favor}).`, false, 'info');
-        }
-        return true;
-      }
-    }
-    donationFavorDelayState = null;
+    // Merely being close to a donation-favor milestone must not override the existing
+    // diminishing-return reset. Once the threshold is actually reached, maybeInstallAugmentations
+    // invokes the dedicated ready-favor path before the momentum gate.
     return false;
   }
   /** Logic to determine whether we should keep running, or shut down autopilot.js for some reason     * @param {NS} n     * @returns {boolean} true then we should keep running false if we should shut down this script. */

@@ -1,8 +1,6 @@
 /** Shared policy for donation-favor milestones produced by faction-manager and consumed by autopilot. */
 export const NEUROFLUX = "NeuroFlux Governor";
-export const DONATION_FAVOR_DELAY_RATIO = 0.9;
 export const DONATION_FAVOR_SNAPSHOT_MAX_AGE = 90_000;
-export const DONATION_FAVOR_STALL_TIMEOUT = 120_000;
 export const FACTIONS_WITHOUT_DONATIONS = [
   "Bladeburners",
   "Church of the Machine God",
@@ -12,7 +10,7 @@ export const FACTIONS_WITHOUT_DONATIONS = [
 const asSet = values => values instanceof Set ? values : new Set(values ?? []);
 
 /**
- * Find joined factions whose current reset is close to, or has reached, the favor needed to donate.
+ * Find joined factions whose current reset has reached the projected favor needed to donate.
  * Only productive augmentations which are still reputation-locked through every joined provider count.
  */
 export function buildDonationFavorProgress({
@@ -29,7 +27,7 @@ export function buildDonationFavorProgress({
   augRepRequirements = {},
   augPrerequisites = {},
   donationFactions = [],
-  minimumProgressRatio = DONATION_FAVOR_DELAY_RATIO,
+  minimumProgressRatio = 1,
 } = {}) {
   const requiredFavor = Number(favorToDonate);
   if (!(requiredFavor > 0)) return [];
@@ -116,7 +114,7 @@ export function getFreshDonationFavorProgress(factionManagerOutput, resetInfo, {
     const desiredAugs = Array.isArray(entry?.desired_augs) ? entry.desired_augs.filter(aug => typeof aug === "string") : [];
     if (typeof entry?.faction !== "string" || !(requiredFavor > 0) ||
       !Number.isFinite(currentFavor) || !Number.isFinite(projectedFavor) ||
-      currentFavor >= requiredFavor || projectedFavor < requiredFavor * DONATION_FAVOR_DELAY_RATIO ||
+      currentFavor >= requiredFavor || projectedFavor < requiredFavor ||
       desiredAugs.length === 0) return [];
     return [{
       ...entry,
@@ -127,30 +125,6 @@ export function getFreshDonationFavorProgress(factionManagerOutput, resetInfo, {
       ready: projectedFavor >= requiredFavor,
     }];
   });
-}
-
-/** Only delay a normal install when the player is actively finishing the near-favor route. */
-export function getActiveNearDonationFavorProgress(progress, currentWork) {
-  if (currentWork?.type !== "FACTION") return null;
-  return (progress ?? []).find(entry => !entry.ready && entry.faction === currentWork.factionName) ?? null;
-}
-
-/** Bound near-favor delays unless fresh snapshots show that projected favor is still increasing. */
-export function updateDonationFavorDelayState(previousState, activeProgress, {
-  now = Date.now(),
-  stallTimeout = DONATION_FAVOR_STALL_TIMEOUT,
-} = {}) {
-  if (!activeProgress) return { state: null, shouldDelay: false, stalled: false };
-  const projectedFavor = Number(activeProgress.projected_favor);
-  const madeProgress = !previousState || previousState.faction !== activeProgress.faction ||
-    !Number.isFinite(previousState.projectedFavor) || projectedFavor > previousState.projectedFavor + 1e-9;
-  const state = {
-    faction: activeProgress.faction,
-    projectedFavor,
-    lastProgressAt: madeProgress ? now : previousState.lastProgressAt,
-  };
-  const stalled = now - state.lastProgressAt >= stallTimeout;
-  return { state, shouldDelay: !stalled, stalled };
 }
 
 export function buildAscendArgs(onResetScript, allowSoftReset = false) {

@@ -304,8 +304,7 @@ async function buildLib(ns, items, cmd) {
 }
 
 /**
- * Report productive factions whose current reputation is about to convert into enough favor to donate.
- * The 90% lower bound matches work-for-faction2.js, which owns the final donation-unlock grind.
+ * Report productive factions whose current reputation will convert into enough favor to donate now.
  */
 function getDonationFavorProgress() {
   const joined = joinedFactions.filter(faction => factionData[faction]?.joined);
