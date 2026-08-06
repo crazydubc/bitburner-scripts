@@ -1,7 +1,8 @@
 import {
   log, getConfiguration, findPids, formatNumberShort, formatMoney,
-  getActiveSourceFiles, getBNMults, getStocksValue, getReset, getPlayerInfo, doSCP, getOwnedAugs, singRun
+  getActiveSourceFiles, getBNMults, getStocksValue, getReset, getPlayerInfo, doSCP, getOwnedAugs, singRun, addRepToFavor
 } from './utils.js'
+import { buildDonationFavorProgress, FACTIONS_WITHOUT_DONATIONS } from './donation-favor.js'
 
 // PLAYER CONFIGURATION CONSTANTS
 // This acts as a list of default "easy" factions to always show even if the user has --hide-locked-factions
@@ -16,7 +17,7 @@ const potentialGangFactions = ["Slum Snakes", "Tetrads", "The Black Hand", "The 
 const default_hidden_stats = ['bladeburner', 'hacknet']; // Hide from the summary table by default because they clearly all come from one faction.
 const output_file = "/Temp/affordable-augs.txt"; // Temp file produced for autopilot.js to relay information about current owned & affordable augs.
 const staneksGift = "Stanek's Gift - Genesis";
-const factionsWithoutDonation = ["Bladeburners", "Church of the Machine God", "Shadows of Anarchy"]; // Not allowed to donate to these factions for rep
+const factionsWithoutDonation = FACTIONS_WITHOUT_DONATIONS; // Not allowed to donate to these factions for rep
 
 // Factors used in calculations
 const nfCountMult = 1.14; // Factors that control how NeuroFlux prices scale
@@ -220,7 +221,13 @@ export async function main(ns) {
     const augsAwaitingInstall = ownedAugmentations.slice(installedAugmentations.length); // Assumes augs are returned in purchased order
     // Infer the number of nf we have installed based on the current nf purchase level, minus the pending nf installs
     const nfInstalled = nfLevelPurchased - augsAwaitingInstall.filter(a => a == strNF).length;
+    const donationFavorProgress = getDonationFavorProgress();
     ns.write(output_file, JSON.stringify({
+      generated_at: Date.now(),
+      current_node: resetInfo.currentNode,
+      last_aug_reset: resetInfo.lastAugReset,
+      favor_to_donate: favorToDonate,
+      donation_favor_progress: donationFavorProgress,
       // Augs we already have installed
       installed_augs: installedAugmentations, // Names of augs we've installed (Note: NeuroFlux will only appears once)
       installed_count: installedAugmentations.length, // Number of augs we've installed (Note: multiple NeuroFlux levels only counts as one)
@@ -294,6 +301,40 @@ async function buildLib(ns, items, cmd) {
     ret[item] = val;
   }
   return ret;
+}
+
+/**
+ * Report productive factions whose current reputation is about to convert into enough favor to donate.
+ * The 90% lower bound matches work-for-faction2.js, which owns the final donation-unlock grind.
+ */
+function getDonationFavorProgress() {
+  const joined = joinedFactions.filter(faction => factionData[faction]?.joined);
+  const factionFavor = Object.fromEntries(joined.map(faction => [faction, factionData[faction].favor ?? 0]));
+  const factionRep = Object.fromEntries(joined.map(faction => [faction, factionData[faction].reputation ?? 0]));
+  const factionProjectedFavor = Object.fromEntries(joined.map(faction => [faction,
+    addRepToFavor(factionFavor[faction], factionRep[faction])
+  ]));
+  const factionAugs = Object.fromEntries(joined.map(faction => [faction, factionData[faction].augmentations ?? []]));
+  const augRepRequirements = Object.fromEntries(Object.values(augmentationData).map(aug => [aug.name, aug.reputation]));
+  const augPrerequisites = Object.fromEntries(Object.values(augmentationData).map(aug => [aug.name, aug.prereqs ?? []]));
+  const desiredAugmentations = Object.values(augmentationData).filter(aug => aug.desired).map(aug => aug.name);
+  const donationFactions = joined.filter(faction => factionData[faction].donationsUnlocked);
+
+  return buildDonationFavorProgress({
+    joinedFactions: joined,
+    gangFaction,
+    excludedFactions: factionsWithoutDonation,
+    favorToDonate,
+    factionFavor,
+    factionProjectedFavor,
+    factionRep,
+    factionAugs,
+    desiredAugmentations,
+    ownedAugmentations: simulatedOwnedAugmentations,
+    augRepRequirements,
+    augPrerequisites,
+    donationFactions,
+  });
 }
 
 

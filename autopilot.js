@@ -6,6 +6,9 @@ import {
 } from './utils.js';
 
 import { recordBnStart, printBnRunSummary, RUNLOG_FILE } from './logger.js'
+import {
+  buildAscendArgs, getActiveNearDonationFavorProgress, getFreshDonationFavorProgress, updateDonationFavorDelayState
+} from './donation-favor.js'
 
 /** @param {NS} ns */
 export async function main(ns) {
@@ -59,6 +62,8 @@ export async function main(ns) {
   let reservedPurchase = 0;
   let wdHack = null;
   let maxRam = 8;
+  let lastDonationFavorDelayLog = 0;
+  let donationFavorDelayState = null;
   const lastRestart = Date.now();
   let augMomentum = {
     lastAugCount: 0,
@@ -533,6 +538,8 @@ export async function main(ns) {
 *             owned_augs: string[], owned_count: number, owned_count_nf:  umber, owned_count_ex_nf: number 
 *             awaitin  install_augs: string[], awaiting_install_count: nu ber, awaiting_install_count_nf: number, a aiting_install_count_ex_nf: number 
 *             affordable_augs: string[], affordable_count: number, afford ble_count_nf: number, affordable_count_ex_nf: number 
+*             donation_favor_progress: { faction: string, current_favor: number, projected_favor: number, required_favor: number,
+*               desired_augs: string[], ready: boolean }[], current_node: number, last_aug_reset: number,
 *             total_rep_cost: number, total_aug_cost: number, unown d_cou t: number }} */
   function getFactionManagerOutput(ns) {
     const facmanOutput = ns.read(factionManagerOutputFile)
@@ -559,22 +566,34 @@ export async function main(ns) {
       facman.awaiting_install_count_nf;
 
     const pendingAugInclNfCount = pendingAugCount + pendingNfCount;
-
+    const donationFavorProgress = getFreshDonationFavorProgress(facman, resetInfo);
+    const readyDonationFavor = donationFavorProgress.filter(progress => progress.ready);
 
     updateAugMomentum(ns, pendingAugInclNfCount);
 
     //we need 30 augs to get an invite from deadalus. Reset to get this.
     if (playerInstalledAugCount < bitNodeMults.DaedalusAugsRequirement
       && pendingAugCount + playerInstalledAugCount >= bitNodeMults.DaedalusAugsRequirement)
-      await installAugs(ns);
+      return await installAugs(ns);
     //Always install if we can get the red pill or another critical aug list in the run options
 
     if (facman.affordable_augs.includes(augTRP) ||
       facman.awaiting_install_augs.includes(augTRP))
-      await installAugs(ns);
+      return await installAugs(ns);
 
     const totalCost = facman.total_rep_cost + facman.total_aug_cost;
     ns.write("reserve.txt", totalCost, "w");
+
+    // Reaching the donation threshold is its own reset milestone. It must bypass the ordinary
+    // augmentation-count and momentum gates, and can require a soft reset when nothing is affordable yet.
+    if (readyDonationFavor.length > 0) {
+      if (await shouldDelayInstall(ns, player, facman, { favorMilestoneReady: true })) return;
+      const milestones = readyDonationFavor.map(progress =>
+        `${progress.faction} (${progress.projected_favor.toFixed(1)}/${progress.required_favor} favor; ` +
+        `${progress.desired_augs.join(", ")})`).join("; ");
+      log(ns, `SUCCESS: Projected favor now unlocks donations after reset for ${milestones}. Ascending now.`, true, 'success');
+      return await installAugs(ns, true);
+    }
 
     if (pendingAugInclNfCount < augMomentum.lastAugCount) return false; //likely spent the money
 
@@ -583,17 +602,20 @@ export async function main(ns) {
     if (await shouldDelayInstall(ns, player, facman))
       return;
 
-    await installAugs(ns);
+    return await installAugs(ns);
   }
   /** Logic to detect if it's a good time to install augmentations, and if  o, do s    * @param {NS} ns*/
-  async function installAugs(ns) {
-    const ascendArgs = [
-      "--install-augmentations", true,
-      "--on-reset-script", ns.getScriptName()
-    ];
-
+  async function installAugs(ns, allowSoftReset = false) {
+    const ascendArgs = buildAscendArgs(ns.getScriptName(), allowSoftReset);
     await runScriptLocal(ns, "ascend.js", false, ascendArgs);
     await ns.sleep(1000000);
+  }
+  /** Clear invite-rush state as soon as Daedalus has been joined. */
+  function markDaedalusJoined() {
+    alreadyJoinedDaedalus = true;
+    reservingMoneyForDaedalus = false;
+    disableStockmasterForDaedalus = false;
+    return true;
   }
   /** Logic run periodically to if     e is anything we can do to speed al  g earnin  a Daedalus invite
      * @param {NS} ns
@@ -604,7 +626,7 @@ export async function main(ns) {
     // If we've already installed the red pill we no longer nee     try to join this      on.
     // Even without SF4, we can "deduce" whether we've installed TRP by checking whether w0r1d_d43m0n has a non-zero hack level
     if (installedAugmentations.includes(augTRP) || (wdHack != null && Number.isFinite(wdHack) && wdHack > 0))
-      return alreadyJoinedDaedalus = true; // Set up an early exit condition for future checks
+      return markDaedalusJoined(); // Set up an early exit condition for future checks and release any stale reservation
     // See if we even have enough augmentations to attempt to join Daedalus (once we have a count of our augmentations)
     if (playerInstalledAugCount !== null && playerInstalledAugCount < bitNodeMults.DaedalusAugsRequirement) {
       if (!(10 in unlockedSFs))
@@ -612,13 +634,13 @@ export async function main(ns) {
       return; // Either way, for now we can't get into Daedalus without more augmentations
     }
     // See if we've already joined this faction
-    if (player.factions.includes("Daedalus")) {
-      alreadyJoinedDaedalus = true;
-    }
+    if (player.factions.includes("Daedalus")) return markDaedalusJoined();
     const moneyReq = 100E9;
     // If we've previously set a flag to wait for the daedalus invite and reserve money, try to speed-along joining them
-    if (reservingMoneyForDaedalus && player.money >= moneyReq) // If our cash has dipped below the threshold again, we may need to take action below
-      return await singRun(ns, 'joinFaction', "Daedalus"); // Note, we should have already checked that we have SF4 access before reserving money
+    if (reservingMoneyForDaedalus && player.money >= moneyReq) { // If our cash has dipped below the threshold again, we may need to take action below
+      const joined = await singRun(ns, 'joinFaction', "Daedalus"); // Note, we should have already checked that we have SF4 access before reserving money
+      return joined ? markDaedalusJoined() : false;
+    }
 
     // Remaining logic below is for rushing a Daedalus invite in the current reset
     const totalWorth = player.money + stocksValue;
@@ -661,8 +683,10 @@ export async function main(ns) {
   /** Logic to detect if we are close to a milestone and should postpone installing augmentations
      * @param {NS} ns
      * @param {Player} player **/
-  async function shouldDelayInstall(ns, player, facmanOutput) {
-    if (!have4sApi) {
+  async function shouldDelayInstall(ns, player, facmanOutput, { favorMilestoneReady = false } = {}) {
+    // Donation favor is already a completed reset milestone, so do not let the 4S optimization
+    // postpone it indefinitely. Daedalus and active BlackOps remain higher-priority safeguards.
+    if (!favorMilestoneReady && !have4sApi) {
       const totalWorth = player.money + await getStocksValue(ns);
       const has4S = ns.stock.has4SData();
       const totalCost = 25E9 * bitNodeMults.FourSigmaMarketDataApiCost +
@@ -675,7 +699,7 @@ export async function main(ns) {
         return true;
       }
     }
-    if (resetInfo.currentNode == 8) { // Many special rules for this special Bitnode
+    if (!favorMilestoneReady && resetInfo.currentNode == 8) { // Many special rules for this special Bitnode
       if (player.factions.includes("Daedalus")) { // If we've already joined Daedalus
         // In BN8, large sums of money are hard to accumulate, so if we've made it into Daedalus, but can't purchase TRP rep yet,
         // remain in the BN until we have enough rep and/or money to buy TRP (Reminder: in BN8, donations are immediately unlocked for all factions)    
@@ -700,7 +724,36 @@ export async function main(ns) {
     }
 
     if (await bbRun(ns, 'inBladeburner') && (await bbRun(ns, 'getCurrentAction'))?.type == 'Black Operations') return true;
-    // TODO: Close to the rep needed for unlocking donations with a new faction?
+
+    // A completed favor milestone should not wait for another faction that is merely close.
+    // The Daedalus reserve and active-BlackOp checks above are the only remaining safety blockers.
+    if (favorMilestoneReady) return false;
+
+    // work-for-faction2.js owns the final 90%-to-100% favor grind. Protect it from a normal
+    // momentum reset only while that exact faction-work route is still active, so a stalled or
+    // abandoned route cannot postpone augmentation installs forever.
+    const favorProgress = getFreshDonationFavorProgress(facmanOutput, resetInfo);
+    if (favorProgress.some(progress => !progress.ready)) {
+      const currentWork = await singRun(ns, 'getCurrentWork');
+      const activeProgress = getActiveNearDonationFavorProgress(favorProgress, currentWork);
+      if (activeProgress) {
+        const now = Date.now();
+        const delay = updateDonationFavorDelayState(donationFavorDelayState, activeProgress, { now });
+        donationFavorDelayState = delay.state;
+        if (delay.stalled) {
+          log(ns, `WARNING: No projected-favor progress has been observed for ${activeProgress.faction} in two minutes; ` +
+            `allowing the augmentation install to proceed.`, false, 'warning');
+          return false;
+        }
+        if (now - lastDonationFavorDelayLog >= 60_000) {
+          lastDonationFavorDelayLog = now;
+          log(ns, `INFO: Delaying augmentation install while finishing ${activeProgress.faction}'s donation favor ` +
+            `(${activeProgress.projected_favor.toFixed(1)}/${activeProgress.required_favor}).`, false, 'info');
+        }
+        return true;
+      }
+    }
+    donationFavorDelayState = null;
     return false;
   }
   /** Logic to determine whether we should keep running, or shut down autopilot.js for some reason     * @param {NS} n     * @returns {boolean} true then we should keep running false if we should shut down this script. */
