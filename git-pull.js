@@ -4,7 +4,7 @@ const argsSchema = [
     ['repository', 'bitburner-scripts'],
     ['branch', 'main'],
     ['download', []], // By default, all supported files in the repository will be downloaded. Override with just a subset of files here
-    ['new-file', []], // If a repository listing fails, only files returned by ns.ls() will be downloaded. You can add additional files to seek out here.
+    ['new-file', ['donation-favor.js']], // If a repository listing fails, explicitly seek newly added files that ns.ls() cannot discover yet.
     ['subfolder', ''], // Can be set to download to a sub-folder that is not part of the remote repository structure
     ['extension', ['.js', '.ts', '.ns', '.txt', '.script']], // Files to download by extension
     ['omit-folder', ['Temp/']], // Folders to omit when getting a list of files to update (TODO: This may be obsolete now that we get a list of files from github itself.)
@@ -16,6 +16,11 @@ export function autocomplete(data, args) {
     if (["--download", "--subfolder", "--omit-folder"].includes(lastFlag))
         return data.scripts;
     return [];
+}
+
+export function filterDownloadableFiles(files, extensions, omittedFolders) {
+    return files.filter(name => extensions.some(extension => name.endsWith(extension)) &&
+        !omittedFolders.some(folder => name.startsWith(folder)));
 }
 
 /** @param {NS} ns
@@ -30,7 +35,8 @@ export async function main(ns) {
     options.subfolder = options.subfolder ? trimSlash(options.subfolder) : // Remove leading slash from any user-specified folder
         ns.getScriptName().substring(0, ns.getScriptName().lastIndexOf('/')); // Default to the current folder
     const baseUrl = `raw.githubusercontent.com/${options.github}/${options.repository}/${options.branch}/`;
-    const filesToDownload = options['new-file'].concat(options.download.length > 0 ? options.download : await repositoryListing(ns));
+    const filesToDownload = [...new Set(options['new-file'].concat(
+        options.download.length > 0 ? options.download : await repositoryListing(ns)))];
     for (const localFilePath of filesToDownload) {
         let fullLocalFilePath = pathJoin(options.subfolder, localFilePath);
         const remoteFilePath = `https://` + pathJoin(baseUrl, localFilePath);
@@ -100,7 +106,6 @@ async function repositoryListing(ns, folder = '') {
         ns.tprint(`WARNING: Failed to get a repository listing (GitHub API request limit of 60 reached?): ${listUrl}` +
             `\nResponse Contents (if available): ${JSON.stringify(response ?? '(N/A)')}\nError: ${String(error)}`);
         // Fallback, assume the user already has a copy of all files in the repo, and use it as a directory listing
-        return ns.ls('home').filter(name => options.extension.some(ext => f.endsWith(ext)) &&
-            !options['omit-folder'].some(dir => name.startsWith(dir)));
+        return filterDownloadableFiles(ns.ls('home'), options.extension, options['omit-folder']);
     }
 }

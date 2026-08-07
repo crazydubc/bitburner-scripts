@@ -4,7 +4,7 @@ export async function getBNMults(ns) { return await runScript(ns, "bin/getbnmult
 export async function getServersLight(ns) { return await runScriptLocal(ns, "bin/getServersLight.js", false, []) }
 export async function getServerAvailRam(ns, hostname) { return await runScriptLocal(ns, "bin/getServerAvailRam.js", false, [hostname]) }
 export async function getServerMaxRam(ns, hostname) { return await runScript(ns, "bin/getServerMaxRam.js", false, [hostname]) }
-export async function getServers(ns) { return await runScript(ns, "bin/getServers.js", false, []) }
+export async function getServers(ns) { return await runScriptLocal(ns, "bin/getServers.js", false, []) }
 export async function doSCP(ns, script, hostname, source = "home") { return await runScriptLocal(ns, "bin/scp.js", false, [script, hostname, source]) }
 export async function getOptimalTarget(ns, first = false) { return await runScript(ns, "bin/getOptimalServer.js", false, [first]) }
 export async function getServ(ns, hostname) { return await runScript(ns, "bin/getServer.js", false, [hostname]) }
@@ -44,9 +44,22 @@ export async function setStasis(ns, shouldLink = true) { return await runScript(
 export async function getOwnedAugs(ns, included = true) { return await runScript(ns, "bin/ownedAugs.js", false, [included]) }
 export async function getFacInvReqs(ns, faction) { return await runScript(ns, "bin/getFacInvReqs.js", false, [faction]) }
 
-export async function crackHosts(ns) { return await runScriptLocal(ns, "Tasks/crack-host.js", false, []) }
+export async function crackHosts(ns) { return await runScript(ns, "Tasks/crack-host.js", false, []) }
 
 const reservedRam = 16;
+const remoteLaunchTimeout = 10_000;
+const remoteLaunchWarningTimes = new Map();
+export const remoteScriptDependencies = [
+  "utils.js",
+  "faction-route-planner.js",
+  "logger.js",
+  "donation-favor.js",
+];
+
+/** Return the complete shared runtime bundle copied before launching a script away from home. */
+export function getRemoteScriptFiles(script) {
+  return [...new Set([script, ...remoteScriptDependencies.map(getFilePath)])];
+}
 
 /** Returns a helpful error message if we forgot to pass the ns instance to a function
  *  @param {NS} ns The nestcript instance passed to your script's main entry point */
@@ -146,15 +159,7 @@ export function disableLogs(ns, listOfLogs) { ['disableLog'].concat(...listOfLog
 //runs a script to conclusion and passes the result
 export async function runScript(ns, scriptName, persistent, args = []) {
   checkNsInstance(ns, '"runScript"');
-
-  let pidof;
-  while ((pidof = await runScriptSomewhere(ns, scriptName, persistent, args, 0)) == 0) {
-    if (persistent) return 0;
-    await ns.sleep(100);
-  }
-  if (persistent) return pidof;
-  await ns.nextPortWrite(pidof);
-  return ns.readPort(pidof);
+  return await runScriptLocal(ns, scriptName, persistent, args);
 }
 
 /** @param {NS} ns */
@@ -175,6 +180,8 @@ export async function runScriptLocal(ns, scriptName, persistent = false, args = 
 export async function runScriptSomewhere(ns, script, persistent, argmts, scriptOverride = 0, quiet = false) {
   checkNsInstance(ns, '"runScriptSomewhere"');
   let thispid = 0
+  const startedWaiting = Date.now();
+  let lastFailure = `no server had enough free RAM for ${script}`;
   const scriptRam = scriptOverride === 0 ? ns.getScriptRam(script) : scriptOverride
   const homeAvailRam = Math.ceil(await getServerAvailRam(ns, "home") - reservedRam, 0);
   if (!persistent && Math.floor(homeAvailRam / scriptRam) >= 1) {
@@ -201,13 +208,29 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
       const threadsonserver = Math.floor(tmpramavailable / scriptRam)
       // How many threads can we run?  If we can run something, do it
       if (threadsonserver < 1) continue
-      await doSCP(ns, script, server, "home");
-      await doSCP(ns, "utils.js", server, "home");
-      await doSCP(ns, "logger.js", server, "home");
+      let copied = true;
+      for (const dependency of getRemoteScriptFiles(script)) {
+        if (!await doSCP(ns, dependency, server, "home")) {
+          copied = false;
+          lastFailure = `failed to copy required file ${dependency} to ${server}`;
+          break;
+        }
+      }
+      if (!copied) continue;
       thispid = ns.exec(script, server, { threads: 1, temporary: true }, ...argmts)
       if (thispid > 0) return thispid;
+      lastFailure = `ns.exec returned 0 for ${script} on ${server} after its dependencies were copied`;
     }
-    if (persistent) return 0;
+    if (persistent || Date.now() - startedWaiting >= remoteLaunchTimeout) {
+      const now = Date.now();
+      const lastWarning = remoteLaunchWarningTimes.get(script) ?? -Infinity;
+      if (!quiet && now - lastWarning >= 60_000) {
+        remoteLaunchWarningTimes.set(script, now);
+        log(ns, `WARNING: Unable to launch ${script}: ${lastFailure}. ` +
+          `${persistent ? "Will retry on the next autopilot loop." : "Giving up this attempt so the caller can continue."}`);
+      }
+      return 0;
+    }
     //run on home last
     /*let tmpramavailable = Math.max(await getServerAvailRam(ns, "home") - reservedRam, 0);
     const threadsonserver = Math.floor(tmpramavailable / scriptRam);
@@ -215,7 +238,7 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
       thispid = ns.exec(script, "home", { threads: 1, temporary: true }, ...argmts)
       if (thispid > 1) return thispid;
     }*/
-    await ns.sleep(10);
+    await ns.sleep(50);
   }
 }
 
@@ -471,7 +494,7 @@ export async function getOwnedSF(ns) {
   checkNsInstance(ns, '"getOwnedSF"');
   const cost = ns.getScriptRam('bin/getOwnedSF.js');
   //const bn = (await getReset(ns)).currentNode;
-  if (cost > 20) return { 1: 1 };
+  if (cost > 20) return { 1 : 1 };
   return await runScript(ns, "bin/getOwnedSF.js", false, []) 
 }
 /** Helper to check which of a set of files exist on a remote server in a single batch ram-dodging request
