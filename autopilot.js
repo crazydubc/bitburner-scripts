@@ -2,7 +2,7 @@ import {
   log, getReset, getPlayerInfo, getBNMults, getErrorInfo, isScriptRunning, getStocksValue, destroyWD,
   launchScriptHelper, crackHosts, getActiveSourceFiles, formatDuration, disableLogs,
   getOwnedAugs, getFacInvReqs, singRun, formatMoney, getServerMaxRam, getPortCrackers,
-  getServers, runScriptSomewhere, runScriptLocal, doSCP, gangRun, sleeveRun, stanekRun, bbRun
+  getServers, runScriptSomewhere, runScriptLocal, doSCP, gangRun, sleeveRun, stanekRun, bbRun, bitflume
 } from './utils.js';
 
 import { recordBnStart, printBnRunSummary, RUNLOG_FILE } from './logger.js'
@@ -222,8 +222,8 @@ export async function main(ns) {
     await crackHosts(ns); //do an initial crack to run scripts on other servers
     log(ns, "INFO: Cracked", true, 'info');
     //this gets up about 12.25% boost to stats in a short time.
-    if ((5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 200) {
-      await launchScriptHelper(ns, 'farm-intel.js');
+    if ((5 in dictOwnedSourceFiles) && player.skills.intelligence > 1 && player.skills.intelligence < 200) {
+      await bitflume(ns, 8, 'farm-intel.js');
       await ns.sleep(1000);
     }
     if (ns.getHostname() == 'home') {

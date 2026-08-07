@@ -44,7 +44,7 @@ export async function setStasis(ns, shouldLink = true) { return await runScript(
 export async function getOwnedAugs(ns, included = true) { return await runScript(ns, "bin/ownedAugs.js", false, [included]) }
 export async function getFacInvReqs(ns, faction) { return await runScript(ns, "bin/getFacInvReqs.js", false, [faction]) }
 
-export async function crackHosts(ns) { return await runScript(ns, "Tasks/crack-host.js", false, []) }
+export async function crackHosts(ns) { return await runScriptLocal(ns, "Tasks/crack-host.js", false, []) }
 
 const reservedRam = 16;
 
@@ -148,7 +148,7 @@ export async function runScript(ns, scriptName, persistent, args = []) {
   checkNsInstance(ns, '"runScript"');
 
   let pidof;
-  while ((pidof = await runScriptLocal(ns, scriptName, persistent, args, 0)) == 0) {
+  while ((pidof = await runScriptSomewhere(ns, scriptName, persistent, args, 0)) == 0) {
     if (persistent) return 0;
     await ns.sleep(100);
   }

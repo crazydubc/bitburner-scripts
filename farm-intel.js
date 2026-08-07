@@ -1,5 +1,5 @@
 import {
-  log, formatNumber, getPlayerInfo, singRun, launchScriptHelper
+  log, formatNumber, getPlayerInfo, singRun, bitflume
 } from './utils.js'
 
 const STATS_FILE = "/Temp/intFarmStats.txt";
@@ -89,7 +89,7 @@ export async function main(ns) {
   //If ROI is bad, bail out to your desired bitnode ---
   if (stopForLowROI) {
     log(ns, `ROI threshold reached, resetting...`, true, 'info');
-    await launchScriptHelper(ns, 'autopilot.js');
+    await bitflume(ns, 3, 'autopilot.js');
     return;
   }
 
