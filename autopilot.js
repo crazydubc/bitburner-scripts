@@ -229,12 +229,16 @@ export async function main(ns) {
   /** @param {NS} ns **/
   async function main_start(ns) {
     log(ns, "INFO: Cracking hosts", true, 'info');
-    await crackHosts(ns); //do an initial crack to run scripts on other servers
+    await crackHosts(ns); 
+    //do an initial crack to run scripts on other servers
     log(ns, "INFO: Cracked", true, 'info');
     //this gets up about 12.25% boost to stats in a short time.
-    if ((5 in dictOwnedSourceFiles) && player.skills.intelligence > 1 && player.skills.intelligence < 200) {
-      await bitflume(ns, 8, 'farm-intel.js');
-      await ns.sleep(1000);
+    if ((5 in dictOwnedSourceFiles) && player.skills.intelligence > 1 && player.skills.intelligence < 200 ) {
+      if (currBN !== 8)
+        await bitflume(ns, 8, 'autopilot.js');
+      else
+        await runScriptLocal(ns,'farm-intel.js');
+      return
     }
     if (ns.getHostname() == 'home') {
       if (await getServerMaxRam(ns, 'home') < 64) {
