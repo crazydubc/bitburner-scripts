@@ -233,7 +233,7 @@ export async function main(ns) {
     //do an initial crack to run scripts on other servers
     log(ns, "INFO: Cracked", true, 'info');
     //this gets up about 12.25% boost to stats in a short time.
-    if ((5 in dictOwnedSourceFiles) && player.skills.intelligence > 1 && player.skills.intelligence < 200 ) {
+    if ((5 in dictOwnedSourceFiles) && player.skills.intelligence > 1 && player.skills.intelligence < 100 ) {
       if (currBN !== 8)
         await bitflume(ns, 8, 'autopilot.js');
       else

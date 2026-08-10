@@ -28,10 +28,10 @@ export async function main(ns) {
   while (timeSinceLastAug > 20 * 60 * 1000) {
     await ns.sleep(10000); //sleep till the next reset.
   }*/
-  const invites = await singRun(ns, 'checkFactionInvitations');
-  while (invites.length < 10) {
+  //const invites = await singRun(ns, 'checkFactionInvitations');
+  /*while (invites.length < 10) {
     await ns.sleep(10000);
-  }
+  }*/
 
   const player = await getPlayerInfo(ns);
   const intel = player.skills.intelligence; //0.5% bonus per hour
@@ -89,7 +89,7 @@ export async function main(ns) {
   //If ROI is bad, bail out to your desired bitnode ---
   if (stopForLowROI) {
     log(ns, `ROI threshold reached, resetting...`, true, 'info');
-    await bitflume(ns, 3, 'autopilot.js');
+    await bitflume(ns, 2, 'autopilot.js');
     return;
   }
 
