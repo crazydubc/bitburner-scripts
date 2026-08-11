@@ -2,7 +2,7 @@ import {
   log, getReset, getPlayerInfo, getBNMults, getErrorInfo, isScriptRunning, getStocksValue, destroyWD,
   launchScriptHelper, crackHosts, getActiveSourceFiles, formatDuration, disableLogs,
   getOwnedAugs, getFacInvReqs, singRun, formatMoney, getServerMaxRam, getPortCrackers,
-  getServers, runScriptSomewhere, runScriptLocal, doSCP, gangRun, sleeveRun, stanekRun, bbRun
+  getServers, runScriptSomewhere, runScriptLocal, doSCP, gangRun, sleeveRun, stanekRun, bbRun, bitflume
 } from './utils.js';
 
 import { recordBnStart, printBnRunSummary, RUNLOG_FILE } from './logger.js'
@@ -233,8 +233,11 @@ export async function main(ns) {
     log(ns, "INFO: Cracked", true, 'info');
     //this gets up about 12.25% boost to stats in a short time.
     if ((5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 200) {
-      await launchScriptHelper(ns, 'farm-intel.js');
-      await ns.sleep(1000);
+      if (resetInfo.currentNode != 8) {
+        await bitflume(ns, 8, 'autopilot.js')
+      } else {
+        await launchScriptHelper(ns, 'farm-intel.js');
+      }
     }
     if (ns.getHostname() == 'home') {
       if (await getServerMaxRam(ns, 'home') < 64) {
@@ -422,7 +425,10 @@ export async function main(ns) {
     if (player.skills.hacking >= wdHack) {
       if (ns.hasRootAccess("w0r1d_d43m0n")) {
         //time to leave....
-        if (!(4 in unlockedSFs)) {
+        if ((5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 200) {
+          const ascendArgs = buildAscendArgs(ns.getScriptName(), allowSoftReset);
+          await runScriptLocal(ns, "ascend.js", false, ascendArgs);
+        } else if (!(4 in unlockedSFs)) {
           log(ns, `You do not own SF4, so you must manually exit the bitnode (` +
             `${player.skills.hacking >= wdHack ? "by hacking W0r1dD43m0n" : "on the bladeburner BlackOps tab"}).`, true);
           return true;
