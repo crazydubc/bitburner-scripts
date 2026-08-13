@@ -499,37 +499,27 @@ export async function getOwnedSF(ns) {
 }
 /** Helper to check which of a set of files exist on a remote server in a single batch ram-dodging request
  * @param {NS} ns*/
-export async function getActiveSourceFiles(ns, includeLevelsFromCurrentBitnode = true) {
-
+export async function getActiveSourceFiles(
+  ns,
+  includeLevelsFromCurrentBitnode = true,
+  suppliedResetInfo = undefined,
+) {
   checkNsInstance(ns, '"getActiveSourceFiles"');
-  const cost = ns.getScriptRam('bin/getOwnedSF.js');
-  //const bn = (await getReset(ns)).currentNode;
-  if (cost > 20) return { 1: 1 };
-  const resetInfo = await getReset(ns);
-  let dictSourceFiles = {};
 
-  const ownedsf = await getOwnedSF(ns);
-  if (ownedsf != 0)
-    dictSourceFiles = Object.fromEntries(ownedsf.map(sf => [sf.n, sf.lvl]));
+  const resetInfo = suppliedResetInfo ?? await getReset(ns);
+
+  // ResetInfo.ownedSF is Map<number, number>.
+  const dictSourceFiles = Object.fromEntries(resetInfo.ownedSF ?? []);
 
   if (includeLevelsFromCurrentBitnode) {
-    let effectiveSfLevel = 1;
-    dictSourceFiles[resetInfo.currentNode] = Math.max(effectiveSfLevel, dictSourceFiles[resetInfo.currentNode] || 0);
-  }
+    // These BitNodes provide their corresponding feature set at effective
+    // level 3 while currently running inside them.
+    const effectiveLevel = [4, 8, 15].includes(resetInfo.currentNode) ? 3 : 1;
 
-  // If the user is currently in a given bitnode, they will have its features unlocked. Include these "effective" levels if requested;
-  if (includeLevelsFromCurrentBitnode) {
-    // In some Bitnodes, we get the *effects* of source file level 3 just by being in the bitnode
-    let effectiveSfLevel = [4, 8, 15].includes(resetInfo.currentNode) ? 3 : 1;
-    dictSourceFiles[resetInfo.currentNode] = Math.max(effectiveSfLevel, dictSourceFiles[resetInfo.currentNode] || 0);
-  }
-
-  // If any bitNodeOptions were set, it might reduce our source file levels for gameplay purposes,
-  // but the game currently has a bug where getOwnedSourceFiles won't reflect this, so we must do it ourselves.
-  if ((resetInfo?.bitNodeOptions?.sourceFileOverrides?.size ?? 0) > 0) {
-    resetInfo.bitNodeOptions.sourceFileOverrides.forEach((sfLevel, bn) => dictSourceFiles[bn] = sfLevel);
-    // Completely remove keys whose override level is 0
-    Object.keys(dictSourceFiles).filter(bn => dictSourceFiles[bn] == 0).forEach(bn => delete dictSourceFiles[bn]);
+    dictSourceFiles[resetInfo.currentNode] = Math.max(
+      effectiveLevel,
+      dictSourceFiles[resetInfo.currentNode] ?? 0,
+    );
   }
 
   return dictSourceFiles;
