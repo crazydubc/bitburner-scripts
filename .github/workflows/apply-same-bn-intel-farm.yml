@@ -1,16 +1,106 @@
 name: Apply same-BitNode intelligence farm
+
 on:
   push:
-    branches: [agent/stay-in-bn-for-intel-farm]
+    branches:
+      - agent/stay-in-bn-for-intel-farm
+
 permissions:
   contents: write
+
 jobs:
   apply:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
-      - run: echo ready
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+
+      - name: Apply source patches
+        shell: bash
+        run: |
+          python3 .github/intel-patch-autopilot.py
+          base64 --decode .github/intel_patch_2.b64 > /tmp/intel_patch_2.py
+          python3 /tmp/intel_patch_2.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('utils.js')
+          text = path.read_text()
+          old = '  "donation-favor.js",\n];'
+          new = '  "donation-favor.js",\n  "intel-farm-state.js",\n];'
+          if text.count(old) != 1:
+              raise RuntimeError(f'utils dependency anchor count: {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Validate lifecycle and syntax
+        shell: bash
+        run: |
+          node --check intel-farm-state.js
+          node --check farm-intel.js
+          node --check autopilot.js
+          node --check work-for-faction2.js
+          node --check utils.js
+          node --experimental-default-type=module --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {
+            CORPORATE_FACTIONS, IntelFarmPhase, createIntelFarmState,
+            isIntelFarmActive, isIntelFarmPrep, missingCorporateFactions,
+            readIntelFarmState, shouldStartIntelFarm, stateMatchesCurrentBitNode,
+            writeIntelFarmState
+          } from './intel-farm-state.js';
+
+          assert.equal(CORPORATE_FACTIONS.length, 10);
+          assert.equal(new Set(CORPORATE_FACTIONS).size, 10);
+          const files = new Map();
+          const ns = {
+            read: file => files.get(file) ?? '',
+            write: (file, value) => { files.set(file, value); return true; },
+          };
+          const reset = {currentNode: 2, lastNodeReset: 12345};
+          assert.equal(shouldStartIntelFarm({state: null, resetInfo: reset,
+            ownedSourceFiles: {5: 1}, intelligence: 2}), true);
+          let state = writeIntelFarmState(ns, createIntelFarmState(reset, 2));
+          assert.equal(readIntelFarmState(ns).phase, IntelFarmPhase.CashRoot);
+          assert.equal(stateMatchesCurrentBitNode(state, reset), true);
+          assert.equal(stateMatchesCurrentBitNode(state, {...reset, lastNodeReset: 12346}), false);
+          assert.equal(isIntelFarmActive(state), true);
+          assert.equal(isIntelFarmPrep(state), true);
+          assert.deepEqual(missingCorporateFactions(CORPORATE_FACTIONS), []);
+          NODE
+          python3 - <<'PY'
+          from pathlib import Path
+          autopilot = Path('autopilot.js').read_text()
+          farm = Path('farm-intel.js').read_text()
+          work = Path('work-for-faction2.js').read_text()
+          utils = Path('utils.js').read_text()
+          assert "bitflume(ns, 8" not in autopilot
+          assert "bitflume" not in farm
+          assert "softReset', 'farm-intel.js'" in autopilot
+          assert "softReset', 'autopilot.js'" in farm
+          assert '--intel-farm-cashroot' in work
+          assert '--intel-farm-corporate' in work
+          assert 'intel-farm-state.js' in utils
+          PY
+          git diff --check
+
+      - name: Commit final source tree
+        shell: bash
+        run: |
+          rm .github/workflows/apply-same-bn-intel-farm.yml
+          rm .github/intel-patch-autopilot.py
+          rm .github/intel_patch_2.py
+          rm .github/intel_patch_2.b64
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Farm intelligence without leaving the current BitNode"
+          git push origin HEAD:${GITHUB_REF_NAME}
