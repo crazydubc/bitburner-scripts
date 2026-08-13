@@ -7,7 +7,7 @@ import {
   buildAugUtilityMap, getUsefulAugsForFaction, planBestFactionRepRoute,
   rankFactionInviteRoutes, selectBestExclusiveFactionGroup, chooseBestRoute
 } from './faction-route-planner.js';
-import {CORPORATE_FACTIONS} from './intel-farm.js';
+import {CASHROOT_AUG, CORPORATE_FACTIONS} from './intel-farm.js';
 
 const LOOP_SLEEP = 30000;
 const REPLAN_INTERVAL = 60 * 1000;
@@ -138,6 +138,7 @@ export async function main(ns) {
   ];
   const priorityAugs = priorityAugOverrides.length ? priorityAugOverrides : DEFAULT_PRIORITY_AUGS.slice();
   const namedDesiredAugs = [...new Set([...priorityAugs, ...DEFAULT_DESIRED_AUGS, ...desiredAugOverrides])];
+  const collectCashRoot = priorityAugs.includes(CASHROOT_AUG);
 
   let playerInfo = null;
   let currentWork = {};
@@ -678,7 +679,7 @@ export async function main(ns) {
     requestedReplanDelay = REPLAN_INTERVAL;
     await loadData();
     currentWork = (await singRun(ns, "getCurrentWork")) ?? {};
-    if (await isBladeburnerInterruption()) return true;
+    if (!collectCashRoot && !collectAllCompanyInvites && await isBladeburnerInterruption()) return true;
     if (collectAllCompanyInvites) {
       const collection = await collectCorporateInvites();
       if (collection.completed || collection.handled) return true;

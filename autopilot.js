@@ -10,7 +10,7 @@ import {
   buildAscendArgs, getFreshDonationFavorProgress, NEUROFLUX
 } from './donation-favor.js'
 import {
-  CASHROOT_AUG, INTEL_FARM_STATE_FILE, INTEL_FARM_TARGET, getMissingCorporateFactions,
+  CASHROOT_AUG, CORPORATE_FACTIONS, INTEL_FARM_STATE_FILE, INTEL_FARM_TARGET, getMissingCorporateFactions,
   isIntelFarmComplete, readIntelFarmState, writeIntelFarmState
 } from './intel-farm.js'
 
@@ -85,6 +85,7 @@ export async function main(ns) {
   let lastIntelFarmStatus = "";
   let intelFarmStateLoaded = false;
   let cachedIntelFarmState = null;
+  let intelFarmCashRootPrice = 125_000_000;
 
   function getFactionWorkerArgs() {
     if (intelFarmPhase === "cashroot") {
@@ -142,12 +143,15 @@ export async function main(ns) {
     },
     {
       name: "stockmaster.js",
-      shouldRun: () => (reqRam(3000) || !shouldImproveHacking(ns)) && (getTimeInAug() > 20000 || resetInfo.currentNode == 8),
+      shouldRun: () => intelFarmPhase !== "cashroot" &&
+        (reqRam(3000) || !shouldImproveHacking(ns)) &&
+        (getTimeInAug() > 20000 || resetInfo.currentNode == 8),
       args: () => []
     },
     {
       name: "bladeburner.js",
-      shouldRun: () => 7 in unlockedSFs && bitNodeMults.BladeburnerRank > 0,
+      shouldRun: () => !["cashroot", "corporate-invites"].includes(intelFarmPhase) &&
+        7 in unlockedSFs && bitNodeMults.BladeburnerRank > 0,
       args: () => []
     },
     {
@@ -241,7 +245,9 @@ export async function main(ns) {
     const servers = await getServers(ns);
     for (const server of servers) {
       for (const process of ns.ps(server.hostname)) {
-        if (process.filename === "work-for-faction2.js") ns.kill(process.pid);
+        const ownsPlayerWork = process.filename === "work-for-faction2.js" ||
+          (["cashroot", "corporate-invites"].includes(phase) && process.filename === "bladeburner.js");
+        if (ownsPlayerWork) ns.kill(process.pid);
       }
     }
   }
@@ -306,6 +312,62 @@ export async function main(ns) {
     }
 
     const installedOnly = await getOwnedAugs(ns, false);
+    const ownedWithQueued = await getOwnedAugs(ns, true);
+    if (!Array.isArray(installedOnly) || !Array.isArray(ownedWithQueued))
+      throw new Error(`Unable to read augmentation ownership during INT preparation.`);
+
+    if (!installedOnly.includes(CASHROOT_AUG)) {
+      const price = Number(await singRun(ns, "getAugmentationPrice", CASHROOT_AUG));
+      if (Number.isFinite(price) && price > 0) intelFarmCashRootPrice = price;
+
+      if (ownedWithQueued.includes(CASHROOT_AUG)) {
+        logIntelFarmStatus(ns, "cashroot-installing",
+          `Installing ${CASHROOT_AUG} before earning corporate company reputation.`, "success");
+        await persistIntelFarmState(ns, {
+          phase: "cashroot-installing",
+          currentNode: resetInfo.currentNode,
+          lastNodeReset: resetInfo.lastNodeReset,
+          missingCorporateFactions: [],
+        });
+        await singRun(ns, "installAugmentations", ns.getScriptName());
+        return "handoff";
+      }
+
+      const incompatibleCityFactions = ["Chongqing", "New Tokyo", "Ishima", "Volhaven"];
+      if (!player.factions.includes("Sector-12") &&
+        incompatibleCityFactions.some(faction => player.factions.includes(faction))) {
+        logIntelFarmStatus(ns, "cashroot-city-reset",
+          `A mutually-exclusive city faction blocks Sector-12. Soft-resetting in place before CashRoot prep.`,
+          "warning");
+        await persistIntelFarmState(ns, {
+          phase: "cashroot",
+          currentNode: resetInfo.currentNode,
+          lastNodeReset: resetInfo.lastNodeReset,
+          missingCorporateFactions: [],
+        });
+        await singRun(ns, "softReset", ns.getScriptName());
+        return "handoff";
+      }
+
+      if (player.factions.includes("Sector-12")) {
+        const repRequirement = Number(await singRun(ns, "getAugmentationRepReq", CASHROOT_AUG));
+        const factionRep = Number(await singRun(ns, "getFactionRep", "Sector-12"));
+        if (Number.isFinite(repRequirement) && Number.isFinite(factionRep) &&
+          factionRep >= repRequirement && player.money >= intelFarmCashRootPrice &&
+          await singRun(ns, "purchaseAugmentation", "Sector-12", CASHROOT_AUG) === true) {
+          logIntelFarmStatus(ns, "cashroot-purchased",
+            `Purchased ${CASHROOT_AUG}; installing it before corporate invitation preparation.`, "success");
+          await persistIntelFarmState(ns, {
+            phase: "cashroot-installing",
+            currentNode: resetInfo.currentNode,
+            lastNodeReset: resetInfo.lastNodeReset,
+            missingCorporateFactions: [],
+          });
+          await singRun(ns, "installAugmentations", ns.getScriptName());
+          return "handoff";
+        }
+      }
+    }
     if (!installedOnly.includes(CASHROOT_AUG)) {
       await setIntelFarmPhase(ns, "cashroot");
       if (state.phase !== "cashroot" || state.currentNode !== resetInfo.currentNode) {
@@ -324,7 +386,14 @@ export async function main(ns) {
     const pendingInvites = await singRun(ns, "checkFactionInvitations");
     if (!Array.isArray(pendingInvites))
       throw new Error(`checkFactionInvitations returned ${String(pendingInvites)}`);
-    const missingCorporateFactions = getMissingCorporateFactions(player.factions, pendingInvites);
+    let joinedCorporateFaction = false;
+    for (const faction of pendingInvites.filter(faction => CORPORATE_FACTIONS.includes(faction))) {
+      if (await singRun(ns, "joinFaction", faction) === true) joinedCorporateFaction = true;
+    }
+    if (joinedCorporateFaction) player = await getPlayerInfo(ns);
+    // Invitations alone are not sufficient: company reputation is reset, so every company faction must be joined
+    // before the farming reset can recreate it as a maintained invitation.
+    const missingCorporateFactions = getMissingCorporateFactions(player.factions, []);
     if (missingCorporateFactions.length > 0) {
       await setIntelFarmPhase(ns, "corporate-invites");
       if (state.phase !== "corporate-invites" ||
@@ -351,35 +420,18 @@ export async function main(ns) {
         missingCorporateFactions: [],
       });
     }
-    if (await isScriptRunning(ns, "farm-intel.js")) return "handoff";
-
     await singRun(ns, "stopAction");
-    const farmRam = ns.getScriptRam("farm-intel.js", "home");
-    const freeHomeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
-    if (!(farmRam > 0) || freeHomeRam < farmRam) {
-      logIntelFarmStatus(ns, "waiting-home-ram",
-        `Waiting to start farm-intel.js on home: ${farmRam.toFixed(1)} GB required, ` +
-        `${freeHomeRam.toFixed(1)} GB free.`, "warning");
-      return "preparing";
-    }
-    const pid = ns.exec("farm-intel.js", "home", {threads: 1, temporary: true});
-    if (pid > 0) {
-      await persistIntelFarmState(ns, {
-        phase: "running",
-        farmPid: pid,
-        currentNode: resetInfo.currentNode,
-        lastNodeReset: resetInfo.lastNodeReset,
-        missingCorporateFactions: [],
-      });
-      logIntelFarmStatus(ns, "running",
-        `CashRoot and all corporate invitations are ready. Starting the intelligence farm in ` +
-        `BitNode ${resetInfo.currentNode}.`, "success");
-      return "handoff";
-    }
-
-    logIntelFarmStatus(ns, "launch-failed",
-      "Unable to launch farm-intel.js on home; retaining preparation state and retrying.", "warning");
-    return "preparing";
+    await persistIntelFarmState(ns, {
+      phase: "running",
+      currentNode: resetInfo.currentNode,
+      lastNodeReset: resetInfo.lastNodeReset,
+      missingCorporateFactions: [],
+    });
+    logIntelFarmStatus(ns, "running",
+      `CashRoot and all corporate factions are joined. Resetting in BitNode ${resetInfo.currentNode} ` +
+      `so the first farm cycle can accept every maintained invitation.`, "success");
+    await singRun(ns, "softReset", "farm-intel.js");
+    return "handoff";
   }
 
 
@@ -489,11 +541,11 @@ export async function main(ns) {
     if (!preparingIntelFarm) {
       await checkOnDaedalusStatus(ns, player, stocksValue);
       await checkIfBnIsComplete(ns);
+      await maybeAcceptStaneksGift(ns);
     }
-    await maybeAcceptStaneksGift(ns);
     await runPeriodicScripts(ns);
     await checkOnRunningScripts(ns);
-    await maybeInstallAugmentations(ns, player);
+    if (!preparingIntelFarm) await maybeInstallAugmentations(ns, player);
     return shouldWeKeepRunning(ns); // Return false to shut down autopilot.js if we installed augs, or don't have enough home RAM
   }
 
@@ -501,6 +553,11 @@ export async function main(ns) {
    * @  ram {NS} ns
    * @param {Play    player */
   function manageReservedMoney(ns, player, stocksValue) {
+    if (intelFarmPhase === "cashroot") {
+      const currentReserve = Number(ns.read("reserve.txt") || 0);
+      const reserve = Math.ceil(intelFarmCashRootPrice);
+      return currentReserve == reserve ? true : ns.write("reserve.txt", reserve, "w");
+    }
     if (reservedPurchase) return; // Do not mess with money reserved for installing augmentations
     const currentReserve = Number(ns.read("reserve.txt") || 0);
     if (reservingMoneyForDaedalus) // Reserve 100b to get the daedalus invite
@@ -577,6 +634,7 @@ export async function main(ns) {
   /** Checks if the BN is complete
      @param {NS} ns */
   async function checkIfBnIsComplete(ns) {
+    if (!["inactive", "complete"].includes(intelFarmPhase)) return false;
     // Check if there is some reason not to automatically destroy this BN
     if (resetInfo.currentNode == 10) { // Suggest the user doesn't reset until they buy all sleeves and max memory
       let sleeveCost = await sleeveRun(ns, 'getSleeveCost');

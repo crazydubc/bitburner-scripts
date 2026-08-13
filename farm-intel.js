@@ -2,7 +2,7 @@ import {
   log, formatNumber, getPlayerInfo, getReset, runScriptSomewhere, singRun
 } from './utils.js';
 import {
-  INTEL_FARM_STATS_FILE, getMissingCorporateFactions, writeIntelFarmState
+  INTEL_FARM_STATS_FILE, INTEL_FARM_TARGET, getMissingCorporateFactions, writeIntelFarmState
 } from './intel-farm.js';
 
 const FORECAST_HOURS = 1;
@@ -77,7 +77,7 @@ export async function main(ns) {
   const intelligence = Number(player.skills.intelligence) || 0;
   const now = Date.now();
   const previous = getFileData(ns, INTEL_FARM_STATS_FILE);
-  let stopForLowROI = false;
+  let stopForLowROI = intelligence >= INTEL_FARM_TARGET;
 
   if (previous?.lastNodeReset === resetInfo.lastNodeReset &&
     Number.isFinite(previous.intelligence) && Number.isFinite(previous.time)) {
