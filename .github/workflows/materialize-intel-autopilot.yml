@@ -1,0 +1,299 @@
+name: Apply same-BitNode intelligence lifecycle
+
+on:
+  push:
+    branches:
+      - agent/stay-current-bn-intel-farm
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+
+      - name: Apply autopilot lifecycle
+        shell: bash
+        run: |
+          git apply .github/autopilot-intel-phase-a.patch
+          git apply .github/autopilot-intel-state.patch
+          python3 - <<'PY'
+          from pathlib import Path
+
+          autopilot_path = Path('autopilot.js')
+          autopilot = autopilot_path.read_text()
+
+          def replace_once(old, new, label):
+              global autopilot
+              count = autopilot.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{label}: expected one anchor, found {count}')
+              autopilot = autopilot.replace(old, new, 1)
+
+          replace_once(
+              '  getServers, runScriptSomewhere, runScriptLocal, doSCP, gangRun, sleeveRun, stanekRun, bbRun, bitflume\n',
+              '  getServers, runScriptSomewhere, runScriptLocal, doSCP, gangRun, sleeveRun, stanekRun, bbRun\n',
+              'remove BN8 bitflume import')
+
+          old_detour = '''    //this gets up about 12.25% boost to stats in a short time.
+              if ((5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 200) {
+                if (resetInfo.currentNode != 8) {
+                  await bitflume(ns, 8, 'autopilot.js')
+                } else {
+                  await launchScriptHelper(ns, 'farm-intel.js');
+                }
+              }
+          '''.replace('      ', '')
+          replace_once(old_detour, '', 'remove BN8 intelligence detour')
+
+          replace_once(
+              '  let lastIntelFarmStatus = "";\n',
+              '  let lastIntelFarmStatus = "";\n  let intelFarmCashRootPrice = 125_000_000;\n',
+              'add CashRoot reserve')
+
+          old_installed = '    const installedOnly = await getOwnedAugs(ns, false);\n'
+          new_installed = '''    const installedOnly = await getOwnedAugs(ns, false);
+              const ownedWithQueued = await getOwnedAugs(ns, true);
+              if (!Array.isArray(installedOnly) || !Array.isArray(ownedWithQueued))
+                throw new Error(`Unable to read augmentation ownership during INT preparation.`);
+
+              if (!installedOnly.includes(CASHROOT_AUG)) {
+                const price = Number(await singRun(ns, "getAugmentationPrice", CASHROOT_AUG));
+                if (Number.isFinite(price) && price > 0) intelFarmCashRootPrice = price;
+
+                if (ownedWithQueued.includes(CASHROOT_AUG)) {
+                  logIntelFarmStatus(ns, "cashroot-installing",
+                    `Installing ${CASHROOT_AUG} before earning corporate company reputation.`, "success");
+                  await persistIntelFarmState(ns, {
+                    phase: "cashroot-installing",
+                    currentNode: resetInfo.currentNode,
+                    lastNodeReset: resetInfo.lastNodeReset,
+                    missingCorporateFactions: [],
+                  });
+                  await singRun(ns, "installAugmentations", ns.getScriptName());
+                  return "handoff";
+                }
+
+                const incompatibleCityFactions = ["Chongqing", "New Tokyo", "Ishima", "Volhaven"];
+                if (!player.factions.includes("Sector-12") &&
+                  incompatibleCityFactions.some(faction => player.factions.includes(faction))) {
+                  logIntelFarmStatus(ns, "cashroot-city-reset",
+                    `A mutually-exclusive city faction blocks Sector-12. Soft-resetting in place before CashRoot prep.`,
+                    "warning");
+                  await persistIntelFarmState(ns, {
+                    phase: "cashroot",
+                    currentNode: resetInfo.currentNode,
+                    lastNodeReset: resetInfo.lastNodeReset,
+                    missingCorporateFactions: [],
+                  });
+                  await singRun(ns, "softReset", ns.getScriptName());
+                  return "handoff";
+                }
+
+                if (player.factions.includes("Sector-12")) {
+                  const repRequirement = Number(await singRun(ns, "getAugmentationRepReq", CASHROOT_AUG));
+                  const factionRep = Number(await singRun(ns, "getFactionRep", "Sector-12"));
+                  if (Number.isFinite(repRequirement) && Number.isFinite(factionRep) &&
+                    factionRep >= repRequirement && player.money >= intelFarmCashRootPrice &&
+                    await singRun(ns, "purchaseAugmentation", "Sector-12", CASHROOT_AUG)) {
+                    logIntelFarmStatus(ns, "cashroot-purchased",
+                      `Purchased ${CASHROOT_AUG}; installing it before corporate invitation preparation.`, "success");
+                    await persistIntelFarmState(ns, {
+                      phase: "cashroot-installing",
+                      currentNode: resetInfo.currentNode,
+                      lastNodeReset: resetInfo.lastNodeReset,
+                      missingCorporateFactions: [],
+                    });
+                    await singRun(ns, "installAugmentations", ns.getScriptName());
+                    return "handoff";
+                  }
+                }
+              }
+          '''.replace('      ', '')
+          replace_once(old_installed, new_installed, 'add direct CashRoot purchase and install')
+
+          old_handoff = '''    if (await isScriptRunning(ns, "farm-intel.js")) return "handoff";
+
+              await singRun(ns, "stopAction");
+              const pid = await runScriptSomewhere(ns, "farm-intel.js", true, []);
+              if (pid > 0) {
+                await persistIntelFarmState(ns, {
+                  phase: "running",
+                  farmPid: pid,
+                  currentNode: resetInfo.currentNode,
+                  lastNodeReset: resetInfo.lastNodeReset,
+                  missingCorporateFactions: [],
+                });
+                logIntelFarmStatus(ns, "running",
+                  `CashRoot and all corporate invitations are ready. Starting the intelligence farm in ` +
+                  `BitNode ${resetInfo.currentNode}.`, "success");
+                return "handoff";
+              }
+
+              logIntelFarmStatus(ns, "launch-failed",
+                "Unable to launch farm-intel.js; retaining preparation state and retrying.", "warning");
+              return "preparing";
+          '''.replace('      ', '')
+          new_handoff = '''    await singRun(ns, "stopAction");
+              await persistIntelFarmState(ns, {
+                phase: "running",
+                currentNode: resetInfo.currentNode,
+                lastNodeReset: resetInfo.lastNodeReset,
+                missingCorporateFactions: [],
+              });
+              logIntelFarmStatus(ns, "running",
+                `CashRoot and all corporate invitations are ready. Resetting in BitNode ${resetInfo.currentNode} ` +
+                `so the first farm cycle can accept every maintained invitation.`, "success");
+              await singRun(ns, "softReset", "farm-intel.js");
+              return "handoff";
+          '''.replace('      ', '')
+          replace_once(old_handoff, new_handoff, 'start farm through same-BitNode reset')
+
+          replace_once(
+              '    if (player.skills.hacking > playerHackLevel || ownedCracks.length > numCracksOwned) await crackHosts(ns);\n    \n    have4sApi = ns.stock.has4SDataTixApi();',
+              '    if (player.skills.hacking > playerHackLevel || ownedCracks.length > numCracksOwned) await crackHosts(ns);\n' +
+              '    const intelFarmAction = await manageIntelFarm(ns);\n' +
+              '    if (intelFarmAction === "handoff") { ns.exit(); return false; }\n' +
+              '    const intelFarmPreparing = intelFarmAction === "preparing";\n    \n' +
+              '    have4sApi = ns.stock.has4SDataTixApi();',
+              'advance intelligence lifecycle')
+
+          old_main_actions = '''    manageReservedMoney(ns, player, stocksValue);
+              await checkOnDaedalusStatus(ns, player, stocksValue);
+              await checkIfBnIsComplete(ns);
+              await maybeAcceptStaneksGift(ns);
+              await runPeriodicScripts(ns);
+              await checkOnRunningScripts(ns);
+              await maybeInstallAugmentations(ns, player);
+          '''.replace('      ', '')
+          new_main_actions = '''    manageReservedMoney(ns, player, stocksValue);
+              if (!intelFarmPreparing) {
+                await checkOnDaedalusStatus(ns, player, stocksValue);
+                await checkIfBnIsComplete(ns);
+                await maybeAcceptStaneksGift(ns);
+              }
+              await runPeriodicScripts(ns);
+              await checkOnRunningScripts(ns);
+              if (!intelFarmPreparing) await maybeInstallAugmentations(ns, player);
+          '''.replace('      ', '')
+          replace_once(old_main_actions, new_main_actions, 'protect preparation from normal resets')
+
+          replace_once(
+              '  function manageReservedMoney(ns, player, stocksValue) {\n    if (reservedPurchase) return;',
+              '  function manageReservedMoney(ns, player, stocksValue) {\n' +
+              '    if (intelFarmPhase === "cashroot") {\n' +
+              '      const currentReserve = Number(ns.read("reserve.txt") || 0);\n' +
+              '      const reserve = Math.ceil(intelFarmCashRootPrice);\n' +
+              '      return currentReserve == reserve ? true : ns.write("reserve.txt", reserve, "w");\n' +
+              '    }\n' +
+              '    if (reservedPurchase) return;',
+              'reserve CashRoot purchase money')
+
+          replace_once(
+              '      shouldRun: () => (reqRam(3000) || !shouldImproveHacking(ns)) && (getTimeInAug() > 20000 || resetInfo.currentNode == 8),',
+              '      shouldRun: () => intelFarmPhase !== "cashroot" &&\n' +
+              '        (reqRam(3000) || !shouldImproveHacking(ns)) &&\n' +
+              '        (getTimeInAug() > 20000 || resetInfo.currentNode == 8),',
+              'keep CashRoot money out of stocks')
+
+          replace_once(
+              '      shouldRun: () => 7 in unlockedSFs && bitNodeMults.BladeburnerRank > 0,',
+              '      shouldRun: () => !["cashroot", "corporate-invites"].includes(intelFarmPhase) &&\n' +
+              '        7 in unlockedSFs && bitNodeMults.BladeburnerRank > 0,',
+              'give preparation ownership of player work')
+
+          replace_once(
+              '  async function checkIfBnIsComplete(ns) {\n    // Check if there is some reason not to automatically destroy this BN',
+              '  async function checkIfBnIsComplete(ns) {\n' +
+              '    if (!["inactive", "complete"].includes(intelFarmPhase)) return false;\n' +
+              '    // Check if there is some reason not to automatically destroy this BN',
+              'hold World Daemon completion')
+
+          old_completion = '''        if ((5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 200) {
+                    const ascendArgs = buildAscendArgs(ns.getScriptName(), allowSoftReset);
+                    await runScriptLocal(ns, "ascend.js", false, ascendArgs);
+                  } else if (!(4 in unlockedSFs)) {
+          '''.replace('          ', '')
+          replace_once(old_completion, '        if (!(4 in unlockedSFs)) {\n', 'remove old completion reset detour')
+
+          autopilot_path.write_text(autopilot)
+
+          farm_path = Path('farm-intel.js')
+          farm = farm_path.read_text()
+          farm = farm.replace(
+              '  INTEL_FARM_STATS_FILE, getMissingCorporateFactions, writeIntelFarmState\n',
+              '  INTEL_FARM_STATS_FILE, INTEL_FARM_TARGET, getMissingCorporateFactions, writeIntelFarmState\n', 1)
+          farm = farm.replace('  let stopForLowROI = false;\n',
+                              '  let stopForLowROI = intelligence >= INTEL_FARM_TARGET;\n', 1)
+          farm_path.write_text(farm)
+          PY
+
+      - name: Validate source
+        shell: bash
+        run: |
+          node --check autopilot.js
+          node --check work-for-faction2.js
+          node --check farm-intel.js
+          node --check intel-farm.js
+          node --check utils.js
+          node --check git-pull.js
+          node --experimental-default-type=module --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {
+            CORPORATE_FACTIONS, INTEL_FARM_TARGET, getMissingCorporateFactions,
+            isIntelFarmComplete, readIntelFarmState, writeIntelFarmState
+          } from './intel-farm.js';
+          assert.equal(CORPORATE_FACTIONS.length, 10);
+          assert.equal(new Set(CORPORATE_FACTIONS).size, 10);
+          assert.equal(INTEL_FARM_TARGET, 200);
+          assert.deepEqual(getMissingCorporateFactions(CORPORATE_FACTIONS, []), []);
+          const files = new Map();
+          const ns = {read: file => files.get(file) ?? '', write: (file, data) => files.set(file, data)};
+          const state = writeIntelFarmState(ns, {phase: 'complete', completedIntelligence: 75});
+          assert.equal(readIntelFarmState(ns).phase, 'complete');
+          assert.equal(isIntelFarmComplete(state, 75), true);
+          assert.equal(isIntelFarmComplete(state, 74), false);
+          NODE
+          python3 - <<'PY'
+          from pathlib import Path
+          autopilot = Path('autopilot.js').read_text()
+          farm = Path('farm-intel.js').read_text()
+          worker = Path('work-for-faction2.js').read_text()
+          assert 'bitflume(ns, 8' not in autopilot
+          assert 'bitflume' not in farm
+          assert 'purchaseAugmentation", "Sector-12", CASHROOT_AUG' in autopilot
+          assert 'softReset", "farm-intel.js"' in autopilot
+          assert '--all-company-invites' in autopilot
+          assert '--all-company-invites' in worker
+          assert 'intelFarmPreparing' in autopilot
+          assert 'INTEL_FARM_TARGET' in farm
+          PY
+          git diff --check
+
+      - name: Commit clean source tree
+        shell: bash
+        run: |
+          rm -f .github/autopilot-intel-phase-a.patch \
+                .github/autopilot-intel-state.patch \
+                .github/autopilot.gz.00 \
+                .github/autopilot.gz.01 \
+                .github/autopilot.gz.02 \
+                .github/workflows/export-intel-farm-source.yml \
+                .github/workflows/materialize-intel-autopilot.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Farm intelligence without leaving the current BitNode"
+          git push origin HEAD:${GITHUB_REF_NAME}
