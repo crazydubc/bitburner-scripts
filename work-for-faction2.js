@@ -7,6 +7,7 @@ import {
   buildAugUtilityMap, getUsefulAugsForFaction, planBestFactionRepRoute,
   rankFactionInviteRoutes, selectBestExclusiveFactionGroup, chooseBestRoute
 } from './faction-route-planner.js';
+import {CORPORATE_FACTIONS} from './intel-farm.js';
 
 const LOOP_SLEEP = 30000;
 const REPLAN_INTERVAL = 60 * 1000;
@@ -28,10 +29,7 @@ const PREFERRED_EARLY_FACTIONS = [
   "Fulcrum Secret Technologies", "ECorp", "The Black Hand", "The Dark Army", "Clarke Incorporated",
   "OmniTek Incorporated", "NWO", "Chongqing"
 ];
-const COMPANY_FACTIONS = [
-  "Bachman & Associates", "ECorp", "Clarke Incorporated", "OmniTek Incorporated", "NWO", "Blade Industries",
-  "MegaCorp", "KuaiGong International", "Fulcrum Secret Technologies", "Four Sigma"
-];
+const COMPANY_FACTIONS = CORPORATE_FACTIONS;
 const ROUTE_ORDER = [...new Set([...PREFERRED_EARLY_FACTIONS, ...COMPANY_FACTIONS, ...FACTIONS])];
 const COMPANY_NAME_BY_FACTION = { "Fulcrum Secret Technologies": "Fulcrum Technologies" };
 const COMPANY_SERVER_BY_FACTION = {
@@ -124,6 +122,7 @@ export async function main(ns) {
   const crimeFocused = ns.args.includes("--crime-focus");
   const fastCrimesOnly = ns.args.includes("--fast-crimes-only");
   const prioritizeInvites = ns.args.includes("--prioritize-invites");
+  const collectAllCompanyInvites = ns.args.includes("--all-company-invites");
   const trainingStatPerMultiThreshold = getNumericFlag(ns.args, "--training-stat-per-multi-threshold", 100);
   const desiredStatOverrides = [
     ...getFlagValues(ns.args, "--desired-stats"),
@@ -246,7 +245,8 @@ export async function main(ns) {
     // City invitations are deferred until the route planner compares all exclusive city groups.
     for (const faction of pendingInvites.filter(faction => !CITY_FACTIONS.has(faction))) {
       const forceGangFaction = crimeFocused && GANG_FACTIONS.includes(faction) && !playerInGang;
-      if (!forceGangFaction && factionUtility(faction) <= 0) continue;
+      const forceCompanyFaction = collectAllCompanyInvites && COMPANY_FACTIONS.includes(faction);
+      if (!forceGangFaction && !forceCompanyFaction && factionUtility(faction) <= 0) continue;
       joined = await joinFaction(faction) || joined;
     }
     return joined;
@@ -606,12 +606,83 @@ export async function main(ns) {
     return true;
   }
 
+  async function collectCorporateInvites() {
+    const missing = COMPANY_FACTIONS.filter(faction =>
+      !playerInfo.factions.includes(faction) && !pendingInvites.includes(faction));
+    if (missing.length === 0) {
+      if (currentWork?.type === "COMPANY") await singRun(ns, "stopAction");
+      if (lastPlan !== "company-invites:complete") {
+        lastPlan = "company-invites:complete";
+        log(ns, "All corporate faction invitations are secured for intelligence farming.", false, "success");
+      }
+      activePlan = null;
+      requestedReplanDelay = INVITE_REPLAN_INTERVAL;
+      return { handled: true, completed: true };
+    }
+
+    const estimatedWorkRate = median([
+      ...Object.values(companyRepRateCache),
+      ...Object.values(repRateCache),
+    ], 1);
+    const efforts = await estimateInviteEfforts(missing, estimatedWorkRate);
+    const reachable = missing.filter(faction => Number.isFinite(efforts[faction]))
+      .sort((left, right) => efforts[left] - efforts[right] ||
+        COMPANY_FACTIONS.indexOf(left) - COMPANY_FACTIONS.indexOf(right));
+    requestedReplanDelay = INVITE_REPLAN_INTERVAL;
+
+    if (reachable.length === 0) {
+      const signature = `company-invites:waiting:${missing.join("|")}`;
+      if (lastPlan !== signature) {
+        lastPlan = signature;
+        log(ns, `Waiting for hacking levels, job qualifications, or the Fulcrum backdoor before ` +
+          `continuing the corporate invitation farm. Missing: [${missing.join(", ")}].`, false, "info");
+      }
+      return { handled: false, completed: false };
+    }
+
+    const faction = reachable[0];
+    const company = COMPANY_NAME_BY_FACTION[faction] ?? faction;
+    const currentRep = Number(await singRun(ns, "getCompanyRep", company)) || 0;
+    const targetRep = await companyFactionRepRequirement(faction);
+    const signature = `company-invite:${faction}:${Math.round(targetRep)}`;
+    if (lastPlan !== signature) {
+      lastPlan = signature;
+      log(ns, `Collecting corporate invite ${faction}: ${Math.round(currentRep).toLocaleString()}/` +
+        `${Math.round(targetRep).toLocaleString()} company rep, ETA ` +
+        `${formatDuration(Math.max(0, efforts[faction]) * 1000)}.`, false, "info");
+    }
+
+    activePlan = {
+      kind: "company-invite",
+      faction,
+      targetRep,
+      eta: efforts[faction],
+      utility: 0,
+      score: Number.POSITIVE_INFINITY,
+      unlockedAugs: [],
+      priorityCount: 1,
+    };
+
+    // Invitation generation can lag the rep threshold by a planner cycle. Hold completed company work instead
+    // of letting a normal route overwrite it while checkFactionInvitations catches up.
+    if (currentRep >= targetRep) {
+      if (currentWork?.type === "COMPANY" && currentWork.companyName === company)
+        await singRun(ns, "stopAction");
+      return { handled: true, completed: false };
+    }
+    return { handled: await workForFactionInvite(faction), completed: false };
+  }
+
   async function planAndAct() {
     activePlan = null;
     requestedReplanDelay = REPLAN_INTERVAL;
     await loadData();
     currentWork = (await singRun(ns, "getCurrentWork")) ?? {};
     if (await isBladeburnerInterruption()) return true;
+    if (collectAllCompanyInvites) {
+      const collection = await collectCorporateInvites();
+      if (collection.completed || collection.handled) return true;
+    }
     if (crimeFocused && !playerInGang) {
       requestedReplanDelay = INVITE_REPLAN_INTERVAL;
       return await workTowardGang();

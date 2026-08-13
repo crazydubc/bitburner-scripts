@@ -1,98 +1,126 @@
 import {
-  log, formatNumber, getPlayerInfo, singRun, bitflume
-} from './utils.js'
+  log, formatNumber, getPlayerInfo, getReset, runScriptSomewhere, singRun
+} from './utils.js';
+import {
+  INTEL_FARM_STATS_FILE, getMissingCorporateFactions, writeIntelFarmState
+} from './intel-farm.js';
 
-const STATS_FILE = "/Temp/intFarmStats.txt";
 const FORECAST_HOURS = 1;
+const MIN_PERCENT_BONUS_PER_HOUR = 0.5;
 
-function intBonus(intel) {
-  return 1 + Math.pow(intel, 0.8) / 600;
+function intBonus(intelligence) {
+  return 1 + Math.pow(intelligence, 0.8) / 600;
 }
+
 /** @param {NS} ns */
 function getFileData(ns, file) {
-  let prev = null;
   const raw = ns.read(file);
-  if (raw) {
-    try {
-      prev = JSON.parse(raw);
-    } catch {
-      // corrupt file, ignore
-    }
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
-  return prev;
+}
+
+async function getInvitations(ns) {
+  const invitations = await singRun(ns, 'checkFactionInvitations');
+  if (!Array.isArray(invitations)) throw new Error(`checkFactionInvitations returned ${String(invitations)}`);
+  return invitations;
+}
+
+async function joinInvitations(ns, invitations) {
+  for (const invitation of invitations) await singRun(ns, 'joinFaction', invitation);
 }
 
 /** @param {NS} ns */
 export async function main(ns) {
-  /*const timeSinceLastAug = Date.now() - (await getReset(ns)).lastAugReset;
-  while (timeSinceLastAug > 20 * 60 * 1000) {
-    await ns.sleep(10000); //sleep till the next reset.
-  }*/
-  //const invites = await singRun(ns, 'checkFactionInvitations');
-  /*while (invites.length < 10) {
-    await ns.sleep(10000);
-  }*/
+  const resetInfo = await getReset(ns);
+  let player = await getPlayerInfo(ns);
+  let invitations = await getInvitations(ns);
+  const missingCorporateFactions = getMissingCorporateFactions(player.factions, invitations);
 
-  const player = await getPlayerInfo(ns);
-  const intel = player.skills.intelligence; //0.5% bonus per hour
-  let MIN_PERCENT_BONUS_PER_HOUR = 0.5;
-
-  //Load previous stats (if any)
-  let prev = getFileData(ns, STATS_FILE);
-
-  const now = Date.now();
-  let stopForLowROI = false;
-
-  if (prev && typeof prev.intel === "number" && typeof prev.time === "number") {
-    const dInt = intel - prev.intel;
-
-    // Do rate/forecast math when INT increased
-    if (dInt > 0) {
-      const dtSec = (now - prev.time) / 1000;
-      const intPerHour = dInt / dtSec * 3600;
-
-      const I_now = intel;
-      const I_future = I_now + intPerHour * FORECAST_HOURS;
-
-      const bonusNow = intBonus(I_now);
-      const bonusFuture = intBonus(I_future);
-      const bonusGainPct = (bonusFuture - bonusNow) / bonusNow * 100;
-
-      log(ns,
-        `INT ${prev.intel}→${intel} in ${formatNumber(dtSec)}s `
-        + `(${formatNumber(intPerHour)} INT/hr). `
-        + `Forecast Δbonus≈${bonusGainPct.toFixed(3)}% in next ${FORECAST_HOURS}h`,
-        true,
-        "info"
-      );
-
-      if (bonusGainPct < MIN_PERCENT_BONUS_PER_HOUR) {
-        stopForLowROI = true;
-      }
-
-      // Reset baseline to this INT level and time
-      ns.write(STATS_FILE, JSON.stringify({ intel, time: now }), "w");
-    }
-  } else {
-    // First time / no previous data: initialize baseline
-    ns.write(STATS_FILE, JSON.stringify({ intel, time: now }), "w");
-  }
-  //Normal farming
-  for (const loc of ['Chongqing', 'New Tokyo', 'Ishima']) {
-    await singRun(ns, 'travelToCity', loc);
-    const invs = await singRun(ns, 'checkFactionInvitations');
-    for (const inv of invs) {
-      await singRun(ns, 'joinFaction', inv);
-    }
-  }
-
-  //If ROI is bad, bail out to your desired bitnode ---
-  if (stopForLowROI) {
-    log(ns, `ROI threshold reached, resetting...`, true, 'info');
-    await bitflume(ns, 2, 'autopilot.js');
+  // Do not reset here: an unexpected missing company invite means autopilot must resume the company-reputation grind
+  // without erasing partial company reputation.
+  if (missingCorporateFactions.length > 0) {
+    writeIntelFarmState(ns, {
+      phase: "corporate-invites",
+      currentNode: resetInfo.currentNode,
+      lastNodeReset: resetInfo.lastNodeReset,
+      missingCorporateFactions,
+    });
+    log(ns, `WARNING: Intelligence farming paused because corporate access is incomplete: ` +
+      `${missingCorporateFactions.join(', ')}. Returning control to autopilot without resetting.`, true, 'warning');
+    await runScriptSomewhere(ns, 'autopilot.js', true, []);
     return;
   }
 
-  // Soft reset back into this script to keep farming
+  writeIntelFarmState(ns, {
+    phase: "running",
+    currentNode: resetInfo.currentNode,
+    lastNodeReset: resetInfo.lastNodeReset,
+    missingCorporateFactions: [],
+    startedAt: Date.now(),
+  });
+
+  // Corporate invitations survive augmentation installs. Joining every invitation first earns the Singularity INT
+  // reward from all preserved corporate factions on each cycle.
+  await joinInvitations(ns, invitations);
+  for (const city of ['Chongqing', 'New Tokyo', 'Ishima']) {
+    await singRun(ns, 'travelToCity', city);
+    invitations = await getInvitations(ns);
+    await joinInvitations(ns, invitations);
+  }
+
+  player = await getPlayerInfo(ns);
+  const intelligence = Number(player.skills.intelligence) || 0;
+  const now = Date.now();
+  const previous = getFileData(ns, INTEL_FARM_STATS_FILE);
+  let stopForLowROI = false;
+
+  if (previous?.lastNodeReset === resetInfo.lastNodeReset &&
+    Number.isFinite(previous.intelligence) && Number.isFinite(previous.time)) {
+    const gainedIntelligence = intelligence - previous.intelligence;
+    if (gainedIntelligence > 0) {
+      const elapsedSeconds = Math.max((now - previous.time) / 1000, Number.EPSILON);
+      const intelligencePerHour = gainedIntelligence / elapsedSeconds * 3600;
+      const futureIntelligence = intelligence + intelligencePerHour * FORECAST_HOURS;
+      const bonusNow = intBonus(intelligence);
+      const bonusFuture = intBonus(futureIntelligence);
+      const bonusGainPercent = (bonusFuture - bonusNow) / bonusNow * 100;
+
+      log(ns,
+        `INT ${previous.intelligence}→${intelligence} in ${formatNumber(elapsedSeconds)}s ` +
+        `(${formatNumber(intelligencePerHour)} INT/hr). ` +
+        `Forecast Δbonus≈${bonusGainPercent.toFixed(3)}% in next ${FORECAST_HOURS}h`,
+        true,
+        "info"
+      );
+      stopForLowROI = bonusGainPercent < MIN_PERCENT_BONUS_PER_HOUR;
+      ns.write(INTEL_FARM_STATS_FILE,
+        JSON.stringify({ intelligence, time: now, lastNodeReset: resetInfo.lastNodeReset }), "w");
+    }
+  } else {
+    ns.write(INTEL_FARM_STATS_FILE,
+      JSON.stringify({ intelligence, time: now, lastNodeReset: resetInfo.lastNodeReset }), "w");
+  }
+
+  if (stopForLowROI) {
+    writeIntelFarmState(ns, {
+      phase: "complete",
+      completedAt: now,
+      completedIntelligence: intelligence,
+      currentNode: resetInfo.currentNode,
+      lastNodeReset: resetInfo.lastNodeReset,
+      missingCorporateFactions: [],
+    });
+    log(ns, `ROI threshold reached at ${intelligence} INT. Returning to normal progression in ` +
+      `BitNode ${resetInfo.currentNode}.`, true, 'success');
+    await singRun(ns, 'softReset', 'autopilot.js');
+    return;
+  }
+
+  // Stay in this BitNode and repeat. CashRoot supplies the money and BruteSSH.exe needed after every reset.
   await singRun(ns, 'softReset', ns.getScriptName());
 }
