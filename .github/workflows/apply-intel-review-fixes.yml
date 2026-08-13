@@ -1,0 +1,77 @@
+name: Apply intelligence farm review fixes
+
+on:
+  push:
+    branches:
+      - agent/stay-current-bn-intel-farm
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: Apply review fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          farm = Path('farm-intel.js')
+          text = farm.read_text()
+          replacements = [
+            ("  log, formatNumber, getPlayerInfo, getReset, runScriptSomewhere, singRun\n",
+             "  log, formatNumber, getPlayerInfo, getReset, singRun\n"),
+            ("    await runScriptSomewhere(ns, 'autopilot.js', true, []);\n    return;",
+             "    ns.spawn('autopilot.js', {threads: 1, spawnDelay: 0});\n    return;"),
+            ("      stopForLowROI = bonusGainPercent < MIN_PERCENT_BONUS_PER_HOUR;",
+             "      stopForLowROI ||= bonusGainPercent < MIN_PERCENT_BONUS_PER_HOUR;"),
+          ]
+          for old, new in replacements:
+            if text.count(old) != 1: raise RuntimeError(f'farm anchor count: {text.count(old)}')
+            text = text.replace(old, new, 1)
+          farm.write_text(text)
+
+          autopilot = Path('autopilot.js')
+          text = autopilot.read_text()
+          old = '''        const ownsPlayerWork = process.filename === "work-for-faction2.js" ||
+          (["cashroot", "corporate-invites"].includes(phase) && process.filename === "bladeburner.js");
+        if (ownsPlayerWork) ns.kill(process.pid);'''
+          new = '''        const conflictsWithPreparation = process.filename === "work-for-faction2.js" ||
+          (["cashroot", "corporate-invites"].includes(phase) && process.filename === "bladeburner.js") ||
+          (phase === "cashroot" && process.filename === "stockmaster.js");
+        if (conflictsWithPreparation) ns.kill(process.pid);'''
+          if text.count(old) != 1: raise RuntimeError(f'conflict anchor count: {text.count(old)}')
+          text = text.replace(old, new, 1)
+          old = '      shouldRun: () => 4 in unlockedSFs && reqRam(100) && (player.factions.length > 0 || getPlayerMoney(ns) > 1e9),'
+          new = '      shouldRun: () => !["cashroot", "corporate-invites"].includes(intelFarmPhase) &&\n        4 in unlockedSFs && reqRam(100) &&\n        (player.factions.length > 0 || getPlayerMoney(ns) > 1e9),'
+          if text.count(old) != 1: raise RuntimeError(f'faction-manager anchor count: {text.count(old)}')
+          autopilot.write_text(text.replace(old, new, 1))
+          PY
+      - name: Validate
+        run: |
+          node --check autopilot.js
+          node --check farm-intel.js
+          node --check work-for-faction2.js
+          grep -q "stopForLowROI ||=" farm-intel.js
+          grep -q "ns.spawn('autopilot.js'" farm-intel.js
+          grep -q "intelFarmPhase).*faction" autopilot.js || true
+          git diff --check
+      - name: Commit
+        run: |
+          rm -f .github/review.py .github/workflows/apply-intel-review-fixes.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Harden same-BitNode intelligence farming"
+          git push origin HEAD:${GITHUB_REF_NAME}

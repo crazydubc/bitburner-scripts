@@ -1,0 +1,27 @@
+name: Export current intelligence farm source
+
+on:
+  push:
+    branches:
+      - agent/stay-current-bn-intel-farm
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: current-intel-farm-source
+          path: |
+            autopilot.js
+            work-for-faction2.js
+            farm-intel.js
+            intel-farm.js
+            utils.js
+            git-pull.js

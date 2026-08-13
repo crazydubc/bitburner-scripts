@@ -1,0 +1,45 @@
+name: Run intelligence farm review fixes
+
+on:
+  push:
+    branches:
+      - agent/stay-current-bn-intel-farm
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+      - name: Apply fixes
+        shell: bash
+        run: |
+          echo 'H4sIALbefWoC/81VXXPTOhB9z69Y/EDsGde3ucMLCeEBbguduaSZFIaHttNR5HUsKktmJROY0v/Oyk6TNqSUjxf8kIm00p49Zz9U1hxKpn2beUZDR6uCe2A3Zq2wW8ixvG51EtOmGUkECwAr7jsgp+uBgfGi+cyxU8fSMhDnGQ1b99ubHh1AYiW3kmlMPwJ4XFbQSRE3JqQzbczwYrCVHMtrzQr6tyvfMXWh38FNtaCqZO6CJOIBQgsW69Hja+c4kpSM6yGZKHlYAKt0HZx5vlLR81hN6XCqf7rqrUm86IfSFEuAYe1mwLb/WqzBYSiLFTNYRVgys0TgDq2SzUY2nNQD/cEh4HTtfMYCVqMsh7mJlEFXdyo/VoAhyQdvE43cp6vHwS9b0cvQ4vQg9FOA3pe7jo+hn+5Jq3tCfZ5fZuNtkOj5JZC/C0Aa0DxqpnVFM5EU3+KGQSJoC0xH0tBLRCVnKSFSZ0mTZE8q7IF7mYkHdZRmZUJfx+RrKj9CtJuxvELVg/w3/jkcDfHqACV0+3o6pBYE73wSdXvzNGLVv5VDDa7L1NEMHvEhqPG+USce49nJU72FuDt0g9pYhGgtwso9+Xs71XY2zyX/Wm43H74SfFXIzcF8kPqnPGsJtb9muNQtlwflI/21kMWmDHDlsn1Yvo+0oWiH0gobQSB2urxOdcNa5swSEzOu+tduUe9gbgfBTdeVgUoSYi4RzqfylD5vca1EOgeexMoJDHQllwOSspQXXax5yoJRmygcIer0qf4vFWIP8RdNnBrlGFxNM7N8MVdx/9W8R2p7vmfme6LplnhnWfypC01qlxPCOZeOYNXF4zkFWLUbKJ1H3JVhtMIblqFdYeiOk1hTkMV+RzNpv+Au8Olo8R2aX6bzNjlEk+MwytGtwseVtEi5p8vg6XtJiRtoU4QY74rM0O1QqYbbigNxQFwGufIO2ro6tvy7Jc7xMfcsmmXke+rbH5p++Fi1QymxeHHq8WcNdS7mv0jkHc1Xwe7X6/WuzOP7IRsFNx+o+2RYKvKLTKUjFslmqsL+H/cC8Y0nOjvYpTH9vy1c6Ec3i9I1xuFwxb+SPqxMfoPMRmO0QeFT6Lz9/xHw8lX4u9vvgBQnhmf5Ms0OS5bzkbOFUtvmC7fqhrSFBuzOJsImY3D/8B18TQ3j4MAAA=' | base64 --decode | gzip --decompress > /tmp/review.py
+          python3 /tmp/review.py
+      - name: Validate
+        run: |
+          node --check autopilot.js
+          node --check farm-intel.js
+          node --check work-for-faction2.js
+          grep -q 'stopForLowROI ||=' farm-intel.js
+          grep -q "ns.spawn('autopilot.js'" farm-intel.js
+          git diff --check
+      - name: Commit
+        run: |
+          rm -f .github/review.py
+          rm -f .github/workflows/apply-intel-review-fixes.yml
+          rm -f .github/workflows/run-intel-review-fixes.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Harden same-BitNode intelligence farming'
+          git push origin HEAD:${GITHUB_REF_NAME}

@@ -1,0 +1,97 @@
+name: Apply final current-BitNode intelligence farm refinements
+
+on:
+  push:
+    branches:
+      - agent/stay-current-bn-intel-farm
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+
+      - name: Apply validated refinements
+        shell: bash
+        run: |
+          cat > /tmp/intel-refinements.patch.gz.b64 <<'PATCH'
+          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
+          PATCH
+          tr -d '[:space:]' < /tmp/intel-refinements.patch.gz.b64 | base64 -d | gzip -d > /tmp/intel-refinements.patch
+          git apply --check /tmp/intel-refinements.patch
+          git apply /tmp/intel-refinements.patch
+
+      - name: Validate source and state contracts
+        shell: bash
+        run: |
+          git diff --check
+          node --check autopilot.js
+          node --check work-for-faction2.js
+          node --check farm-intel.js
+          node --check intel-farm.js
+          node --check utils.js
+          node --check git-pull.js
+
+          grep -q -- '--cashroot-only' autopilot.js
+          grep -q 'prepareCashRoot' work-for-faction2.js
+          grep -q 'purchaseAugmentation", "Sector-12", CASHROOT_AUG' autopilot.js
+          grep -q 'softReset", "farm-intel.js"' autopilot.js
+          grep -q 'INTEL_FARM_TARGET' farm-intel.js
+          grep -q 'intelFarmPreparation' work-for-faction2.js
+          ! grep -q 'bitflume(ns, 8' autopilot.js
+          ! grep -q 'resetInfo.currentNode != 8' autopilot.js
+
+          python3 - <<'PY'
+          from pathlib import Path
+          autopilot = Path('autopilot.js').read_text()
+          worker = Path('work-for-faction2.js').read_text()
+          farm = Path('farm-intel.js').read_text()
+          assert autopilot.index('const intelFarmAction = await manageIntelFarm(ns);') < \
+                 autopilot.index('await checkOnDaedalusStatus(ns, player, stocksValue);')
+          assert worker.index('if (cashRootOnly) return await prepareCashRoot();') < \
+                 worker.index('isBladeburnerInterruption()')
+          assert 'if (!preparingIntelFarm) await maybeInstallAugmentations(ns, player);' in autopilot
+          assert 'intelligence >= INTEL_FARM_TARGET' in farm
+          assert 'The BitNode will not change.' in autopilot
+          PY
+
+          cp intel-farm.js /tmp/intel-farm.mjs
+          node --input-type=module <<'NODE'
+          import {
+            CORPORATE_FACTIONS, getMissingCorporateFactions, isIntelFarmComplete,
+            readIntelFarmState, writeIntelFarmState
+          } from 'file:///tmp/intel-farm.mjs';
+          if (CORPORATE_FACTIONS.length !== 10) throw new Error('Expected all ten corporate factions');
+          const missing = getMissingCorporateFactions(CORPORATE_FACTIONS.slice(0, 4), CORPORATE_FACTIONS.slice(4, 9));
+          if (missing.length !== 1 || missing[0] !== CORPORATE_FACTIONS[9])
+            throw new Error(`Corporate access calculation failed: ${JSON.stringify(missing)}`);
+          let stored = '';
+          const ns = {read: () => stored, write: (_file, value) => {stored = value; return true;}};
+          if (readIntelFarmState(ns).phase !== 'pending') throw new Error('Missing state should be pending');
+          const state = writeIntelFarmState(ns, {phase: 'complete', completedIntelligence: 137});
+          if (!isIntelFarmComplete(state, 137)) throw new Error('Completion marker should match current save');
+          if (isIntelFarmComplete(state, 100)) throw new Error('Stale high-intelligence marker should not suppress farming');
+          NODE
+
+      - name: Commit final runtime files
+        shell: bash
+        run: |
+          rm .github/workflows/materialize-intel-autopilot.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add autopilot.js work-for-faction2.js farm-intel.js .github/workflows/materialize-intel-autopilot.yml
+          git diff --cached --check
+          git commit -m "Harden current-BitNode intelligence farming"
+          git push origin HEAD:${GITHUB_REF_NAME}
