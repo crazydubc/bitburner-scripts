@@ -94,6 +94,9 @@ function getNumericFlag(args, flag, fallback) {
 function asArray(value) { return Array.isArray(value) ? value : []; }
 function isTrue(value) { return value === true; }
 function isApiError(value) { return typeof value === "string" && value.startsWith("ERROR:"); }
+export function isCompanyApplicationSuccessful(value) {
+  return typeof value === "string" && value.length > 0 && !isApiError(value);
+}
 function requireArray(value, label) {
   if (isApiError(value) || !Array.isArray(value)) throw new Error(`${label} returned ${String(value)}`);
   return value;
@@ -173,6 +176,22 @@ export async function main(ns) {
   const companyFieldCache = {};
   const companyRepRateCache = {};
   const companyRepRateMeasuredAt = {};
+
+  function hasCompanyJob(company) {
+    return typeof playerInfo.jobs?.[company] === "string" && playerInfo.jobs[company].length > 0;
+  }
+
+  async function applyForCompanyField(company, field) {
+    const result = await singRun(ns, "applyToCompany", company, field);
+    if (isApiError(result)) return false;
+    if (isCompanyApplicationSuccessful(result)) {
+      playerInfo.jobs ??= {};
+      playerInfo.jobs[company] = result;
+      return true;
+    }
+    // applyToCompany returns null when no promotion is available. An existing job is still valid work.
+    return hasCompanyJob(company);
+  }
 
   function combatTrainingHeuristic(stat) {
     return Math.sqrt(
@@ -417,7 +436,7 @@ export async function main(ns) {
     const cachedField = companyFieldCache[company];
     const cachedRateIsFresh = companyRepRateCache[company] > 0 &&
       Date.now() - (companyRepRateMeasuredAt[company] ?? 0) < RATE_CACHE_TIME;
-    if (cachedField && cachedRateIsFresh && isTrue(await singRun(ns, "applyToCompany", company, cachedField)))
+    if (cachedField && cachedRateIsFresh && await applyForCompanyField(company, cachedField))
       return isTrue(await singRun(ns, "workForCompany", company, focus));
 
     const positions = asArray(await singRun(ns, "getCompanyPositions", company));
@@ -445,7 +464,7 @@ export async function main(ns) {
     let bestField = null;
     let bestRate = 0;
     for (const field of eligibleFields) {
-      if (!isTrue(await singRun(ns, "applyToCompany", company, field)) ||
+      if (!await applyForCompanyField(company, field) ||
         !isTrue(await singRun(ns, "workForCompany", company, focus))) continue;
       const rate = await measureRepGainRate(async () => Number(await singRun(ns, "getCompanyRep", company)) || 0);
       if (rate > bestRate || (rate === bestRate && fieldScore(field) > fieldScore(bestField))) {
@@ -455,7 +474,7 @@ export async function main(ns) {
     }
     if (!bestField && eligibleFields.size)
       bestField = [...eligibleFields].sort((a, b) => fieldScore(b) - fieldScore(a))[0];
-    if (!bestField || !isTrue(await singRun(ns, "applyToCompany", company, bestField))) return false;
+    if (!bestField || !await applyForCompanyField(company, bestField)) return false;
     companyFieldCache[company] = bestField;
     if (bestRate > 0) {
       companyRepRateCache[company] = bestRate;
@@ -608,8 +627,13 @@ export async function main(ns) {
   }
 
   async function collectCorporateInvites() {
-    const missing = COMPANY_FACTIONS.filter(faction =>
-      !playerInfo.factions.includes(faction) && !pendingInvites.includes(faction));
+    // Corporate preparation owns the player action. Do not leave a prior crime/faction task running
+    // when company work is temporarily unavailable or an API call needs to be retried.
+    if (currentWork?.type && currentWork.type !== "COMPANY") {
+      await singRun(ns, "stopAction");
+      currentWork = {};
+    }
+    const missing = COMPANY_FACTIONS.filter(faction => !playerInfo.factions.includes(faction));
     if (missing.length === 0) {
       if (currentWork?.type === "COMPANY") await singRun(ns, "stopAction");
       if (lastPlan !== "company-invites:complete") {
@@ -638,7 +662,7 @@ export async function main(ns) {
         log(ns, `Waiting for hacking levels, job qualifications, or the Fulcrum backdoor before ` +
           `continuing the corporate invitation farm. Missing: [${missing.join(", ")}].`, false, "info");
       }
-      return { handled: false, completed: false };
+      return { handled: true, completed: false };
     }
 
     const faction = reachable[0];
@@ -671,7 +695,8 @@ export async function main(ns) {
         await singRun(ns, "stopAction");
       return { handled: true, completed: false };
     }
-    return { handled: await workForFactionInvite(faction), completed: false };
+    await workForFactionInvite(faction);
+    return { handled: true, completed: false };
   }
 
   async function planAndAct() {
@@ -681,8 +706,8 @@ export async function main(ns) {
     currentWork = (await singRun(ns, "getCurrentWork")) ?? {};
     if (!collectCashRoot && !collectAllCompanyInvites && await isBladeburnerInterruption()) return true;
     if (collectAllCompanyInvites) {
-      const collection = await collectCorporateInvites();
-      if (collection.completed || collection.handled) return true;
+      await collectCorporateInvites();
+      return true;
     }
     if (crimeFocused && !playerInGang) {
       requestedReplanDelay = INVITE_REPLAN_INTERVAL;
