@@ -2,6 +2,8 @@ export const CASHROOT_AUG = "CashRoot Starter Kit";
 export const INTEL_FARM_TARGET = 200;
 export const INTEL_FARM_STATE_FILE = "intel-farm-state.txt";
 export const INTEL_FARM_STATS_FILE = "intel-farm-stats.txt";
+export const INTEL_FARM_ASCENDING_PHASE = "ascending";
+export const INTEL_FARM_READY_PHASE = "farm-ready";
 
 export const CORPORATE_FACTIONS = Object.freeze([
   "Bachman & Associates",
@@ -41,6 +43,19 @@ export function writeIntelFarmState(ns, update) {
   };
   ns.write(INTEL_FARM_STATE_FILE, JSON.stringify(next), "w");
   return next;
+}
+
+export function isIntelFarmStateForCurrentRun(state, resetInfo) {
+  return Number(state?.currentNode) === Number(resetInfo?.currentNode) &&
+    Number(state?.lastNodeReset) === Number(resetInfo?.lastNodeReset);
+}
+
+export function didIntelFarmAscendComplete(state, resetInfo) {
+  const before = Number(state?.lastAugResetBeforeAscend);
+  const after = Number(resetInfo?.lastAugReset);
+  return state?.phase === INTEL_FARM_ASCENDING_PHASE &&
+    isIntelFarmStateForCurrentRun(state, resetInfo) &&
+    Number.isFinite(before) && Number.isFinite(after) && after > before;
 }
 
 export function isIntelFarmComplete(state, intelligence) {

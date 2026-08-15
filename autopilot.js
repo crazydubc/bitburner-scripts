@@ -10,8 +10,9 @@ import {
   buildAscendArgs, getFreshDonationFavorProgress, NEUROFLUX
 } from './donation-favor.js'
 import {
-  CASHROOT_AUG, CORPORATE_FACTIONS, INTEL_FARM_STATE_FILE, INTEL_FARM_TARGET, getMissingCorporateFactions,
-  isIntelFarmComplete, readIntelFarmState, writeIntelFarmState
+  CASHROOT_AUG, CORPORATE_FACTIONS, INTEL_FARM_ASCENDING_PHASE, INTEL_FARM_READY_PHASE,
+  INTEL_FARM_STATE_FILE, INTEL_FARM_TARGET, didIntelFarmAscendComplete, getMissingCorporateFactions,
+  isIntelFarmComplete, isIntelFarmStateForCurrentRun, readIntelFarmState, writeIntelFarmState
 } from './intel-farm.js'
 
 /** @param {NS} ns */
@@ -107,7 +108,8 @@ export async function main(ns) {
   const asynchronousHelpers = [
     {
       name: "work-for-faction2.js",
-      shouldRun: () => 4 in unlockedSFs && intelFarmPhase !== "ready",
+      shouldRun: () => 4 in unlockedSFs &&
+        ![INTEL_FARM_ASCENDING_PHASE, INTEL_FARM_READY_PHASE, "ready", "running"].includes(intelFarmPhase),
       args: getFactionWorkerArgs
     },
     {
@@ -284,7 +286,7 @@ export async function main(ns) {
   async function manageIntelFarm(ns) {
     const ownedSf5 = Number(dictOwnedSourceFiles[5] ?? 0);
     const intelligence = Number(player.skills.intelligence) || 0;
-    const state = await loadIntelFarmState(ns);
+    let state = await loadIntelFarmState(ns);
 
     // Use actually-owned SF5, not the effective level granted while inside BN5. This begins only after BN5 has been
     // completed at least once, and requires Singularity because every preparation/farm transition is automated.
@@ -310,6 +312,77 @@ export async function main(ns) {
       await setIntelFarmPhase(ns, "complete");
       return "continue";
     }
+
+    const handoffPhases = [INTEL_FARM_ASCENDING_PHASE, INTEL_FARM_READY_PHASE, "running"];
+if (handoffPhases.includes(state.phase) && !isIntelFarmStateForCurrentRun(state, resetInfo)) {
+  state = await persistIntelFarmState(ns, {
+    phase: "pending",
+    currentNode: resetInfo.currentNode,
+    lastNodeReset: resetInfo.lastNodeReset,
+    missingCorporateFactions: [],
+  });
+}
+
+if (state.phase === INTEL_FARM_ASCENDING_PHASE) {
+  if (!didIntelFarmAscendComplete(state, resetInfo)) {
+    await setIntelFarmPhase(ns, INTEL_FARM_ASCENDING_PHASE);
+    logIntelFarmStatus(ns, "ascending-retry",
+      `Corporate preparation is complete, but its augmentation reset has not completed. ` +
+      `Relaunching ascend.js with autopilot as the callback.`, "warning");
+    const ascendPid = await runScriptLocal(ns, "ascend.js", true,
+      buildAscendArgs(ns.getScriptName(), true));
+    return ascendPid > 0 ? "handoff" : "preparing";
+  }
+  state = await persistIntelFarmState(ns, {
+    ...state,
+    phase: INTEL_FARM_READY_PHASE,
+    resetCompletedAt: Date.now(),
+    resetCompletedLastAugReset: resetInfo.lastAugReset,
+  });
+}
+
+if ([INTEL_FARM_READY_PHASE, "running"].includes(state.phase) &&
+  isIntelFarmStateForCurrentRun(state, resetInfo)) {
+  await setIntelFarmPhase(ns, INTEL_FARM_READY_PHASE);
+  if (await isScriptRunning(ns, "farm-intel.js")) return "handoff";
+  await singRun(ns, "stopAction");
+
+  const runningState = {
+    ...state,
+    phase: "running",
+    farmStartedAt: Date.now(),
+    currentNode: resetInfo.currentNode,
+    lastNodeReset: resetInfo.lastNodeReset,
+    missingCorporateFactions: [],
+  };
+  logIntelFarmStatus(ns, "farm-launch",
+    `Corporate preparation reset is complete. Autopilot is launching farm-intel.js without another reset.`,
+    "success");
+
+  if (ns.getHostname() === "home") {
+    await persistIntelFarmState(ns, runningState);
+    ns.spawn("farm-intel.js", { threads: 1, spawnDelay: 0 });
+    return "handoff";
+  }
+
+  const farmPid = ns.exec("farm-intel.js", "home", { threads: 1, temporary: true });
+  if (farmPid > 0) {
+    await persistIntelFarmState(ns, { ...runningState, farmPid });
+    return "handoff";
+  }
+
+  state = await persistIntelFarmState(ns, {
+    ...state,
+    phase: INTEL_FARM_READY_PHASE,
+    farmLaunchFailedAt: Date.now(),
+  });
+  const requiredRam = ns.getScriptRam("farm-intel.js", "home");
+  const freeRam = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+  logIntelFarmStatus(ns, "farm-launch-failed",
+    `Unable to launch farm-intel.js on home after the preparation reset: ` +
+    `${requiredRam.toFixed(1)} GB required, ${freeRam.toFixed(1)} GB free. Retrying.`, "warning");
+  return "preparing";
+}
 
     const installedOnly = await getOwnedAugs(ns, false);
     const ownedWithQueued = await getOwnedAugs(ns, true);
@@ -384,54 +457,54 @@ export async function main(ns) {
     }
 
     const pendingInvites = await singRun(ns, "checkFactionInvitations");
-    if (!Array.isArray(pendingInvites))
-      throw new Error(`checkFactionInvitations returned ${String(pendingInvites)}`);
-    let joinedCorporateFaction = false;
-    for (const faction of pendingInvites.filter(faction => CORPORATE_FACTIONS.includes(faction))) {
-      if (await singRun(ns, "joinFaction", faction) === true) joinedCorporateFaction = true;
-    }
-    if (joinedCorporateFaction) player = await getPlayerInfo(ns);
-    // Invitations alone are not sufficient: company reputation is reset, so every company faction must be joined
-    // before the farming reset can recreate it as a maintained invitation.
-    const missingCorporateFactions = getMissingCorporateFactions(player.factions, []);
-    if (missingCorporateFactions.length > 0) {
-      await setIntelFarmPhase(ns, "corporate-invites");
-      if (state.phase !== "corporate-invites" ||
-        !sameStrings(state.missingCorporateFactions, missingCorporateFactions)) {
-        await persistIntelFarmState(ns, {
-          phase: "corporate-invites",
-          currentNode: resetInfo.currentNode,
-          lastNodeReset: resetInfo.lastNodeReset,
-          missingCorporateFactions,
-        });
-      }
-      logIntelFarmStatus(ns, `corporate:${missingCorporateFactions.join("|")}`,
-        `Preparing the intelligence farm without resetting company reputation. Missing corporate access: ` +
-        `[${missingCorporateFactions.join(", ")}].`);
-      return "preparing";
-    }
-
-    await setIntelFarmPhase(ns, "ready");
-    if (state.phase !== "ready" && state.phase !== "running") {
-      await persistIntelFarmState(ns, {
-        phase: "ready",
-        currentNode: resetInfo.currentNode,
-        lastNodeReset: resetInfo.lastNodeReset,
-        missingCorporateFactions: [],
-      });
-    }
-    await singRun(ns, "stopAction");
-    await persistIntelFarmState(ns, {
-      phase: "running",
+if (!Array.isArray(pendingInvites))
+  throw new Error(`checkFactionInvitations returned ${String(pendingInvites)}`);
+const missingCorporateFactions = getMissingCorporateFactions(player.factions, pendingInvites);
+if (missingCorporateFactions.length > 0) {
+  await setIntelFarmPhase(ns, "corporate-invites");
+  if (state.phase !== "corporate-invites" ||
+    !sameStrings(state.missingCorporateFactions, missingCorporateFactions)) {
+    state = await persistIntelFarmState(ns, {
+      phase: "corporate-invites",
       currentNode: resetInfo.currentNode,
       lastNodeReset: resetInfo.lastNodeReset,
-      missingCorporateFactions: [],
+      missingCorporateFactions,
     });
-    logIntelFarmStatus(ns, "running",
-      `CashRoot and all corporate factions are joined. Resetting in BitNode ${resetInfo.currentNode} ` +
-      `so the first farm cycle can accept every maintained invitation.`, "success");
-    await singRun(ns, "softReset", "farm-intel.js");
-    return "handoff";
+  }
+  logIntelFarmStatus(ns, `corporate:${missingCorporateFactions.join("|")}`,
+    `Preparing the intelligence farm without resetting company reputation. Missing corporate access: ` +
+    `[${missingCorporateFactions.join(", ")}].`);
+  return "preparing";
+}
+
+await setIntelFarmPhase(ns, INTEL_FARM_ASCENDING_PHASE);
+await singRun(ns, "stopAction");
+const ascendStartedAt = Date.now();
+state = await persistIntelFarmState(ns, {
+  phase: INTEL_FARM_ASCENDING_PHASE,
+  currentNode: resetInfo.currentNode,
+  lastNodeReset: resetInfo.lastNodeReset,
+  lastAugResetBeforeAscend: Number(resetInfo.lastAugReset) || 0,
+  corporateInvitesReadyAt: ascendStartedAt,
+  ascendStartedAt,
+  missingCorporateFactions: [],
+});
+logIntelFarmStatus(ns, "ascending",
+  `All corporate invitations are acquired. Running ascend.js; autopilot will resume after the reset ` +
+  `and launch farm-intel.js.`, "success");
+const ascendPid = await runScriptLocal(ns, "ascend.js", true,
+  buildAscendArgs(ns.getScriptName(), true));
+if (!(ascendPid > 0)) {
+  state = await persistIntelFarmState(ns, {
+    ...state,
+    phase: "corporate-invites",
+    ascendLaunchFailedAt: Date.now(),
+  });
+  logIntelFarmStatus(ns, "ascend-launch-failed",
+    `Unable to launch ascend.js after acquiring the corporate invitations. Retrying.`, "warning");
+  return "preparing";
+}
+return "handoff";
   }
 
 

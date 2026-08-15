@@ -94,6 +94,10 @@ function getNumericFlag(args, flag, fallback) {
 function asArray(value) { return Array.isArray(value) ? value : []; }
 function isTrue(value) { return value === true; }
 function isApiError(value) { return typeof value === "string" && value.startsWith("ERROR:"); }
+export function isCompanyApplicationResponse(value) {
+  return value === null || typeof value === "boolean" ||
+    (typeof value === "string" && value.length > 0 && !isApiError(value));
+}
 function requireArray(value, label) {
   if (isApiError(value) || !Array.isArray(value)) throw new Error(`${label} returned ${String(value)}`);
   return value;
@@ -245,11 +249,12 @@ export async function main(ns) {
     // Non-city factions have no mutually-exclusive downside, so accept useful invitations immediately.
     // City invitations are deferred until the route planner compares all exclusive city groups.
     for (const faction of pendingInvites.filter(faction => !CITY_FACTIONS.has(faction))) {
-      const forceGangFaction = crimeFocused && GANG_FACTIONS.includes(faction) && !playerInGang;
-      const forceCompanyFaction = collectAllCompanyInvites && COMPANY_FACTIONS.includes(faction);
-      if (!forceGangFaction && !forceCompanyFaction && factionUtility(faction) <= 0) continue;
-      joined = await joinFaction(faction) || joined;
-    }
+  // Preserve corporate invitations for ascend.js, which joins them immediately before resetting.
+  if (collectAllCompanyInvites && COMPANY_FACTIONS.includes(faction)) continue;
+  const forceGangFaction = crimeFocused && GANG_FACTIONS.includes(faction) && !playerInGang;
+  if (!forceGangFaction && factionUtility(faction) <= 0) continue;
+  joined = await joinFaction(faction) || joined;
+}
     return joined;
   }
 
@@ -407,6 +412,19 @@ export async function main(ns) {
     return requirement;
   }
 
+  async function startCompanyWork(company, field, focus) {
+    // applyToCompany returns a JobName string on a successful hire/promotion and null when there is no
+    // promotion available. Neither result should prevent an already-employed player from starting work.
+    const applicationResult = await singRun(ns, "applyToCompany", company, field);
+    if (!isCompanyApplicationResponse(applicationResult))
+      throw new Error(`applyToCompany(${company}, ${field}) returned ${String(applicationResult)}`);
+
+    const workResult = await singRun(ns, "workForCompany", company, focus);
+    if (isApiError(workResult))
+      throw new Error(`workForCompany(${company}) failed: ${workResult}`);
+    return isTrue(workResult);
+  }
+
   async function workForCompanyFactionInvite(faction) {
     if (faction === "Fulcrum Secret Technologies" && !(await canObtainFulcrumInvite())) return false;
     const company = COMPANY_NAME_BY_FACTION[faction] ?? faction;
@@ -417,8 +435,8 @@ export async function main(ns) {
     const cachedField = companyFieldCache[company];
     const cachedRateIsFresh = companyRepRateCache[company] > 0 &&
       Date.now() - (companyRepRateMeasuredAt[company] ?? 0) < RATE_CACHE_TIME;
-    if (cachedField && cachedRateIsFresh && isTrue(await singRun(ns, "applyToCompany", company, cachedField)))
-      return isTrue(await singRun(ns, "workForCompany", company, focus));
+    if (cachedField && cachedRateIsFresh && await startCompanyWork(company, cachedField, focus))
+      return true;
 
     const positions = asArray(await singRun(ns, "getCompanyPositions", company));
     const hack = playerInfo.skills.hacking;
@@ -445,8 +463,7 @@ export async function main(ns) {
     let bestField = null;
     let bestRate = 0;
     for (const field of eligibleFields) {
-      if (!isTrue(await singRun(ns, "applyToCompany", company, field)) ||
-        !isTrue(await singRun(ns, "workForCompany", company, focus))) continue;
+      if (!await startCompanyWork(company, field, focus)) continue;
       const rate = await measureRepGainRate(async () => Number(await singRun(ns, "getCompanyRep", company)) || 0);
       if (rate > bestRate || (rate === bestRate && fieldScore(field) > fieldScore(bestField))) {
         bestRate = rate;
@@ -455,13 +472,13 @@ export async function main(ns) {
     }
     if (!bestField && eligibleFields.size)
       bestField = [...eligibleFields].sort((a, b) => fieldScore(b) - fieldScore(a))[0];
-    if (!bestField || !isTrue(await singRun(ns, "applyToCompany", company, bestField))) return false;
+    if (!bestField) return false;
     companyFieldCache[company] = bestField;
     if (bestRate > 0) {
       companyRepRateCache[company] = bestRate;
       companyRepRateMeasuredAt[company] = Date.now();
     }
-    return isTrue(await singRun(ns, "workForCompany", company, focus));
+    return await startCompanyWork(company, bestField, focus);
   }
 
   function hasLateGameAugRequirement(faction) {
@@ -608,13 +625,21 @@ export async function main(ns) {
   }
 
   async function collectCorporateInvites() {
+    // Corporate preparation owns the player's work slot. Stop stale faction/crime work immediately so a
+    // transient company-start failure cannot leave the player committing Homicide indefinitely.
+    if (currentWork?.type && currentWork.type !== "COMPANY") {
+      await singRun(ns, "stopAction");
+      currentWork = {};
+    }
+
     const missing = COMPANY_FACTIONS.filter(faction =>
       !playerInfo.factions.includes(faction) && !pendingInvites.includes(faction));
     if (missing.length === 0) {
       if (currentWork?.type === "COMPANY") await singRun(ns, "stopAction");
       if (lastPlan !== "company-invites:complete") {
         lastPlan = "company-invites:complete";
-        log(ns, "All corporate faction invitations are secured for intelligence farming.", false, "success");
+        log(ns, "All corporate faction invitations are secured. Handing control to autopilot for ascend.",
+          false, "success");
       }
       activePlan = null;
       requestedReplanDelay = INVITE_REPLAN_INTERVAL;
@@ -638,7 +663,7 @@ export async function main(ns) {
         log(ns, `Waiting for hacking levels, job qualifications, or the Fulcrum backdoor before ` +
           `continuing the corporate invitation farm. Missing: [${missing.join(", ")}].`, false, "info");
       }
-      return { handled: false, completed: false };
+      return { handled: true, completed: false };
     }
 
     const faction = reachable[0];
@@ -671,7 +696,17 @@ export async function main(ns) {
         await singRun(ns, "stopAction");
       return { handled: true, completed: false };
     }
-    return { handled: await workForFactionInvite(faction), completed: false };
+    const started = await workForFactionInvite(faction);
+    if (!started) {
+      requestedReplanDelay = 5_000;
+      const failureSignature = `company-invite:start-failed:${faction}`;
+      if (lastPlan !== failureSignature) {
+        lastPlan = failureSignature;
+        log(ns, `Unable to start company work for ${company}; retaining corporate-preparation mode and retrying.`,
+          false, "warning");
+      }
+    }
+    return { handled: true, completed: false };
   }
 
   async function planAndAct() {
@@ -681,9 +716,9 @@ export async function main(ns) {
     currentWork = (await singRun(ns, "getCurrentWork")) ?? {};
     if (!collectCashRoot && !collectAllCompanyInvites && await isBladeburnerInterruption()) return true;
     if (collectAllCompanyInvites) {
-      const collection = await collectCorporateInvites();
-      if (collection.completed || collection.handled) return true;
-    }
+  const collection = await collectCorporateInvites();
+  return collection.completed ? "complete" : true;
+}
     if (crimeFocused && !playerInGang) {
       requestedReplanDelay = INVITE_REPLAN_INTERVAL;
       return await workTowardGang();
@@ -756,10 +791,11 @@ export async function main(ns) {
         }
       }
       if (now >= nextPlan) {
-        await planAndAct();
-        nextPlan = Date.now() + requestedReplanDelay;
-        nextProgressCheck = Date.now() + PROGRESS_CHECK_INTERVAL;
-      }
+  const planResult = await planAndAct();
+  if (planResult === "complete") return;
+  nextPlan = Date.now() + requestedReplanDelay;
+  nextProgressCheck = Date.now() + PROGRESS_CHECK_INTERVAL;
+}
     } catch (error) {
       log(ns, `WARNING: work-for-faction2.js planner failed; retrying.\n${getErrorInfo(error)}`, false, "warning");
       nextPlan = Date.now() + 10_000;
