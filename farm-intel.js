@@ -4,6 +4,11 @@ import {
 
 const STATS_FILE = "/Temp/intFarmStats.txt";
 const FORECAST_HOURS = 1;
+const INVITE_CHECK_INTERVAL = 15_000;
+const COMPANY_FACTIONS = [
+  "Bachman & Associates", "ECorp", "Clarke Incorporated", "OmniTek Incorporated", "NWO",
+  "Blade Industries", "MegaCorp", "KuaiGong International", "Fulcrum Secret Technologies", "Four Sigma"
+];
 
 function intBonus(intel) {
   return 1 + Math.pow(intel, 0.8) / 600;
@@ -23,13 +28,36 @@ function getFileData(ns, file) {
 }
 
 /** @param {NS} ns */
+async function waitForCompanyAccess(ns) {
+  let lastStatus = "";
+  while (true) {
+    const invitations = await singRun(ns, 'checkFactionInvitations');
+    const player = await getPlayerInfo(ns);
+    const available = new Set([
+      ...(Array.isArray(player?.factions) ? player.factions : []),
+      ...(Array.isArray(invitations) ? invitations : []),
+    ]);
+    const missing = COMPANY_FACTIONS.filter(faction => !available.has(faction));
+    if (missing.length === 0) return;
+
+    const status = missing.join('|');
+    if (status !== lastStatus) {
+      lastStatus = status;
+      log(ns, `Waiting for corporate faction access before INT farming: ` +
+        `${COMPANY_FACTIONS.length - missing.length}/${COMPANY_FACTIONS.length} ready; ` +
+        `missing [${missing.join(', ')}].`, true, 'info');
+    }
+    await ns.sleep(INVITE_CHECK_INTERVAL);
+  }
+}
+
+/** @param {NS} ns */
 export async function main(ns) {
   /*const timeSinceLastAug = Date.now() - (await getReset(ns)).lastAugReset;
   while (timeSinceLastAug > 20 * 60 * 1000) {
     await ns.sleep(10000); //sleep till the next reset.
   }*/
-  const invites = await singRun(ns, 'checkFactionInvitations');
-  if (invites.length < 10) return;
+  await waitForCompanyAccess(ns);
   const player = await getPlayerInfo(ns);
   const intel = player.skills.intelligence; //0.5% bonus per hour
   let MIN_PERCENT_BONUS_PER_HOUR = 0.5;
