@@ -94,7 +94,7 @@ function getNumericFlag(args, flag, fallback) {
 }
 
 function isCompanyApplicationResponse(value) {
-  return value === null || typeof value === "boolean" ||
+  return value === null || value === true ||
     (typeof value === "string" && value.length > 0 && !isApiError(value));
 }
 
@@ -129,6 +129,7 @@ export async function main(ns) {
   const crimeFocused = ns.args.includes("--crime-focus");
   const fastCrimesOnly = ns.args.includes("--fast-crimes-only");
   const prioritizeInvites = ns.args.includes("--prioritize-invites");
+  const collectAllCompanyInvites = ns.args.includes("--all-company-invites");
   const trainingStatPerMultiThreshold = getNumericFlag(ns.args, "--training-stat-per-multi-threshold", 100);
   const desiredStatOverrides = [
     ...getFlagValues(ns.args, "--desired-stats"),
@@ -250,6 +251,8 @@ export async function main(ns) {
     // Non-city factions have no mutually-exclusive downside, so accept useful invitations immediately.
     // City invitations are deferred until the route planner compares all exclusive city groups.
     for (const faction of pendingInvites.filter(faction => !CITY_FACTIONS.has(faction))) {
+      // farm-intel consumes these invitations after the preparation reset; do not autojoin them here.
+      if (collectAllCompanyInvites && COMPANY_FACTIONS.includes(faction)) continue;
       const forceGangFaction = crimeFocused && GANG_FACTIONS.includes(faction) && !playerInGang;
       if (!forceGangFaction && factionUtility(faction) <= 0) continue;
       joined = await joinFaction(faction) || joined;
@@ -465,7 +468,7 @@ export async function main(ns) {
       companyRepRateCache[company] = bestRate;
       companyRepRateMeasuredAt[company] = Date.now();
     }
-    return isCompanyApplicationResponse(await singRun(ns, "workForCompany", company, focus));
+    return isTrue(await singRun(ns, "workForCompany", company, focus));
   }
 
   function hasLateGameAugRequirement(faction) {
@@ -611,11 +614,56 @@ export async function main(ns) {
     return true;
   }
 
+
+  async function collectCompanyInvitations() {
+    // This mode owns the player work slot and must not be preempted by crime, faction, or Bladeburner routing.
+    if (currentWork?.type && currentWork.type !== "COMPANY") {
+      await singRun(ns, "stopAction");
+      currentWork = {};
+    }
+
+    const missing = COMPANY_FACTIONS.filter(faction =>
+      !playerInfo.factions.includes(faction) && !pendingInvites.includes(faction));
+    requestedReplanDelay = INVITE_REPLAN_INTERVAL;
+
+    if (missing.length === 0) {
+      if (currentWork?.type === "COMPANY") await singRun(ns, "stopAction");
+      activePlan = null;
+      if (lastPlan !== "company-invites:complete") {
+        lastPlan = "company-invites:complete";
+        log(ns, "All corporate faction invitations are available for intelligence farming.", false, "success");
+      }
+      return true;
+    }
+
+    const estimatedRate = median([
+      ...Object.values(companyRepRateCache),
+      ...Object.values(repRateCache),
+    ], 1);
+    const efforts = await estimateInviteEfforts(missing, estimatedRate);
+    const faction = missing
+      .filter(candidate => Number.isFinite(efforts[candidate]))
+      .sort((left, right) => efforts[left] - efforts[right] ||
+        COMPANY_FACTIONS.indexOf(left) - COMPANY_FACTIONS.indexOf(right))[0];
+
+    if (!faction) {
+      if (lastPlan !== "company-invites:waiting") {
+        lastPlan = "company-invites:waiting";
+        log(ns, `Waiting for company job requirements or the Fulcrum backdoor. Missing: [${missing.join(", ")}].`,
+false, "info");
+      }
+      return true;
+    }
+
+    return await workForFactionInvite(faction);
+  }
+
   async function planAndAct() {
     activePlan = null;
     requestedReplanDelay = REPLAN_INTERVAL;
     await loadData();
     currentWork = (await singRun(ns, "getCurrentWork")) ?? {};
+    if (collectAllCompanyInvites) return await collectCompanyInvitations();
     if (await isBladeburnerInterruption()) return true;
     if (crimeFocused && !playerInGang) {
       requestedReplanDelay = INVITE_REPLAN_INTERVAL;
