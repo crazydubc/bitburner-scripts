@@ -8,8 +8,8 @@ import {
 const updateInterval = 200; // We can improve our timing by updating more often than gang stats do (which is every 2 seconds for stats, every 20 seconds for territory)
 const wantedPenaltyThreshold = 0.0001; // Don't let the wanted penalty get worse than this
 const offStatCostPenalty = 50; // Equipment that doesn't contribute to our main stats suffers a percieved cost penalty of this multiple
-const defaultMaxSpendPerTickTransientEquipment = 0.002; // If the --equipment-budget is not specified, spend up to this percent of non-reserved cash on temporary upgrades (equipment)
-const defaultMaxSpendPerTickPermanentEquipment = 0.2; // If the --augmentation-budget is not specified, spend up to this percent of non-reserved cash on permanent member upgrades
+const defaultMaxSpendPerTickTransientEquipment = 0.05; // If the --equipment-budget is not specified, spend up to this percent of non-reserved cash on temporary upgrades (equipment)
+const defaultMaxSpendPerTickPermanentEquipment = 0.35; // If the --augmentation-budget is not specified, spend up to this percent of non-reserved cash on permanent member upgrades
 
 // Territory-related variables
 const gangsByPower = ["Speakers for the Dead", "The Dark Army", "The Syndicate", "Tetrads", "Slum Snakes", /* Hack gangs don't scale as far */ "The Black Hand", /* "NiteSec" Been there, not fun. */]
@@ -28,7 +28,7 @@ let lastLoopTime = null;
 // Crime activity-related variables
 const crimes = ["Mug People", "Deal Drugs", "Strongarm Civilians", "Run a Con", "Armed Robbery", "Traffick Illegal Arms", "Threaten & Blackmail", "Human Trafficking", "Terrorism",
   "Ransomware", "Phishing", "Identity Theft", "DDoS Attacks", "Plant Virus", "Fraud & Counterfeiting", "Money Laundering", "Cyberterrorism"];
-let pctTraining = 0.20;
+let pctTraining = 0.10;
 let multGangSoftcap = 0.0;
 let allTaskNames = (/**@returns{string[]}*/() => undefined)();
 let allTaskStats = (/**@returns{{[taskName: string]: GangTaskStats;}}*/() => undefined)();
@@ -243,8 +243,8 @@ async function onTerritoryTick(ns, myGangInfo) {
   const canRecruit = await gangRun(ns, 'canRecruitMember');
   if (canRecruit)
     await doRecruitMember(ns) // Recruit new members if available
-  const dictMembers = await getDict(ns, myGangMembers, 'getMemberInformation');
   if (!options['no-auto-ascending']) await tryAscendMembers(ns); // Ascend members if we deem it a good time
+  const dictMembers = await getDict(ns, myGangMembers, 'getMemberInformation');
   await tryUpgradeMembers(ns, dictMembers); // Upgrade members if possible
   await enableOrDisableWarfare(ns, myGangInfo); // Update whether we should be participating in gang warfare
   // There's a chance we do training instead of work for this next tick. If training, we primarily train our main stat, with a small chance to train less-important stats
