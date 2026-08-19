@@ -78,7 +78,25 @@ export async function main(ns) {
     bitNodeMults.HacknetNodeMoney > 0 && // Ensure hacknet is not disabled in this BN
     getPlayerMoney(ns) > reservedMoney(ns); // Player money exceeds the reserve (otherwise it will sit there buying nothing)
   let playerInGang = false;
-  let shouldIntelFarm = (5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 200;
+  const COMPANY_FACTIONS = [
+  "Bachman & Associates", "ECorp", "Clarke Incorporated", "OmniTek Incorporated", "NWO",
+  "Blade Industries", "MegaCorp", "KuaiGong International", "Fulcrum Secret Technologies", "Four Sigma"
+];
+  /** @param {NS} ns */
+  async function waitForCompanyAccess(ns) {
+    while (true) {
+      const invitations = await singRun(ns, 'checkFactionInvitations');
+      const available = new Set([
+        ...(Array.isArray(player?.factions) ? player.factions : []),
+        ...(Array.isArray(invitations) ? invitations : []),
+      ]);
+      const missing = COMPANY_FACTIONS.filter(faction => !available.has(faction));
+      if (missing.length === 0) return false;
+      return true;
+    }
+  }
+  let shouldIntelFarm = (5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 230;
+  let readyToFarmIntel = shouldIntelFarm && !(await waitForCompanyAccess(ns));
 
   function getFactionWorkerArgs() {
     if (shouldIntelFarm)
@@ -212,6 +230,12 @@ export async function main(ns) {
       args: () => [],
       nextRun: Date.now() + (5 * STAGGER)
     },
+    {
+      name: "farm-intel.js",
+      shouldRun: () => readyToFarmIntel,
+      args: () => [],
+      nextRun: Date.now() + (6 * STAGGER)
+    },
   ];
 
   let kernelStartTime = 0; // The time we personally launched daemon.
@@ -244,9 +268,7 @@ export async function main(ns) {
     await crackHosts(ns); 
     //do an initial crack to run scripts on other servers
     log(ns, "INFO: Cracked", true, 'info');
-    if (shouldIntelFarm) {
-      await launchScriptHelper(ns, 'farm-intel.js');
-    }
+    readyToFarmIntel = shouldIntelFarm && !(await waitForCompanyAccess(ns));
     // Intelligence farming is coordinated by mainLoop so preparation can survive augmentation resets.
     if (ns.getHostname() == 'home') {
       if (await getServerMaxRam(ns, 'home') < 64) {
