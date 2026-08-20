@@ -54,7 +54,6 @@ export const remoteScriptDependencies = [
   "faction-route-planner.js",
   "logger.js",
   "donation-favor.js",
-  "intel-farm.js",
 ];
 
 /** Return the complete shared runtime bundle copied before launching a script away from home. */
