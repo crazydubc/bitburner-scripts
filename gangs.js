@@ -1,7 +1,6 @@
 import {
   log, getConfiguration, findPids, getActiveSourceFiles, getBNMults, gangRun,
-  formatMoney, formatNumberShort, formatDuration, getReset, getPlayerInfo, singRun, hasTixApi,
-  runScriptLocal
+  formatMoney, formatNumberShort, formatDuration, getReset, getPlayerInfo, singRun
 } from './utils.js'
 
 // Global config
@@ -40,7 +39,6 @@ let resetInfo = (/**@returns{ResetInfo}*/() => undefined)(); // Information abou
 let ownedSourceFiles;
 let myGangFaction = "";
 let isHackGang = false;
-let is4sBought = false;
 let strWantedReduction;
 let requiredRep = 0;
 let myGangMembers = (/**@returns{string[]}*/() => [])();
@@ -49,7 +47,7 @@ let importantStats = [];
 
 let options;
 const argsSchema = [
-  ['training-percentage', 0.05], // Spend this percent of time randomly training gang members versus doing crime
+  ['training-percentage', 0.10], // Spend this percent of time randomly training gang members versus doing crime
   ['no-training', false], // Don't train unless all other tasks generate no gains or the member ascended recently (--min-training-ticks)
   ['no-auto-ascending', false], // Don't ascend members
   ['ascend-multi-threshold', 1.05], // Ascend member #12 if a primary stat multi would increase by more than this amount
@@ -97,7 +95,6 @@ async function initialize(ns) {
   pctTraining = options['no-training'] ? 0 : options['training-percentage'];
 
   let loggedWaiting = false;
-  is4sBought = false;
   resetInfo = await getReset(ns);
   const bitNode = resetInfo.currentNode;
   let haveJoinedAGang = false;
@@ -309,7 +306,8 @@ async function optimizeGangCrime(ns, myGangInfo) {
     factionRep = myGangInfo.respect / 75;
   const optStat = options['reputation-focus'] ? "respect" : options['money-focus'] ? "money" :
     // If not specified, automatically change focus based on achieved rep/money
-    factionRep > requiredRep ? "money" : (playerData.money > 1E11 || myGangInfo.respect) < 9000 ? "respect" : "both money and respect";
+    factionRep > requiredRep ? "money" :
+      (playerData.money > 1E11 || myGangInfo.respect < 9000) ? "respect" : "both money and respect";
   // Pre-compute how every gang member will perform at every task
   const memberTaskRates = Object.fromEntries(Object.values(dictMembers).map(m => [m.name, allTaskNames.map(taskName => ({
     name: taskName,
@@ -318,18 +316,17 @@ async function optimizeGangCrime(ns, myGangInfo) {
     wanted: computeWantedGains(myGangInfo, taskName, m),
   })).filter(task => task.wanted <= 0 || task.money > 0 || task.respect > 0)])); // Completely remove tasks that offer no gains, but would generate wanted levels
   // Sort tasks by best gain rate
-  if (optStat == "both money and respect") {
-    Object.values(memberTaskRates).flat().forEach(v => v[optStat] = v.money / 1000 + v.respect); // Hack to support a "optimized total" stat when trying to balance both money and wanted
-    Object.values(memberTaskRates).forEach((tasks, idx) => tasks.sort((a, b) => idx % 2 == 0 ? b.respect - a.respect : b.money - a.money)); // Hack: Even members prioritize respect, odd money
-  } else {
-    Object.values(memberTaskRates).forEach(tasks => tasks.sort((a, b) => b[optStat] - a[optStat]));
-  }
+  if (optStat == "both money and respect")
+    Object.values(memberTaskRates).flat().forEach(v => v[optStat] = v.money / 1000 + v.respect);
+  Object.values(memberTaskRates).forEach(tasks => tasks.sort((a, b) => b[optStat] - a[optStat]));
 
   // Run "the algorithm"
   const start = Date.now(); // Time the algorithms
   let bestTaskAssignments = null, bestWanted = 0;
-  let bestTotalGain = myGangInfo.wantedLevelGainRate > wantedGainTolerance ? 0 : // Forget our past achievements, we're gaining wanted levels too fast right now
-    optStat == "respect" ? myGangInfo.respectGainRate : myGangInfo.moneyGainRate; // Must do better than the current gain rate if it's within our wanted threshold
+  const currentTotalGain = optStat == "respect" ? myGangInfo.respectGainRate :
+    optStat == "money" ? myGangInfo.moneyGainRate :
+      myGangInfo.moneyGainRate / 1000 + myGangInfo.respectGainRate;
+  let bestTotalGain = myGangInfo.wantedLevelGainRate > wantedGainTolerance ? 0 : currentTotalGain;
   for (let shuffle = 0; shuffle < 100; shuffle++) { // We can discover more optimal results by greedy-optimizing gang members in a different order. Try a few.
     let proposedTasks = {}, totalWanted = 0, totalGain = 0;
     shuffleArray(myGangMembers.slice()).forEach((member, index) => {
@@ -361,7 +358,11 @@ async function optimizeGangCrime(ns, myGangInfo) {
     myGangMembers.forEach(m => assignedTasks[m] = bestTaskAssignments[m].name); // Update work orders for all members
     const oldGangInfo = myGangInfo;
     await updateMemberActivities(ns, dictMembers);
-    const [optWanted, optRespect, optMoney] = myGangMembers.map(m => assignedTasks[m]).reduce(([w, r, m], t) => [w + t.wanted, r + t.respect, m + t.money], [0, 0, 0]);
+    const [optWanted, optRespect, optMoney] = myGangMembers
+      .map(member => memberTaskRates[member].find(task => task.name === assignedTasks[member]))
+      .filter(Boolean)
+      .reduce(([wanted, respect, money], task) =>
+        [wanted + task.wanted, respect + task.respect, money + task.money], [0, 0, 0]);
     if (optWanted != oldGangInfo.wantedLevelGainRate || optRespect != oldGangInfo.respectGainRate || optMoney != oldGangInfo.moneyGainRate)
       myGangInfo = await waitForGameUpdate(ns, oldGangInfo);
     log(ns, `SUCCESS: Optimized gang member crimes for ${optStat} with wanted gain tolerance ${wantedGainTolerance.toPrecision(2)} (${elapsed} ms). ` +
@@ -406,11 +407,7 @@ async function doRecruitMember(ns) {
     assignedTasks[newMemberName] = "Train " + (isHackGang ? "Hacking" : "Combat");
     lastMemberReset[newMemberName] = Date.now();
     log(ns, `SUCCESS: Recruited a new gang member "${newMemberName}"!`, false, 'success');
-    const ascendArgs = [
-      "--install-augmentations", true,
-      "allow-soft-reset",
-    ];
-    return await runScriptLocal(ns, "ascend.js", false, ascendArgs);
+    return true;
   } else {
     log(ns, `ERROR: Failed to recruit a new gang member "${newMemberName}"!`, false, 'error');
   }
@@ -440,38 +437,68 @@ async function tryAscendMembers(ns) {
  * @param {{[gangMember: string]: GangMemberInfo;}} dictMembers
  * Upgrade any missing equipment / augmentations of members if we have the budget for it **/
 async function tryUpgradeMembers(ns, dictMembers) {
-  // Update equipment costs to take into account discounts
   const dictEquipmentCosts = await getDict(ns, equipments.map(e => e.name), 'getEquipmentCost');
-  equipments.forEach(e => e.cost = dictEquipmentCosts[e.name])
-  // Upgrade members, spending no more than x% of our money per tick (and respecting the global reseve)
-  const purchaseOrder = [];
+  equipments.forEach(e => e.cost = Number(dictEquipmentCosts[e.name]) || Number.POSITIVE_INFINITY);
+
   const playerData = await getPlayerInfo(ns);
-  const homeMoney = playerData.money - (options['reserve'] != null ? options['reserve'] : Number(ns.read("reserve.txt") || 0));
-  const maxBudget = 0.99; // Note: To avoid rounding issues and micro-spend race-conditions, only allow budgeting up to 99% of money per tick
-  let budget = Math.min(maxBudget, (options['equipment-budget'] || defaultMaxSpendPerTickTransientEquipment)) * homeMoney;
-  let augBudget = Math.min(maxBudget, (options['augmentations-budget'] || defaultMaxSpendPerTickPermanentEquipment)) * homeMoney;
-  // Hack: Default aug budget is cut by 1/100 in a few situations (TODO: Add more, like when BitnodeMults are such that gang income is severely nerfed)
-  if (!is4sBought)
-    is4sBought = await hasTixApi(ns);
-  if (!is4sBought || resetInfo.currentNode === 8) {
-    budget /= 100;
-    augBudget /= 100;
-  }
-  // Find out what outstanding equipment can be bought within our budget
+  const reserve = options['reserve'] != null ? Number(options['reserve']) : Number(ns.read("reserve.txt") || 0);
+  const spendableMoney = Math.max(0, playerData.money - Math.max(0, reserve || 0));
+  const maxBudget = 0.99;
+  const clampBudget = (value, fallback) => Math.min(maxBudget, Math.max(0, Number(value ?? fallback) || 0));
+  let equipmentBudget = clampBudget(options['equipment-budget'], defaultMaxSpendPerTickTransientEquipment) * spendableMoney;
+  let totalBudget = clampBudget(options['augmentations-budget'], defaultMaxSpendPerTickPermanentEquipment) * spendableMoney;
+  if (!(totalBudget > 0)) return;
+
+  const territoryPowerPriority = !warfareFinished;
+  const statNames = ["hack", "str", "def", "dex", "agi", "cha"];
+  const maxMemberDefense = Math.max(1, ...Object.values(dictMembers).map(member => Number(member.def) || 0));
+  const minimumWarfareDefense = Math.min(10000, Math.max(100, maxMemberDefense * 0.1));
+  const purchaseCandidates = [];
+
   for (const equip of equipments) {
-    if (augBudget <= 0) break;
-    for (const member of Object.values(dictMembers)) { // Get this equip for each member before considering the next most expensive equip
-      if (augBudget <= 0) break;
-      // Bit of a hack: Inflate the "cost" of equipment that doesn't contribute to our main stats so that we don't purchase them unless we have ample cash
-      let percievedCost = equip.cost * (Object.keys(equip.stats).some(stat => importantStats.some(i => stat.includes(i))) ? 1 : offStatCostPenalty);
-      if (percievedCost > augBudget) continue;
-      if (equip.type != "Augmentation" && percievedCost > budget) continue;
-      if (!member.upgrades.includes(equip.name) && !member.augmentations.includes(equip.name)) {
-        purchaseOrder.push({ member: member.name, type: equip.type, equipmentName: equip.name, cost: equip.cost });
-        budget -= equip.cost;
-        augBudget -= equip.cost;
+    if (!Number.isFinite(equip.cost) || !(equip.cost > 0)) continue;
+    const isAugmentation = equip.type === "Augmentation";
+    for (const member of Object.values(dictMembers)) {
+      if (member.upgrades.includes(equip.name) || member.augmentations.includes(equip.name)) continue;
+
+      let benefit = 0;
+      for (const stat of statNames) {
+        const multiplier = Number(equip.stats?.[stat]);
+        if (!(multiplier > 1)) continue;
+        const statGain = (Number(member[stat]) || 0) * (multiplier - 1);
+        if (territoryPowerPriority) {
+const defenseWeight = stat === "def" ?
+  ((Number(member.def) || 0) < minimumWarfareDefense ? 2 : 1.2) : 1;
+benefit += statGain * defenseWeight;
+        } else if (importantStats.includes(stat)) {
+benefit += statGain;
+        } else {
+benefit += statGain / offStatCostPenalty;
+        }
       }
+      if (!(benefit > 0)) continue;
+      purchaseCandidates.push({
+        member: member.name,
+        type: equip.type,
+        equipmentName: equip.name,
+        cost: equip.cost,
+        isAugmentation,
+        score: benefit / equip.cost,
+      });
     }
+  }
+
+  purchaseCandidates.sort((a, b) => b.score - a.score ||
+    Number(b.isAugmentation) - Number(a.isAugmentation) || a.cost - b.cost ||
+    a.member.localeCompare(b.member) || a.equipmentName.localeCompare(b.equipmentName));
+
+  const purchaseOrder = [];
+  for (const candidate of purchaseCandidates) {
+    if (candidate.cost > totalBudget) continue;
+    if (!candidate.isAugmentation && candidate.cost > equipmentBudget) continue;
+    purchaseOrder.push(candidate);
+    totalBudget -= candidate.cost;
+    if (!candidate.isAugmentation) equipmentBudget -= candidate.cost;
   }
   await doUpgradePurchases(ns, purchaseOrder);
 }
