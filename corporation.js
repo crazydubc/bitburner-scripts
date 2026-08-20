@@ -31,10 +31,110 @@ let bnMults
 let oldRound
 let teaNeeded
 let investOffer
+let corporationConstants
+let lastBootstrapWarning = 0
+
+const REQUIRED_CORPORATION_APIS = ["Office API", "Warehouse API"]
+const ROUND_ONE_OPERATING_RESERVE = 5e9
 
 //I want to impliment helper functions for ram dodge across all corp functions.
 async function getCorp(ns) {
   return (await corpRun(ns, 'getCorporation'));
+}
+
+/** Keep a corporation purchase from consuming working capital needed to reach the next market cycle. */
+export function canAffordCorporationPurchase(funds, cost, reserve = 0) {
+  return Number.isFinite(funds) && Number.isFinite(cost) && Number.isFinite(reserve)
+    && funds >= cost + reserve
+}
+
+/** The home office must be producing before round-one expansion is allowed to consume the remaining cash. */
+export function isRoundOneBootstrapReady(division, office) {
+  return Number(division?.numAdVerts) >= 2
+    && Number(office?.numEmployees) >= Number(office?.size)
+    && Number(office?.employeeJobs?.Operations) > 0
+    && Number(office?.employeeJobs?.Engineer) > 0
+}
+
+function logBootstrapWarning(ns, message) {
+  if (Date.now() - lastBootstrapWarning < 30_000) return
+  lastBootstrapWarning = Date.now()
+  log(ns, message, true, 'warning')
+}
+
+function hasCompleteDivisionInfrastructure(division) {
+  return cities.every(city => hasOfficeDB[division + city] && hasWarehouseDB[division + city])
+}
+
+async function getCorporationConstants(ns) {
+  if (corporationConstants) return corporationConstants
+  const constants = await corpRun(ns, 'getConstants')
+  if (constants && Number.isFinite(constants.officeInitialCost)
+    && Number.isFinite(constants.warehouseInitialCost)) {
+    corporationConstants = constants
+  }
+  return corporationConstants
+}
+
+async function ensureCorporationApis(ns) {
+  const missing = []
+  let totalCost = 0
+
+  for (const unlock of REQUIRED_CORPORATION_APIS) {
+    if (await corpRun(ns, 'hasUnlock', unlock) === true) {
+      researchedDB[unlock] = true
+      continue
+    }
+    const cost = Number(await corpRun(ns, 'getUnlockCost', unlock))
+    if (!Number.isFinite(cost)) {
+      logBootstrapWarning(ns, `Unable to read the ${unlock} unlock cost; corporation bootstrap paused.`)
+      return false
+    }
+    missing.push({ unlock, cost })
+    totalCost += cost
+  }
+
+  if (missing.length === 0) return true
+
+  const funds = await corpFunds(ns)
+  if (!canAffordCorporationPurchase(funds, totalCost)) {
+    logBootstrapWarning(ns, `Corporation bootstrap needs ${ns.format.number(totalCost, 3)} for ` +
+      `${missing.map(item => item.unlock).join(' + ')}, but only ${ns.format.number(funds, 3)} is available.`)
+    return false
+  }
+
+  for (const { unlock } of missing) {
+    await corpRun(ns, 'purchaseUnlock', unlock)
+    if (await corpRun(ns, 'hasUnlock', unlock) !== true) {
+      logBootstrapWarning(ns, `Failed to purchase ${unlock}; corporation bootstrap will retry.`)
+      return false
+    }
+    researchedDB[unlock] = true
+  }
+
+  log(ns, `Purchased required corporation APIs: ${missing.map(item => item.unlock).join(', ')}.`,
+    true, 'success')
+  return true
+}
+
+async function hireAdVertsUpTo(ns, divisionName, target) {
+  let division = await corpRun(ns, 'getDivision', divisionName)
+  if (!division) return false
+
+  while (division.numAdVerts < target) {
+    const cost = Number(await corpRun(ns, 'getHireAdVertCost', divisionName))
+    const funds = await corpFunds(ns)
+    if (!canAffordCorporationPurchase(funds, cost, ROUND_ONE_OPERATING_RESERVE)) return false
+
+    const previousCount = division.numAdVerts
+    await corpRun(ns, 'hireAdVert', divisionName)
+    division = await corpRun(ns, 'getDivision', divisionName)
+    if (!division || division.numAdVerts <= previousCount) {
+      logBootstrapWarning(ns, `Unable to buy AdVert ${previousCount + 1} for ${divisionName}; retrying later.`)
+      return false
+    }
+  }
+  return true
 }
 
 /** @param {NS} ns */
@@ -60,10 +160,12 @@ export async function main(ns) {
   tobaccoBooster = false
   while (true) {
     while (round === 1) {
-      await prep(ns)
+      if (!(await prep(ns))) {
+        await ns.corporation.nextUpdate()
+        continue
+      }
       await updateHud(ns)
-      if ((await corpRun(ns, 'getDivision', div1)).numAdVerts < 2)
-        while ((await corpRun(ns, 'getDivision', div1)).numAdVerts < 2) (await corpRun(ns, 'hireAdVert', div1))
+      await hireAdVertsUpTo(ns, div1, 2)
       const nState = (await getCorp(ns)).nextState
       if (nState === "SALE")
         await sell(ns)
@@ -80,13 +182,21 @@ export async function main(ns) {
       }
       if (nState === "EXPORT") {
         await manageOffice(ns)
-        await warehouseUpgrade(ns)
+        if (hasCompleteDivisionInfrastructure(div1))
+          await warehouseUpgrade(ns)
       }
-      await corpRun(ns, 'levelUpgrade', "ABC SalesBots")
+      if (hasCompleteDivisionInfrastructure(div1)) {
+        const upgradeCost = Number(await corpRun(ns, 'getUpgradeLevelCost', "ABC SalesBots"))
+        if (canAffordCorporationPurchase(await corpFunds(ns), upgradeCost, ROUND_ONE_OPERATING_RESERVE))
+          await corpRun(ns, 'levelUpgrade', "ABC SalesBots")
+      }
       await ns.corporation.nextUpdate();
     }
     while (round === 2) {
-      await prep(ns)
+      if (!(await prep(ns))) {
+        await ns.corporation.nextUpdate()
+        continue
+      }
       await updateHud(ns)
       let hasDiv2 = false
       //Set up Tobacco    
@@ -130,7 +240,10 @@ export async function main(ns) {
       await ns.corporation.nextUpdate();
     }
     while (round === 3 || round === 4) {
-      await prep(ns)
+      if (!(await prep(ns))) {
+        await ns.corporation.nextUpdate()
+        continue
+      }
       await updateHud(ns)
       while ((await corpRun(ns, 'getUpgradeLevel', "Smart Factories")) < 20 && (await corpRun(ns, 'getUpgradeLevelCost', "Smart Factories")) <= await corpFunds(ns))
         (await corpRun(ns, 'levelUpgrade', "Smart Factories"))
@@ -158,7 +271,10 @@ export async function main(ns) {
       await ns.corporation.nextUpdate();
     }
     while (round >= 5) {
-      await prep(ns)
+      if (!(await prep(ns))) {
+        await ns.corporation.nextUpdate()
+        continue
+      }
       await updateHud(ns)
       await manageProducts(ns)
       await spendRP(ns)
@@ -363,49 +479,130 @@ async function corpFunds(ns) {
   return (await getCorp(ns)).funds
 }
 
-async function expandCities(ns, division) {
-  while (!hasDivDB[division]) {
-    hasDivDB[division] = (await corpRun(ns, 'getDivision', division));
-    if (!hasDivDB[division]) {
-      await corpRun(ns, 'expandIndustry', division, division);
-      hasDivDB[division] = (await corpRun(ns, 'getDivision', division));
-      await ns.sleep(1000);
+async function expandCities(ns, division, options = {}) {
+  const allowExpansion = options.allowExpansion !== false
+  const reserve = Number(options.reserve) || 0
+  let divisionInfo = await corpRun(ns, 'getDivision', division)
+
+  if (!divisionInfo) {
+    const industryData = await corpRun(ns, 'getIndustryData', division)
+    const startingCost = Number(industryData?.startingCost)
+    const funds = await corpFunds(ns)
+    if (!canAffordCorporationPurchase(funds, startingCost, reserve)) {
+      logBootstrapWarning(ns, `Waiting to create ${division}: ${ns.format.number(startingCost, 3)} required, ` +
+        `${ns.format.number(funds, 3)} available.`)
+      return false
+    }
+
+    await corpRun(ns, 'expandIndustry', division, division)
+    divisionInfo = await corpRun(ns, 'getDivision', division)
+    if (!divisionInfo) {
+      logBootstrapWarning(ns, `Failed to create ${division}; corporation bootstrap will retry.`)
+      return false
     }
   }
+
+  hasDivDB[division] = divisionInfo
+  const constants = await getCorporationConstants(ns)
+  if (!constants) {
+    logBootstrapWarning(ns, 'Unable to read corporation infrastructure costs; expansion paused.')
+    return true
+  }
+
   for (const city of cities) {
-    while (!hasOfficeDB[division + city]) {
-      hasOfficeDB[division + city] = await corpRun(ns, 'getOffice', division, city);
-      if (!hasOfficeDB[division + city]) {
-        await corpRun(ns, 'expandCity', division, city);
-        await ns.sleep(1000);
+    const key = division + city
+    const cityExists = Array.isArray(divisionInfo.cities) && divisionInfo.cities.includes(city)
+
+    if (!cityExists) {
+      delete hasOfficeDB[key]
+      delete hasWarehouseDB[key]
+      if (!allowExpansion) continue
+
+      const combinedCost = Number(constants.officeInitialCost) + Number(constants.warehouseInitialCost)
+      const funds = await corpFunds(ns)
+      if (!canAffordCorporationPurchase(funds, combinedCost, reserve)) return true
+
+      await corpRun(ns, 'expandCity', division, city)
+      const office = await corpRun(ns, 'getOffice', division, city)
+      if (!office) {
+        logBootstrapWarning(ns, `Failed to open the ${division} office in ${city}; retrying later.`)
+        return true
       }
-    }
-    while (!hasWarehouseDB[division + city]) {
-      hasWarehouseDB[division + city] = await corpRun(ns, 'hasWarehouse', division, city);
-      if (!hasWarehouseDB[division + city]) {
-        await corpRun(ns, 'purchaseWarehouse', division, city);
-        await ns.sleep(1000);
+      hasOfficeDB[key] = office
+
+      await corpRun(ns, 'purchaseWarehouse', division, city)
+      if (await corpRun(ns, 'hasWarehouse', division, city) !== true) {
+        logBootstrapWarning(ns, `Failed to purchase the ${division} warehouse in ${city}; retrying later.`)
+        return true
       }
+      hasWarehouseDB[key] = true
+      divisionInfo = await corpRun(ns, 'getDivision', division)
+      hasDivDB[division] = divisionInfo
+      continue
     }
+
+    const office = await corpRun(ns, 'getOffice', division, city)
+    if (!office) {
+      delete hasOfficeDB[key]
+      logBootstrapWarning(ns, `The ${division} office in ${city} could not be read; expansion paused.`)
+      return true
+    }
+    hasOfficeDB[key] = office
+
+    if (await corpRun(ns, 'hasWarehouse', division, city) === true) {
+      hasWarehouseDB[key] = true
+      continue
+    }
+
+    delete hasWarehouseDB[key]
+    if (!allowExpansion) continue
+
+    const warehouseCost = Number(constants.warehouseInitialCost)
+    const funds = await corpFunds(ns)
+    if (!canAffordCorporationPurchase(funds, warehouseCost, reserve)) return true
+
+    await corpRun(ns, 'purchaseWarehouse', division, city)
+    if (await corpRun(ns, 'hasWarehouse', division, city) !== true) {
+      logBootstrapWarning(ns, `Failed to purchase the ${division} warehouse in ${city}; retrying later.`)
+      return true
+    }
+    hasWarehouseDB[key] = true
   }
+
+  return true
 }
 
 async function tryPurchaseUnlock(ns, purchase) {
-  if (!researchedDB[purchase]) {
-    try { (await corpRun(ns, 'purchaseUnlock', purchase)) } catch { }
-    if ((await corpRun(ns, 'hasUnlock', purchase))) researchedDB[purchase] = true
-  }
-  if (researchedDB[purchase]) {
+  if (await corpRun(ns, 'hasUnlock', purchase) === true) {
+    researchedDB[purchase] = true
     return true
   }
-  return false;
+
+  const cost = Number(await corpRun(ns, 'getUnlockCost', purchase))
+  if (!canAffordCorporationPurchase(await corpFunds(ns), cost)) return false
+
+  await corpRun(ns, 'purchaseUnlock', purchase)
+  const unlocked = await corpRun(ns, 'hasUnlock', purchase) === true
+  if (unlocked) researchedDB[purchase] = true
+  return unlocked
 }
 /** @param {NS} ns */
 async function prep(ns) {
-  investOffer = (await corpRun(ns, 'getInvestmentOffer'))
-  const round = investOffer.round
+  investOffer = await corpRun(ns, 'getInvestmentOffer')
+  const round = Number(investOffer?.round)
+  if (!Number.isFinite(round)) {
+    logBootstrapWarning(ns, 'Unable to read the corporation investment round; bootstrap paused.')
+    return false
+  }
+
+  if (!(await ensureCorporationApis(ns))) return false
+
   if (round >= 1) {
-    await expandCities(ns, div1);
+    const agriculture = await corpRun(ns, 'getDivision', div1)
+    const homeOffice = agriculture ? await corpRun(ns, 'getOffice', div1, "Sector-12") : undefined
+    const allowExpansion = round > 1 || isRoundOneBootstrapReady(agriculture, homeOffice)
+    const reserve = round === 1 ? ROUND_ONE_OPERATING_RESERVE : 0
+    if (!(await expandCities(ns, div1, { allowExpansion, reserve }))) return false
   }
   if (round >= 2) {
     if (await tryPurchaseUnlock(ns, "Export"))
@@ -498,6 +695,7 @@ async function prep(ns) {
       }
     }
   }
+  return true
 }
 /** @param {NS} ns */
 async function updateMisc(ns) {
