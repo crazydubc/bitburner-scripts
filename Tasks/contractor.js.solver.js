@@ -98,6 +98,61 @@ function findAnswer(contract) {
   return codingContractSolution ? codingContractSolution.solver(contract.data) : null;
 }
 
+/**
+ * Return inclusive corners of a maximum-area all-zero rectangle.
+ * Treat each matrix row as the base of a histogram and solve that histogram with a monotonic stack.
+ * Time: O(rows * columns). Extra space: O(columns).
+ */
+export function solveLargestRectangleInMatrix(matrix) {
+  if (!Array.isArray(matrix) || matrix.length === 0 ||
+    !Array.isArray(matrix[0]) || matrix[0].length === 0) return [[0, 0], [0, 0]]
+
+  const columns = matrix[0].length
+  const heights = new Array(columns).fill(0)
+  const startStack = new Array(columns)
+  const heightStack = new Array(columns)
+  let bestArea = 0
+  let bestRectangle = [[0, 0], [0, 0]]
+
+  for (let row = 0; row < matrix.length; row++) {
+    if (!Array.isArray(matrix[row]) || matrix[row].length !== columns)
+      throw new Error('Largest Rectangle in a Matrix requires a rectangular matrix')
+
+    for (let column = 0; column < columns; column++)
+      heights[column] = matrix[row][column] === 0 ? heights[column] + 1 : 0
+
+    let stackSize = 0
+    for (let column = 0; column <= columns; column++) {
+      const height = column === columns ? 0 : heights[column]
+      let start = column
+
+      while (stackSize > 0 && heightStack[stackSize - 1] > height) {
+        stackSize--
+        const rectangleStart = startStack[stackSize]
+        const rectangleHeight = heightStack[stackSize]
+        const area = rectangleHeight * (column - rectangleStart)
+        if (area > bestArea) {
+bestArea = area
+bestRectangle = [
+  [row - rectangleHeight + 1, rectangleStart],
+  [row, column - 1],
+]
+        }
+        start = rectangleStart
+      }
+
+      // Equal-height bars keep the earlier start already present in the stack.
+      if (height > 0 && (stackSize === 0 || heightStack[stackSize - 1] < height)) {
+        startStack[stackSize] = start
+        heightStack[stackSize] = height
+        stackSize++
+      }
+    }
+  }
+
+  return bestRectangle
+}
+
 function convert2DArrayToString(arr) {
   const components = []
   arr.forEach(function (e) {
@@ -427,6 +482,10 @@ const codingContractTypesMetadata = [{
     }
     return obstacleGrid[obstacleGrid.length - 1][obstacleGrid[0].length - 1]
   },
+},
+{
+  name: 'Largest Rectangle in a Matrix',
+  solver: solveLargestRectangleInMatrix,
 },
 {
   name: 'Shortest Path in a Grid',
