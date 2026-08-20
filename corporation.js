@@ -19,7 +19,7 @@ const round2Money = 8.8e12 //8.8t
 const round3Money = 12e15 //12q
 const round4Money = 500e18 //500Q
 let tobaccoBooster = false
-const ta2DB = [] //TA2 DB
+const ta2DB = Object.create(null) // TA2 cache keyed by division + city + item
 const indDataDB = []
 const matDataDB = []
 let researchedDB = []
@@ -180,7 +180,9 @@ export async function main(ns) {
       }
       await ns.corporation.nextUpdate();
     }
-    ns.tprint(`${nState}`)
+    log(ns, `Unexpected corporation investment round ${String(round)}; refreshing state.`, true, 'warning')
+    await ns.sleep(1000)
+    round = (await corpRun(ns, 'getInvestmentOffer'))?.round
   }
 }
 
@@ -421,8 +423,12 @@ async function prep(ns) {
     if ((await getCorp(ns)).revenue >= 1e70) {
       await tryPurchaseUnlock(ns, "Government Partnership")
       await tryPurchaseUnlock(ns, "Shady Accounting")
-      if (!(await getCorp(ns)).public) await corpRun(ns, 'goPublic', 0)
-        (await corpRun(ns, 'issueDividends', 0.01))
+      if (!(await getCorp(ns)).public) {
+        await corpRun(ns, 'goPublic', 0)
+      }
+      if ((await getCorp(ns)).public) {
+        await corpRun(ns, 'issueDividends', 0.01)
+      }
       try {
         const div = (await corpRun(ns, 'getDivision', div5))
         hasDivDB[div5] = div
@@ -622,76 +628,99 @@ async function spendRP(ns) {
     }
   }
 }
+/**
+ * Select the candidate with the lowest finite score.
+ * @param {{name: string, score: number}[]} candidates
+ * @returns {string | null}
+ */
+export function selectLowestScoredProduct(candidates) {
+  let worstProduct = null
+  let worstScore = Infinity
+  for (const candidate of candidates) {
+    const score = Number(candidate?.score)
+    if (!candidate?.name || !Number.isFinite(score) || score >= worstScore) continue
+    worstProduct = candidate.name
+    worstScore = score
+  }
+  return worstProduct
+}
+
+function clearProductPricingCache(div, productName) {
+  if (!productName) return
+  for (const city of cities) {
+    delete ta2DB[div + city + productName]
+  }
+}
+
+async function discontinueManagedProduct(ns, div, productName) {
+  if (!productName) return false
+  clearProductPricingCache(div, productName)
+  await corpRun(ns, 'discontinueProduct', div, productName)
+  return true
+}
+
 /** @param {NS} ns */
 async function manageProducts(ns) {
   for (const div of industries) {
-    if (!hasDivDB[div]) continue
-    if (!hasDivDB[div].makesProducts) continue
+    if (!hasDivDB[div] || !hasDivDB[div].makesProducts) continue
+
+    let division = await corpRun(ns, 'getDivision', div)
+    const completedProducts = []
     let active = 0
     let calculating = 0
-    let division = (await corpRun(ns, 'getDivision', div))
-    for (const prod of division.products) {
-      if ((await corpRun(ns, 'getProduct', div, "Sector-12", prod)).developmentProgress === 100) {
-        const ta2 = ta2DB[div + "Sector-12" + prod]
-        if (ta2 !== undefined && ta2.markupLimit !== 0)
-          active++
-        else
-          calculating++
-      }
-    }
-    //Discontinue?
-    if (active + calculating === division.maxProducts && calculating <= 1) {
-      let worstProd = "none"
-      let worstRating = Infinity
-      for (const prod of division.products) {
 
-        if ((await corpRun(ns, 'getProduct', div, "Sector-12", prod)).developmentProgress != 100 || getSellPrice(ns, div, "Sector-12", prod) === 0) continue
-        if (await getSellPrice(ns, div, "Sector-12", prod) < worstRating) {
-          worstProd = prod
-          worstRating = getSellPrice(ns, div, "Sector-12", prod)
-        }
-      }
-      for (const city of cities) {
-        if (ta2DB[div + city + worstProd])
-          delete ta2DB[div + city + worstProd]
-      }
-      (await corpRun(ns, 'discontinueProduct', div, worstProd))
-      division = (await corpRun(ns, 'getDivision', div))
+    for (const productName of division.products) {
+      const product = await corpRun(ns, 'getProduct', div, "Sector-12", productName)
+      if (!product || product.developmentProgress !== 100) continue
+
+      completedProducts.push({ name: productName, product })
+      const ta2 = ta2DB[div + "Sector-12" + productName]
+      if (ta2 && Number.isFinite(ta2.markupLimit) && ta2.markupLimit !== 0)
+        active++
+      else
+        calculating++
     }
-    //Discontinue?
-    else if (active + calculating === division.maxProducts) {
-      let worstProd = "none"
-      let worstRating = Infinity
-      for (const prod of division.products) {
-        const product = (await corpRun(ns, 'getProduct', div, "Sector-12", prod))
-        if (product.developmentProgress === 100 && product.stats.quality < worstRating) {
-          worstProd = prod
-          worstRating = product.stats.quality
+
+    if (active + calculating === division.maxProducts) {
+      let worstProduct = null
+
+      if (calculating <= 1) {
+        const priceCandidates = []
+        for (const entry of completedProducts) {
+const sellPrice = await getSellPrice(ns, div, "Sector-12", entry.name)
+if (Number.isFinite(sellPrice) && sellPrice > 0)
+  priceCandidates.push({ name: entry.name, score: sellPrice })
         }
+        worstProduct = selectLowestScoredProduct(priceCandidates)
+      } else {
+        worstProduct = selectLowestScoredProduct(completedProducts.map(entry => ({
+name: entry.name,
+score: Number(entry.product.stats?.quality),
+        })))
       }
-      for (const city of cities)
-        delete ta2DB[div + city + worstProd]
-          (await corpRun(ns, 'discontinueProduct', div, worstProd))
-      division = (await corpRun(ns, 'getDivision', div))
+
+      // If every completed product is still waiting for a valid price/quality, keep all slots intact and retry.
+      if (await discontinueManagedProduct(ns, div, worstProduct))
+        division = await corpRun(ns, 'getDivision', div)
     }
+
     let researching = false
-    if (division.products.length <= division.maxProducts) {
-      //Are we researching one?
-      for (const prod of division.products)
-        if ((await corpRun(ns, 'getProduct', div, "Sector-12", prod)).developmentProgress < 100) {
-          researching = true
-          break
-        }
+    for (const productName of division.products) {
+      const product = await corpRun(ns, 'getProduct', div, "Sector-12", productName)
+      if (product?.developmentProgress < 100) {
+        researching = true
+        break
+      }
     }
 
-    let active2 = 0
-    for (const prod of division.products) {
-      if ((await corpRun(ns, 'getProduct', div, "Sector-12", prod)).developmentProgress === 100)
-        active2++
+    if (researching || division.products.length >= division.maxProducts) continue
+
+    const version = await getLatestProductVersion(ns, div)
+    const investment = 1e9 * 2 ** version
+    const corp = await getCorp(ns)
+    if (Number.isFinite(investment) && corp.funds >= investment * 2) {
+      await corpRun(ns, 'makeProduct', div, "Sector-12", 'Prod v' + (version + 1), investment, investment)
     }
-    const corp = (await getCorp(ns))
-    const version = await getLatestProductVersion(ns, div);
-    if (!researching && active2 < division.maxProducts && corp.funds > 200) (await corpRun(ns, 'makeProduct', div, "Sector-12", 'Prod v' + (version + 1), 1e9 * 2 ** version, 1e9 * 2 ** version))
   }
 }
 /**
@@ -1030,7 +1059,7 @@ async function manageOffice(ns) {
               {
                 await setJob(ns, div, city, "Operations", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4))
                 await setJob(ns, div, city, "Business", 1)
-                await setJob(ns, iv, city, "Engineer", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
+                await setJob(ns, div, city, "Engineer", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
                 await setJob(ns, div, city, "Management", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
                 const office = (await corpRun(ns, 'getOffice', div, city))
                 const left = office.numEmployees - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - 1
@@ -1633,10 +1662,11 @@ async function warehouseUpgrade(ns) {
 /** @param {NS} ns */
 async function getSellPrice(ns, div, city, prod) {
   const ta2 = ta2DB[div + city + prod]
-  if (ta2 === undefined || ta2.markupLimit === 0) return 0
+  if (!ta2 || !Number.isFinite(ta2.markupLimit) || ta2.markupLimit === 0) return 0
   const product = await corpRun(ns, 'getProduct', div, city, prod)
-  const prodMarketPrice = 5 * product.productionCost
-  return (((ta2.markupLimit * Math.sqrt(1)) / Math.sqrt(1)) + prodMarketPrice) * 10
+  if (!product || !Number.isFinite(product.productionCost)) return 0
+  const price = (ta2.markupLimit + (5 * product.productionCost)) * 10
+  return Number.isFinite(price) && price > 0 ? price : 0
 }
 /** @param {NS} ns */
 async function sell(ns) {
@@ -1718,7 +1748,7 @@ async function sell(ns) {
               exported += (await corpRun(ns, 'getMaterial', xp.division, xp.city, mat)).importAmount
             if (material.stored === 0) continue
             //Set TA2 if we have it
-            if (researchedDB[div + "Market-TA.II"]) {
+            if (hasMTAII) {
               await corpRun(ns, 'setMaterialMarketTA2', div, city, mat, true)
               await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", "0")
               continue
@@ -1730,7 +1760,7 @@ async function sell(ns) {
                 "sellingQuantity": material.stored + (exported * 10),
                 "markupLimit": 0
               }
-              await corpRun(ns, 'sellMaterial', (div, city, mat, "MAX", material.marketPrice).toString())
+              await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", material.marketPrice.toString())
               continue
             }
             const prodMarketPrice = material.marketPrice
