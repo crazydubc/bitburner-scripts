@@ -14,10 +14,14 @@ const div8 = "Mining" //Mining
 const cities = ["Sector-12", "Aevum", "Volhaven", "Chongqing", "New Tokyo", "Ishima"]
 const industries = [div1, div2, div3, div4, div5, div6, div7, div8]
 
-const round1Money = 440e9 //440b
-const round2Money = 8.8e12 //8.8t
-const round3Money = 12e15 //12q
-const round4Money = 500e18 //500Q
+const INVESTMENT_CAPITAL_TARGETS = Object.freeze({
+  1: 440e9,
+  2: 8.8e12,
+  3: 12e15,
+  4: 500e18,
+})
+const INVESTMENT_OFFER_STALL_CYCLES = 2
+const INVESTMENT_OFFER_RELATIVE_EPSILON = 1e-6
 let tobaccoBooster = false
 const ta2DB = Object.create(null) // TA2 cache keyed by division + city + item
 const indDataDB = []
@@ -26,9 +30,11 @@ let researchedDB = []
 let hasDivDB = []
 let hasOfficeDB = []
 let hasWarehouseDB = []
-let roundTrigger = false
+let investmentPeakRound = 0
+let investmentPeakActive = false
+let investmentPeakOffer = 0
+let investmentOfferStallCycles = 0
 let bnMults
-let oldRound
 let teaNeeded
 let investOffer
 let corporationConstants
@@ -46,6 +52,48 @@ async function getCorp(ns) {
 export function canAffordCorporationPurchase(funds, cost, reserve = 0) {
   return Number.isFinite(funds) && Number.isFinite(cost) && Number.isFinite(reserve)
     && funds >= cost + reserve
+}
+
+/** Return the actual post-investment capital target for a funding round. */
+export function getInvestmentCapitalTarget(round) {
+  return Number(INVESTMENT_CAPITAL_TARGETS[Number(round)]) || Infinity
+}
+
+/** Corporation costs are not scaled by CorporationValuation, so compare actual dollars. */
+export function getProjectedInvestmentCapital(offerFunds, corporationFunds) {
+  const offer = Number(offerFunds)
+  const funds = Number(corporationFunds)
+  if (!Number.isFinite(offer) || !Number.isFinite(funds)) return 0
+  return Math.max(0, offer) + Math.max(0, funds)
+}
+
+export function shouldTrackInvestmentPeak(round, offerFunds, corporationFunds) {
+  return getProjectedInvestmentCapital(offerFunds, corporationFunds) >= getInvestmentCapitalTarget(round)
+}
+
+/** Round two must finish the Chemical division infrastructure before taking its funding offer. */
+export function isInvestmentRoundOperationallyReady(round, roundTwoInfrastructureReady = true) {
+  return Number(round) !== 2 || roundTwoInfrastructureReady === true
+}
+
+/**
+ * Track the actual offer peak. A small decline accepts immediately; an exact plateau accepts after two cycles.
+ */
+export function evaluateInvestmentPeak(peakOffer, currentOffer, stagnantCycles = 0) {
+  const peak = Number.isFinite(Number(peakOffer)) ? Math.max(0, Number(peakOffer)) : 0
+  const current = Number.isFinite(Number(currentOffer)) ? Math.max(0, Number(currentOffer)) : 0
+  const epsilon = Math.max(1e6, peak * INVESTMENT_OFFER_RELATIVE_EPSILON)
+
+  if (current > peak + epsilon) {
+    return { accept: false, peakOffer: current, stagnantCycles: 0 }
+  }
+
+  const nextStagnantCycles = Math.max(0, Number(stagnantCycles) || 0) + 1
+  return {
+    accept: current < peak - epsilon || nextStagnantCycles >= INVESTMENT_OFFER_STALL_CYCLES,
+    peakOffer: Math.max(peak, current),
+    stagnantCycles: nextStagnantCycles,
+  }
 }
 
 /** The home office must be producing before round-one expansion is allowed to consume the remaining cash. */
@@ -149,6 +197,15 @@ export async function main(ns) {
   hasWarehouseDB = []
   const myBN = (await getReset(ns)).currentNode;
   bnMults = await getBNMults(ns)
+  const corporationValuation = Number(bnMults?.CorporationValuation)
+  const corporationDivisions = Number(bnMults?.CorporationDivisions)
+  if (!(corporationValuation > 0) || !(corporationDivisions > 0)) {
+    log(ns, `Corporations are disabled in BN${myBN}; corporation.js is exiting.`, true, 'warning')
+    return
+  }
+  log(ns, `Corporation strategy for BN${myBN}: valuation x${corporationValuation}. ` +
+    `Funding targets remain actual cash because the game already applies this multiplier to offers.`,
+    true, 'info')
   const selfFund = myBN === 3 ? false : true;
   while (!ns.corporation.hasCorporation() && ns.corporation.canCreateCorporation(selfFund)
     && !(await corpRun(ns, 'createCorporation', corpName, selfFund))) await ns.sleep(1000)
@@ -156,7 +213,6 @@ export async function main(ns) {
   let round = (await corpRun(ns, 'getInvestmentOffer')).round;
   log(ns, `Round ${round}!`, true)
   teaNeeded = true
-  oldRound = 0
   tobaccoBooster = false
   while (true) {
     while (round === 1) {
@@ -310,7 +366,6 @@ async function getUpgradeLevel(ns, type) {
 async function updateHud(ns) {
   ns.clearLog()
   const cObj = await getCorp(ns)
-  const bnMults = await getBNMults(ns)
   ns.printf("%s", cObj.name)
   ns.printf("Funds : $%s  Profit: $%s/s", ns.format.number(cObj.funds, 3), ns.format.number(cObj.revenue - cObj.expenses, 3))
   const invest = investOffer
@@ -320,15 +375,12 @@ async function updateHud(ns) {
     + await getUpgradeLevel(ns, "FocusWires")
     + await getUpgradeLevel(ns, "Speech Processor Implants")
     + await getUpgradeLevel(ns, "FocusWires")
-  const offer = invest.round === 1 ? (round1Money * bnMults.CorporationValuation)
-    : invest.round === 2 ? (round2Money * bnMults.CorporationValuation)
-      : invest.round === 3 ? (round3Money * bnMults.CorporationValuation)
-        : invest.round === 4 ? (round4Money * bnMults.CorporationValuation)
-          : 0
+  const capitalTarget = getInvestmentCapitalTarget(invest.round)
+  const projectedCapital = getProjectedInvestmentCapital(invest.funds, cObj.funds)
   const minRound = invest.round === 2 ? "-BareMin 30b" : ""
   const produpgrades = await getUpgradeLevel(ns, "Smart Factories") + await getUpgradeLevel(ns, "Smart Storage")
   //ns.printf(`${invest.round} ${invest.funds} ${offer} ${minRound}`)
-  ns.printf("Round: %s Offer: %s FundsReq: %s %s", invest.round, ns.format.number(invest.funds, 3), ns.format.number(offer, 3), minRound)
+  ns.printf("Round: %s Offer: %s Capital: %s/%s CorpVal: x%s %s", invest.round, ns.format.number(invest.funds, 3), ns.format.number(projectedCapital, 3), Number.isFinite(capitalTarget) ? ns.format.number(capitalTarget, 3) : "n/a", ns.format.number(bnMults.CorporationValuation, 3), minRound)
 
   ns.printf("Empl Upgrades: %s Prod Upgrades: %s Profit Upgrades: %s Wilson: %s", upgrades, produpgrades, await getUpgradeLevel(ns, "ABC SalesBots"), await getUpgradeLevel(ns, "Wilson Analytics"))
   const state = cObj.nextState === "PURCHASE" ? "START"
@@ -388,91 +440,65 @@ async function updateHud(ns) {
   ns.ui.renderTail()
 }
 
+function resetInvestmentPeakTracking(round = 0) {
+  investmentPeakRound = Number(round) || 0
+  investmentPeakActive = false
+  investmentPeakOffer = 0
+  investmentOfferStallCycles = 0
+}
+
 /** @param {NS} ns */
 async function checkInvest(ns) {
-  const round = investOffer.round
-  const corp = await getCorp(ns);
+  const round = Number(investOffer?.round)
+  const corp = await getCorp(ns)
+  if (!corp || !Number.isInteger(round) || round < 1 || round > 4) return round
 
-  if (round === 1) {
-    const totalValuation = investOffer.funds + (corp.funds * bnMults.CorporationValuation);
-    if (round1Money * bnMults.CorporationValuation < totalValuation || roundTrigger) {
-      roundTrigger = true
-      if (oldRound <= totalValuation) {
-        oldRound = totalValuation;
-      }
-      else {
-        (await corpRun(ns, 'acceptInvestmentOffer'))
-        teaNeeded = true
-        roundTrigger = false
-        log(ns, "Off to round 2!", true, 'info', 20);
-        return 2
-      }
-    }
-    return 1
+  if (investmentPeakRound !== round) resetInvestmentPeakTracking(round)
+
+  const offerFunds = Number(investOffer.funds)
+  const capitalTarget = getInvestmentCapitalTarget(round)
+  const projectedCapital = getProjectedInvestmentCapital(offerFunds, corp.funds)
+  if (!isInvestmentRoundOperationallyReady(round, hasCompleteDivisionInfrastructure(div2))) return round
+
+  // Preserve the existing early product-division signal, but express it in actual dollars.
+  if ((round === 3 || round === 4) &&
+    getProjectedInvestmentCapital(offerFunds * 4, corp.funds) >= capitalTarget) {
+    tobaccoBooster = true
   }
-  if (round === 2) {
-    let hasDiv2 = false
-    //Set up Tobacco    
-    let count = 0
-    if (researchedDB["Export"])
-      for (const city of cities)
-        if (hasWarehouseDB[div2 + city]) count++
-    if (count === 6)
-      hasDiv2 = true
-    if ((hasDiv2 && investOffer.funds + corp.funds > 30e9 && round2Money * bnMults.CorporationValuation < investOffer.funds + corp.funds) || roundTrigger) {
-      roundTrigger = true
-      if (oldRound <= investOffer.funds + (Math.min(30e9, corp.funds))) {
-        oldRound = investOffer.funds + (Math.min(30e9, corp.funds))
-      }
-      else {
-        (await corpRun(ns, 'acceptInvestmentOffer'))
-        teaNeeded = true
-        roundTrigger = false
-        log(ns, "Off to round 3!", true, 'info', 20);
-        return 3
-      }
-    }
-    return 2
+
+  if (!investmentPeakActive) {
+    if (!shouldTrackInvestmentPeak(round, offerFunds, corp.funds)) return round
+
+    investmentPeakActive = true
+    investmentPeakOffer = Math.max(0, offerFunds)
+    investmentOfferStallCycles = 0
+    log(ns, `Round ${round} reached ${ns.format.number(projectedCapital, 3)} projected capital ` +
+      `(target ${ns.format.number(capitalTarget, 3)}). Tracking the actual offer peak.`, true, 'info')
+    return round
   }
-  if (round === 3) {
-    if (round3Money * bnMults.CorporationValuation < (investOffer.funds * 4) + (corp.funds * bnMults.CorporationValuation)) {
-      tobaccoBooster = true
-    }
-    if ((round3Money * bnMults.CorporationValuation < investOffer.funds + (corp.funds * bnMults.CorporationValuation)) || roundTrigger) {
-      roundTrigger = true
-      if (oldRound <= investOffer.funds + (corp.funds * bnMults.CorporationValuation)) {
-        oldRound = investOffer.funds + (corp.funds * bnMults.CorporationValuation)
-      }
-      else {
-        (await corpRun(ns, 'acceptInvestmentOffer'))
-        teaNeeded = true
-        roundTrigger = false
-        tobaccoBooster = false
-        log(ns, "Off to round 4!", true, 'info', 20);
-        return 4
-      }
-    }
-    return 3
+
+  const decision = evaluateInvestmentPeak(investmentPeakOffer, offerFunds, investmentOfferStallCycles)
+  investmentPeakOffer = decision.peakOffer
+  investmentOfferStallCycles = decision.stagnantCycles
+  if (!decision.accept) return round
+
+  const accepted = await corpRun(ns, 'acceptInvestmentOffer')
+  if (accepted !== true) {
+    logBootstrapWarning(ns, `Unable to accept corporation investment round ${round}; retrying.`)
+    return round
   }
-  if (round === 4) {
-    if (round4Money * bnMults.CorporationValuation < (investOffer.funds * 4) + (corp.funds * bnMults.CorporationValuation)) {
-      tobaccoBooster = true
-    }
-    if ((round4Money * bnMults.CorporationValuation < investOffer.funds + (corp.funds * bnMults.CorporationValuation)) || roundTrigger) {
-      roundTrigger = true
-      if (oldRound <= investOffer.funds + (corp.funds * bnMults.CorporationValuation)) {
-        oldRound = investOffer.funds + (corp.funds * bnMults.CorporationValuation)
-      }
-      else {
-        (await corpRun(ns, 'acceptInvestmentOffer'))
-        teaNeeded = true
-        roundTrigger = false
-        log(ns, "Off to round 5!", true, 'info', 20);
-        return 5
-      }
-    }
-    return 4
-  }
+
+  const nextOffer = await corpRun(ns, 'getInvestmentOffer')
+  const nextRound = Number(nextOffer?.round)
+  investOffer = nextOffer
+  teaNeeded = true
+  if (round === 3) tobaccoBooster = false
+  resetInvestmentPeakTracking(nextRound)
+
+  const resolvedNextRound = Number.isInteger(nextRound) && nextRound > round ? nextRound : round + 1
+  log(ns, `Accepted round ${round} investment offer for ${ns.format.number(offerFunds, 3)}. ` +
+    `Off to round ${resolvedNextRound}!`, true, 'success', 20)
+  return resolvedNextRound
 }
 /** @param {NS} ns */
 async function corpFunds(ns) {
