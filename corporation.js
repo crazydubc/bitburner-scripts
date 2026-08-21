@@ -42,6 +42,7 @@ let lastBootstrapWarning = 0
 
 const REQUIRED_CORPORATION_APIS = ["Office API", "Warehouse API"]
 const ROUND_ONE_OPERATING_RESERVE = 5e9
+const ROUND_ONE_EXPANSION_RESERVE = 1e9
 
 //I want to impliment helper functions for ram dodge across all corp functions.
 async function getCorp(ns) {
@@ -96,12 +97,60 @@ export function evaluateInvestmentPeak(peakOffer, currentOffer, stagnantCycles =
   }
 }
 
-/** The home office must be producing before round-one expansion is allowed to consume the remaining cash. */
-export function isRoundOneBootstrapReady(division, office) {
-  return Number(division?.numAdVerts) >= 2
-    && Number(office?.numEmployees) >= Number(office?.size)
+/** A minimally staffed office can produce and sell without waiting on research or advertising. */
+export function isRoundOneBootstrapReady(_division, office) {
+  return Number(office?.numEmployees) >= 3
     && Number(office?.employeeJobs?.Operations) > 0
     && Number(office?.employeeJobs?.Engineer) > 0
+    && Number(office?.employeeJobs?.Business) > 0
+}
+
+/** Keep only a small reserve until all six Agriculture cities exist. */
+export function getRoundOneExpansionReserve(cityCount, totalCityCount = 6) {
+  return Number(cityCount) >= Number(totalCityCount)
+    ? ROUND_ONE_OPERATING_RESERVE
+    : ROUND_ONE_EXPANSION_RESERVE
+}
+
+/** Advertising is useful, but it must not consume the cash needed for the next office and warehouse. */
+export function getRoundOneAdvertTarget(cityCount, totalCityCount = 6) {
+  return Number(cityCount) >= Number(totalCityCount) ? 2 : 0
+}
+
+/**
+ * Keep existing offices productive while the division bootstraps. Once all cities exist, remote offices may
+ * temporarily research while Sector-12 continues producing and selling.
+ */
+export function getRoundOneJobPlan(numEmployees, city, cityCount, researchPoints, totalCityCount = 6) {
+  const employees = Math.max(0, Math.floor(Number(numEmployees) || 0))
+  const infrastructureComplete = Number(cityCount) >= Number(totalCityCount)
+  const needsResearch = Number(researchPoints) < 60
+  const plan = {
+    "Operations": 0,
+    "Engineer": 0,
+    "Business": 0,
+    "Management": 0,
+    "Research & Development": 0,
+    "Intern": 0,
+  }
+
+  if (infrastructureComplete && needsResearch && city !== "Sector-12") {
+    plan["Research & Development"] = employees
+    return plan
+  }
+
+  let remaining = employees
+  for (const job of ["Operations", "Engineer", "Business"]) {
+    if (remaining <= 0) break
+    plan[job] = 1
+    remaining--
+  }
+
+  if (needsResearch)
+    plan["Research & Development"] = remaining
+  else
+    plan["Management"] = remaining
+  return plan
 }
 
 function logBootstrapWarning(ns, message) {
@@ -221,7 +270,10 @@ export async function main(ns) {
         continue
       }
       await updateHud(ns)
-      await hireAdVertsUpTo(ns, div1, 2)
+      const agriculture = await corpRun(ns, 'getDivision', div1)
+      const advertTarget = getRoundOneAdvertTarget(agriculture?.cities?.length, cities.length)
+      if (advertTarget > 0)
+        await hireAdVertsUpTo(ns, div1, advertTarget)
       const nState = (await getCorp(ns)).nextState
       if (nState === "SALE")
         await sell(ns)
@@ -546,7 +598,14 @@ async function expandCities(ns, division, options = {}) {
 
       const combinedCost = Number(constants.officeInitialCost) + Number(constants.warehouseInitialCost)
       const funds = await corpFunds(ns)
-      if (!canAffordCorporationPurchase(funds, combinedCost, reserve)) return true
+      if (!canAffordCorporationPurchase(funds, combinedCost, reserve)) {
+        const required = combinedCost + reserve
+        logBootstrapWarning(ns, `Agriculture bootstrap is operating in ${divisionInfo.cities.length}/${cities.length} cities. ` +
+          `Waiting for ${ns.format.number(required, 3)} corporation funds to open ${city} and preserve ` +
+          `${ns.format.number(reserve, 3)} working capital; currently ${ns.format.number(funds, 3)}. ` +
+          `Hacknet corporation-fund sales are optional acceleration, not a prerequisite.`)
+        return true
+      }
 
       await corpRun(ns, 'expandCity', division, city)
       const office = await corpRun(ns, 'getOffice', division, city)
@@ -625,10 +684,13 @@ async function prep(ns) {
 
   if (round >= 1) {
     const agriculture = await corpRun(ns, 'getDivision', div1)
-    const homeOffice = agriculture ? await corpRun(ns, 'getOffice', div1, "Sector-12") : undefined
-    const allowExpansion = round > 1 || isRoundOneBootstrapReady(agriculture, homeOffice)
-    const reserve = round === 1 ? ROUND_ONE_OPERATING_RESERVE : 0
-    if (!(await expandCities(ns, div1, { allowExpansion, reserve }))) return false
+    const cityCount = Array.isArray(agriculture?.cities) ? agriculture.cities.length : 0
+    const reserve = round === 1
+      ? getRoundOneExpansionReserve(cityCount, cities.length)
+      : 0
+    // The paid API unlocks leave exactly enough seed capital for one additional office/warehouse pair.
+    // Expand progressively now; do not wait for AdVerts or a research-only home office to self-fund the first city.
+    if (!(await expandCities(ns, div1, { allowExpansion: true, reserve }))) return false
   }
   if (round >= 2) {
     if (await tryPurchaseUnlock(ns, "Export"))
@@ -1031,19 +1093,48 @@ async function manageOffice(ns) {
       switch (hasDivDB[div].industry) {
         case "Agriculture":
           switch (round) {
-            case 1:
-              while ((await corpRun(ns, 'getOffice', div, city)).size < 4 && (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1)) <= await corpFunds(ns)) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
-              while ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size && (await corpRun(ns, 'hireEmployee', div, city))) { }
+            case 1: {
+              const division = await corpRun(ns, 'getDivision', div)
+              const cityCount = Array.isArray(division?.cities) ? division.cities.length : 0
+              const infrastructureComplete = cityCount >= cities.length
+              let office = await corpRun(ns, 'getOffice', div, city)
+              if (!office) break
+
+              // City coverage is the scarce resource after paying $100b for the APIs. Defer office growth until
+              // Agriculture has all six locations, then keep the normal $5b operating reserve.
+              while (infrastructureComplete && office.size < 4) {
+                const cost = Number(await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))
+                if (!canAffordCorporationPurchase(await corpFunds(ns), cost, ROUND_ONE_OPERATING_RESERVE)) break
+                const previousSize = office.size
+                await corpRun(ns, 'upgradeOfficeSize', div, city, 1)
+                office = await corpRun(ns, 'getOffice', div, city)
+                if (!office || office.size <= previousSize) break
+              }
+
+              while (office && office.numEmployees < office.size) {
+                const previousEmployees = office.numEmployees
+                await corpRun(ns, 'hireEmployee', div, city)
+                office = await corpRun(ns, 'getOffice', div, city)
+                if (!office || office.numEmployees <= previousEmployees) {
+                  logBootstrapWarning(ns, `Unable to finish hiring the ${div} office in ${city}; retrying next cycle.`)
+                  break
+                }
+              }
+              if (!office) break
+
+              const plan = getRoundOneJobPlan(
+                office.numEmployees,
+                city,
+                cityCount,
+                division.researchPoints,
+                cities.length,
+              )
               await resetOffice(ns, div, city)
-              if ((await corpRun(ns, 'getDivision', div)).researchPoints < 60)
-                await setJob(ns, div, city, "Research & Development", (await corpRun(ns, 'getOffice', div, city)).numEmployees)
-              else {
-                await setJob(ns, div, city, "Operations", 1)
-                await setJob(ns, div, city, "Engineer", 1)
-                await setJob(ns, div, city, "Business", 1)
-                await setJob(ns, div, city, "Management", 1)
+              for (const [job, count] of Object.entries(plan)) {
+                if (count > 0) await setJob(ns, div, city, job, count)
               }
               break
+            }
             case 2:
               while (hasDiv2 && (await corpRun(ns, 'getOffice', div, city)).size < 8 && (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1)) <= await corpFunds(ns)) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
               while ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size && (await corpRun(ns, 'hireEmployee', div, city))) { }
