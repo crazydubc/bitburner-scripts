@@ -3,7 +3,7 @@ name: Integrate active faction corporation bribes
 on:
   push:
     branches:
-      - agent/bribe-active-factions-after-round-5
+      - agent/bribe-active-factions-after-round-5-v2
   pull_request:
     branches:
       - main
