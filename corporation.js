@@ -39,10 +39,14 @@ let teaNeeded
 let investOffer
 let corporationConstants
 let lastBootstrapWarning = 0
+let selfFundedCorporation = false
 
 const REQUIRED_CORPORATION_APIS = ["Office API", "Warehouse API"]
 const ROUND_ONE_OPERATING_RESERVE = 5e9
-const ROUND_ONE_EXPANSION_RESERVE = 1e9
+const ROUND_ONE_SEED_FUNDED_EXPANSION_RESERVE = 1e9
+const ROUND_ONE_HOME_OFFICE_TARGET = 6
+const ROUND_ONE_MINIMUM_TRANSITION_CAPITAL = 190e9
+const BOOST_MATERIALS = ["Hardware", "Robots", "AI Cores", "Real Estate"]
 
 //I want to impliment helper functions for ram dodge across all corp functions.
 async function getCorp(ns) {
@@ -56,8 +60,17 @@ export function canAffordCorporationPurchase(funds, cost, reserve = 0) {
 }
 
 /** Return the actual post-investment capital target for a funding round. */
-export function getInvestmentCapitalTarget(round) {
-  return Number(INVESTMENT_CAPITAL_TARGETS[Number(round)]) || Infinity
+export function getInvestmentCapitalTarget(round, corporationValuation = 1) {
+  const fundingRound = Number(round)
+  const baseTarget = Number(INVESTMENT_CAPITAL_TARGETS[fundingRound])
+  if (!Number.isFinite(baseTarget)) return Infinity
+  if (fundingRound !== 1) return baseTarget
+
+  const valuation = Number(corporationValuation)
+  const effectiveValuation = Number.isFinite(valuation) && valuation > 0
+    ? Math.min(1, valuation)
+    : 1
+  return Math.max(ROUND_ONE_MINIMUM_TRANSITION_CAPITAL, baseTarget * effectiveValuation)
 }
 
 /** Corporation costs are not scaled by CorporationValuation, so compare actual dollars. */
@@ -68,8 +81,14 @@ export function getProjectedInvestmentCapital(offerFunds, corporationFunds) {
   return Math.max(0, offer) + Math.max(0, funds)
 }
 
-export function shouldTrackInvestmentPeak(round, offerFunds, corporationFunds) {
-  return getProjectedInvestmentCapital(offerFunds, corporationFunds) >= getInvestmentCapitalTarget(round)
+export function shouldTrackInvestmentPeak(
+  round,
+  offerFunds,
+  corporationFunds,
+  corporationValuation = 1,
+) {
+  return getProjectedInvestmentCapital(offerFunds, corporationFunds) >=
+    getInvestmentCapitalTarget(round, corporationValuation)
 }
 
 /** Round two must finish the Chemical division infrastructure before taking its funding offer. */
@@ -106,10 +125,13 @@ export function isRoundOneBootstrapReady(_division, office) {
 }
 
 /** Keep only a small reserve until all six Agriculture cities exist. */
-export function getRoundOneExpansionReserve(cityCount, totalCityCount = 6) {
-  return Number(cityCount) >= Number(totalCityCount)
-    ? ROUND_ONE_OPERATING_RESERVE
-    : ROUND_ONE_EXPANSION_RESERVE
+export function getRoundOneExpansionReserve(
+  cityCount,
+  totalCityCount = 6,
+  selfFunded = false,
+) {
+  if (Number(cityCount) >= Number(totalCityCount)) return ROUND_ONE_OPERATING_RESERVE
+  return selfFunded ? ROUND_ONE_OPERATING_RESERVE : ROUND_ONE_SEED_FUNDED_EXPANSION_RESERVE
 }
 
 /** Advertising is useful, but it must not consume the cash needed for the next office and warehouse. */
@@ -117,41 +139,84 @@ export function getRoundOneAdvertTarget(cityCount, totalCityCount = 6) {
   return Number(cityCount) >= Number(totalCityCount) ? 2 : 0
 }
 
+/** Grow the productive home office before a self-funded corporation buys a second city. */
+export function getRoundOneOfficeTarget(
+  city,
+  cityCount,
+  totalCityCount = 6,
+  selfFunded = false,
+) {
+  if (selfFunded && city === "Sector-12" && Number(cityCount) < Number(totalCityCount))
+    return ROUND_ONE_HOME_OFFICE_TARGET
+  return Number(cityCount) >= Number(totalCityCount) ? 4 : 3
+}
 /**
  * Keep existing offices productive while the division bootstraps. Once all cities exist, remote offices may
  * temporarily research while Sector-12 continues producing and selling.
  */
-export function getRoundOneJobPlan(numEmployees, city, cityCount, researchPoints, totalCityCount = 6) {
-  const employees = Math.max(0, Math.floor(Number(numEmployees) || 0))
-  const infrastructureComplete = Number(cityCount) >= Number(totalCityCount)
-  const needsResearch = Number(researchPoints) < 60
-  const plan = {
-    "Operations": 0,
-    "Engineer": 0,
-    "Business": 0,
-    "Management": 0,
-    "Research & Development": 0,
-    "Intern": 0,
-  }
+export function getRoundOneJobPlan(
+      numEmployees,
+      city,
+      cityCount,
+      researchPoints,
+      totalCityCount = 6,
+      selfFunded = false,
+    ) {
+      const employees = Math.max(0, Math.floor(Number(numEmployees) || 0))
+      const infrastructureComplete = Number(cityCount) >= Number(totalCityCount)
+      const needsResearch = Number(researchPoints) < 60
+      const plan = {
+        "Operations": 0,
+        "Engineer": 0,
+        "Business": 0,
+        "Management": 0,
+        "Research & Development": 0,
+        "Intern": 0,
+      }
 
-  if (infrastructureComplete && needsResearch && city !== "Sector-12") {
-    plan["Research & Development"] = employees
-    return plan
-  }
+      // A self-funded corporation has only $10b after Agriculture and both APIs. Until city coverage is
+      // complete, every available employee must contribute to cash flow rather than early research.
+      if (selfFunded && !infrastructureComplete) {
+        if (employees === 1) {
+          plan.Operations = 1
+          return plan
+        }
+        if (employees === 2) {
+          plan.Operations = 1
+          plan.Engineer = 1
+          return plan
+        }
+        if (employees >= 3) {
+          plan.Business = 1
+          let remaining = employees - 1
+          const coreEmployees = Math.max(1, Math.floor(remaining * 0.4))
+          plan.Operations = Math.min(coreEmployees, remaining)
+          remaining -= plan.Operations
+          plan.Engineer = Math.min(coreEmployees, remaining)
+          remaining -= plan.Engineer
+          plan.Management = remaining
+        }
+        return plan
+      }
 
-  let remaining = employees
-  for (const job of ["Operations", "Engineer", "Business"]) {
-    if (remaining <= 0) break
-    plan[job] = 1
-    remaining--
-  }
+      if (infrastructureComplete && needsResearch && city !== "Sector-12") {
+        plan["Research & Development"] = employees
+        return plan
+      }
 
-  if (needsResearch)
-    plan["Research & Development"] = remaining
-  else
-    plan["Management"] = remaining
-  return plan
-}
+      let remaining = employees
+      for (const job of ["Operations", "Engineer", "Business"]) {
+        if (remaining <= 0) break
+        plan[job] = 1
+        remaining--
+      }
+
+      if (needsResearch)
+        plan["Research & Development"] = remaining
+      else
+        plan.Management = remaining
+      return plan
+    }
 
 function logBootstrapWarning(ns, message) {
   if (Date.now() - lastBootstrapWarning < 30_000) return
@@ -253,9 +318,10 @@ export async function main(ns) {
     return
   }
   log(ns, `Corporation strategy for BN${myBN}: valuation x${corporationValuation}. ` +
-    `Funding targets remain actual cash because the game already applies this multiplier to offers.`,
-    true, 'info')
+    `Round-one funding scales with valuation but retains a ${ns.format.number(ROUND_ONE_MINIMUM_TRANSITION_CAPITAL, 3)} ` +
+    `minimum transition floor.`, true, 'info')
   const selfFund = myBN === 3 ? false : true;
+  selfFundedCorporation = selfFund
   while (!ns.corporation.hasCorporation() && ns.corporation.canCreateCorporation(selfFund)
     && !(await corpRun(ns, 'createCorporation', corpName, selfFund))) await ns.sleep(1000)
   log(ns, `Corporation is up, detecting investment round`, true)
@@ -279,9 +345,7 @@ export async function main(ns) {
         await sell(ns)
       if (nState === "PURCHASE") {
 
-        if (!teaNeeded && (await corpRun(ns, 'getOffice', div1, "Sector-12")).employeeJobs.Business > 0) {
-          await optimizeMats(ns)
-        }
+        await manageRoundOneBoostMaterials(ns)
         await purchase(ns)
       }
       if (nState === "START") {
@@ -427,7 +491,7 @@ async function updateHud(ns) {
     + await getUpgradeLevel(ns, "FocusWires")
     + await getUpgradeLevel(ns, "Speech Processor Implants")
     + await getUpgradeLevel(ns, "FocusWires")
-  const capitalTarget = getInvestmentCapitalTarget(invest.round)
+  const capitalTarget = getInvestmentCapitalTarget(invest.round, bnMults.CorporationValuation)
   const projectedCapital = getProjectedInvestmentCapital(invest.funds, cObj.funds)
   const minRound = invest.round === 2 ? "-BareMin 30b" : ""
   const produpgrades = await getUpgradeLevel(ns, "Smart Factories") + await getUpgradeLevel(ns, "Smart Storage")
@@ -508,7 +572,7 @@ async function checkInvest(ns) {
   if (investmentPeakRound !== round) resetInvestmentPeakTracking(round)
 
   const offerFunds = Number(investOffer.funds)
-  const capitalTarget = getInvestmentCapitalTarget(round)
+  const capitalTarget = getInvestmentCapitalTarget(round, bnMults.CorporationValuation)
   const projectedCapital = getProjectedInvestmentCapital(offerFunds, corp.funds)
   if (!isInvestmentRoundOperationallyReady(round, hasCompleteDivisionInfrastructure(div2))) return round
 
@@ -519,7 +583,7 @@ async function checkInvest(ns) {
   }
 
   if (!investmentPeakActive) {
-    if (!shouldTrackInvestmentPeak(round, offerFunds, corp.funds)) return round
+    if (!shouldTrackInvestmentPeak(round, offerFunds, corp.funds, bnMults.CorporationValuation)) return round
 
     investmentPeakActive = true
     investmentPeakOffer = Math.max(0, offerFunds)
@@ -683,15 +747,34 @@ async function prep(ns) {
   if (!(await ensureCorporationApis(ns))) return false
 
   if (round >= 1) {
-    const agriculture = await corpRun(ns, 'getDivision', div1)
-    const cityCount = Array.isArray(agriculture?.cities) ? agriculture.cities.length : 0
-    const reserve = round === 1
-      ? getRoundOneExpansionReserve(cityCount, cities.length)
+  const agriculture = await corpRun(ns, 'getDivision', div1)
+  const cityCount = Array.isArray(agriculture?.cities) ? agriculture.cities.length : 0
+  const reserve = round === 1
+    ? getRoundOneExpansionReserve(cityCount, cities.length, selfFundedCorporation)
+    : 0
+
+  if (round === 1 && selfFundedCorporation) {
+    // Create/discover Sector-12 first, but do not spend the final $9b on Aevum before the home office
+    // is productive and large enough to generate its own expansion capital.
+    if (!(await expandCities(ns, div1, { allowExpansion: false, reserve }))) return false
+    const refreshedDivision = await corpRun(ns, 'getDivision', div1)
+    const refreshedCityCount = Array.isArray(refreshedDivision?.cities)
+      ? refreshedDivision.cities.length
       : 0
-    // The paid API unlocks leave exactly enough seed capital for one additional office/warehouse pair.
-    // Expand progressively now; do not wait for AdVerts or a research-only home office to self-fund the first city.
-    if (!(await expandCities(ns, div1, { allowExpansion: true, reserve }))) return false
+    const homeOffice = await corpRun(ns, 'getOffice', div1, "Sector-12")
+    const officeTarget = getRoundOneOfficeTarget(
+      "Sector-12",
+      refreshedCityCount,
+      cities.length,
+      true,
+    )
+    const allowExpansion = Number(homeOffice?.size) >= officeTarget &&
+      isRoundOneBootstrapReady(refreshedDivision, homeOffice)
+    if (!(await expandCities(ns, div1, { allowExpansion, reserve }))) return false
+  } else if (!(await expandCities(ns, div1, { allowExpansion: true, reserve }))) {
+    return false
   }
+}
   if (round >= 2) {
     if (await tryPurchaseUnlock(ns, "Export"))
       await expandCities(ns, div2);
@@ -1100,9 +1183,11 @@ async function manageOffice(ns) {
               let office = await corpRun(ns, 'getOffice', div, city)
               if (!office) break
 
-              // City coverage is the scarce resource after paying $100b for the APIs. Defer office growth until
-              // Agriculture has all six locations, then keep the normal $5b operating reserve.
-              while (infrastructureComplete && office.size < 4) {
+              // Outside BN3, productive home-office capacity is the scarce resource after paying $100b for APIs.
+              const officeTarget = getRoundOneOfficeTarget(
+                city, cityCount, cities.length, selfFundedCorporation,
+              )
+              while (office.size < officeTarget) {
                 const cost = Number(await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))
                 if (!canAffordCorporationPurchase(await corpFunds(ns), cost, ROUND_ONE_OPERATING_RESERVE)) break
                 const previousSize = office.size
@@ -1128,6 +1213,7 @@ async function manageOffice(ns) {
                 cityCount,
                 division.researchPoints,
                 cities.length,
+                selfFundedCorporation,
               )
               await resetOffice(ns, div, city)
               for (const [job, count] of Object.entries(plan)) {
@@ -1584,48 +1670,107 @@ async function basicExporImport(ns) {
   }
 }
 /** @param {NS} ns */
-async function optimizeMats(ns) {
-  const round = investOffer.round;
 
-  // Buying/selling rates are "per second". Corp cycles are ~10s.
-  // Using /10 (one cycle) or /100 (10 cycles) in later rounds.
-  const rateDivisor = round >= 4 ? 100 : 10;
+export function canRunBoostMaterialOptimization(
+  funds,
+  estimatedCost,
+  reserve = ROUND_ONE_OPERATING_RESERVE,
+) {
+  const corporationFunds = Number(funds)
+  const cost = Number(estimatedCost)
+  const workingCapital = Number(reserve)
+  return Number.isFinite(corporationFunds) && Number.isFinite(cost) && Number.isFinite(workingCapital) &&
+    corporationFunds >= Math.max(0, cost) + Math.max(0, workingCapital)
+}
 
-  const materials = [
-    ["Hardware", 0],
-    ["Robots", 0],
-    ["AI Cores", 0],
-    ["Real Estate", 0],
-  ];
+async function getBoostMaterialTargets(ns, div, city) {
+  const warehouse = await corpRun(ns, "getWarehouse", div, city)
+  if (!warehouse) return Object.fromEntries(BOOST_MATERIALS.map(material => [material, 0]))
 
-  for (const div of industries) {
-    if (!hasDivDB[div]) continue;
+  let maxProd = await maxProduced(ns, div, city)
+  maxProd *= investOffer.round < 3 ? 1.01 : 1.1
+  const freeSpace = Math.max(0, warehouse.size - maxProd)
+  if (!(freeSpace > 0)) return Object.fromEntries(BOOST_MATERIALS.map(material => [material, 0]))
 
+  const targets = await optimizeCorpoMaterials(ns, div, freeSpace)
+  return Object.fromEntries(BOOST_MATERIALS.map((material, index) => [material, targets[index] ?? 0]))
+}
+
+async function estimateBoostMaterialOptimizationCost(ns, divisions = industries) {
+  let total = 0
+  for (const div of divisions) {
+    if (!hasDivDB[div]) continue
     for (const city of cities) {
-      if (!hasWarehouseDB[div + city]) continue;
-
-      let maxProd = await maxProduced(ns, div, city);
-      maxProd *= (round < 3) ? 1.01 : 1.1;
-
-      const warehouse = await corpRun(ns, "getWarehouse", div, city);
-
-      // free space for materials
-      const freeSpace = warehouse.size - maxProd;
-
-      // returns TARGET amounts: [Hardware, Robots, AI Cores, Real Estate]
-      const [tHardware, tRobots, tAICores, tRealEstate] =
-        await optimizeCorpoMaterials(ns, div, freeSpace);
-
-      const targets = {
-        "Hardware": tHardware,
-        "Robots": tRobots,
-        "AI Cores": tAICores,
-        "Real Estate": tRealEstate,
-      };
-
-      for (const [mat] of materials) {
-        await adjustMaterialToTarget(ns, div, city, mat, targets[mat], rateDivisor);
+      if (!hasWarehouseDB[div + city]) continue
+      const targets = await getBoostMaterialTargets(ns, div, city)
+      for (const materialName of BOOST_MATERIALS) {
+        const material = await corpRun(ns, "getMaterial", div, city, materialName)
+        const price = Number(material?.marketPrice)
+        const stored = Number(material?.stored)
+        const target = Number(targets[materialName])
+        if (!Number.isFinite(price) || !Number.isFinite(stored) || !Number.isFinite(target)) return Infinity
+        total += Math.max(0, target - stored) * price
       }
+    }
+  }
+  return total
+}
+
+async function setRoundOneBoostMaterialOrders(ns, liquidate = false) {
+  const division = await corpRun(ns, "getDivision", div1)
+  for (const city of division?.cities ?? []) {
+    if (await corpRun(ns, "hasWarehouse", div1, city) !== true) continue
+    for (const materialName of BOOST_MATERIALS) {
+      await corpRun(ns, "buyMaterial", div1, city, materialName, 0)
+      await corpRun(ns, "sellMaterial", div1, city, materialName, liquidate ? "MAX" : 0, "MP")
+    }
+  }
+}
+
+async function manageRoundOneBoostMaterials(ns) {
+  const homeOffice = await corpRun(ns, "getOffice", div1, "Sector-12")
+  if (!selfFundedCorporation) {
+    if (!teaNeeded && Number(homeOffice?.employeeJobs?.Business) > 0) await optimizeMats(ns)
+    return true
+  }
+
+  const corporation = await getCorp(ns)
+  const funds = Number(corporation?.funds)
+  if (!Number.isFinite(funds)) return false
+  if (funds < 0) {
+    await setRoundOneBoostMaterialOrders(ns, true)
+    logBootstrapWarning(ns, `Corporation funds are ${ns.format.number(funds, 3)}. ` +
+      `Stopped boost-material purchases and liquidating them at market price to restore cash flow.`)
+    return false
+  }
+
+  const productive = isRoundOneBootstrapReady(hasDivDB[div1], homeOffice)
+  if (teaNeeded || !productive) {
+    await setRoundOneBoostMaterialOrders(ns, false)
+    return false
+  }
+
+  const estimatedCost = await estimateBoostMaterialOptimizationCost(ns, [div1])
+  if (!canRunBoostMaterialOptimization(funds, estimatedCost)) {
+    await setRoundOneBoostMaterialOrders(ns, false)
+    logBootstrapWarning(ns, `Round-one boost materials need approximately ` +
+      `${ns.format.number(estimatedCost, 3)} plus ${ns.format.number(ROUND_ONE_OPERATING_RESERVE, 3)} ` +
+      `working capital; currently ${ns.format.number(funds, 3)}. Purchases are paused.`)
+    return false
+  }
+
+  await optimizeMats(ns)
+  return true
+}
+async function optimizeMats(ns) {
+  const rateDivisor = investOffer.round >= 4 ? 100 : 10
+  for (const div of industries) {
+    if (!hasDivDB[div]) continue
+    for (const city of cities) {
+      if (!hasWarehouseDB[div + city]) continue
+      const targets = await getBoostMaterialTargets(ns, div, city)
+      for (const materialName of BOOST_MATERIALS)
+        await adjustMaterialToTarget(ns, div, city, materialName, targets[materialName], rateDivisor)
     }
   }
 }
