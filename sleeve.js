@@ -47,6 +47,7 @@ let cachedCrimeStats, workByFaction; // Cache of crime statistics and which fact
 let task, lastStatusUpdateTime, lastPurchaseTime, lastPurchaseStatusUpdate, availableAugs, cacheExpiry,
   shockChance, lastRerollTime, lastTaskValidationTime, bladeburnerCooldown, lastSleeveHp, lastSleeveShock; // State by sleeve
 let numSleeves, ownedSourceFiles, playerInGang, playerInBladeburner, bladeburnerCityChaos, bladeburnerContractChances, bladeburnerContractCounts, followPlayerSleeve;
+let stagedShockRecoveryState;
 let options;
 
 
@@ -73,6 +74,66 @@ export function shouldPrioritizeGangKarma(playerIsInGang, priorityDisabled, hasG
     Number.isFinite(numericKarma) && numericKarma > -54000;
 }
 
+
+/**
+ * Coordinate shock recovery across the whole sleeve fleet.
+ *
+ * While every synchronized sleeve still has shock, exactly one sleeve recovers so the fleet reaches its
+ * first fully recovered worker as quickly as possible. Once at least one synchronized sleeve has zero shock,
+ * every remaining shocked sleeve recovers while the recovered sleeves perform normal work.
+ */
+export function getStagedShockRecoveryPlan(sleeves, cachedTasks = [], previousState = {}) {
+  const synchronized = (Array.isArray(sleeves) ? sleeves : [])
+    .map((sleeve, index) => ({
+      index,
+      sync: Number(sleeve?.sync),
+      shock: Number(sleeve?.shock),
+    }))
+    .filter(entry => Number.isFinite(entry.sync) && entry.sync >= 100 &&
+      Number.isFinite(entry.shock));
+  const shocked = synchronized.filter(entry => entry.shock > 0);
+  const recovered = synchronized.filter(entry => entry.shock <= 0);
+
+  if (shocked.length === 0) {
+    return {
+      active: false,
+      mode: 'none',
+      anchor: -1,
+      recoverySleeves: [],
+      workSleeves: synchronized.map(entry => entry.index),
+    };
+  }
+
+  const priorAnchor = Number(previousState?.anchor);
+  if (recovered.length > 0) {
+    const anchor = recovered.some(entry => entry.index === priorAnchor)
+      ? priorAnchor
+      : recovered[0].index;
+    return {
+      active: true,
+      mode: 'drain',
+      anchor,
+      recoverySleeves: shocked.map(entry => entry.index),
+      workSleeves: recovered.map(entry => entry.index),
+    };
+  }
+
+  const priorEntry = shocked.find(entry => entry.index === priorAnchor);
+  const cachedEntry = shocked.find(entry => cachedTasks?.[entry.index] === 'recover from shock');
+  const fastestEntry = shocked.reduce((best, candidate) =>
+    candidate.shock < best.shock ||
+      (candidate.shock === best.shock && candidate.index < best.index)
+      ? candidate
+      : best);
+  const anchor = (priorEntry ?? cachedEntry ?? fastestEntry).index;
+  return {
+    active: true,
+    mode: 'prime',
+    anchor,
+    recoverySleeves: [anchor],
+    workSleeves: shocked.filter(entry => entry.index !== anchor).map(entry => entry.index),
+  };
+}
 export function autocomplete(data, _) {
   data.flags(argsSchema);
   return [];
@@ -90,6 +151,7 @@ export async function main(ns) {
     bladeburnerCooldown = [], lastSleeveHp = [], lastSleeveShock = [];
   workByFaction = {}, cachedCrimeStats = {};
   playerInGang = playerInBladeburner = false;
+  stagedShockRecoveryState = {active: false, mode: 'none', anchor: -1};
   // Ensure we have access to sleeves
   ownedSourceFiles = await getActiveSourceFiles(ns);
   if (!(10 in ownedSourceFiles))
@@ -205,6 +267,9 @@ async function mainLoop(ns) {
 
   // Update all sleeve information and loop over all sleeves to do some individual checks and task assignments
   let sleeveInfo = await getAllSleeves(ns, numSleeves);
+  stagedShockRecoveryState = getStagedShockRecoveryPlan(
+    sleeveInfo, task, stagedShockRecoveryState,
+  );
 
   // If not disabled, set the "follow player" sleeve to be the first sleeve with 0 shock
   followPlayerSleeve = options['disable-follow-player'] ? -1 : undefined;
@@ -221,7 +286,8 @@ async function mainLoop(ns) {
 
     // Decide what we think the sleeve should be doing for the next little while
     let [designatedTask, command, args, statusUpdate] =
-      await pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrain, gangKarmaPriority);
+      await pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrain, gangKarmaPriority,
+        stagedShockRecoveryState);
 
     // After picking sleeve tasks, take a note of the sleeve's health at the end of the prior loop so we can detect failures
     [lastSleeveHp[i], lastSleeveShock[i]] = [sleeve.hp.current, sleeve.shock];
@@ -260,27 +326,42 @@ false, 'warning');
  * @param {{ type: "COMPANY"|"FACTION"|"CLASS"|"CRIME", cyclesWorked: number, crimeType: string, classType: string, location: string, companyName: string, factionName: string, factionWorkType: string }} playerWorkInfo
  * @param {SleevePerson} sleeve
  * @returns {Promise<[string, string, any[], string]>} a 4-tuple of task name, command, args, and status message */
-async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrain, gangKarmaPriority) {
+async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrain, gangKarmaPriority,
+  stagedShockRecovery) {
   // Initialize sleeve dicts on first loop
   if (lastSleeveHp[i] === undefined) lastSleeveHp[i] = sleeve.hp.current;
   if (lastSleeveShock[i] === undefined) lastSleeveShock[i] = sleeve.shock;
   // Must synchronize first iif you haven't maxed memory on every sleeve
   if (sleeve.sync < 100)
     return ["synchronize", 'setToSynchronize', [i], `syncing... ${sleeve.sync.toFixed(2)}%`];
-  // Opt to do shock recovery if above the --min-shock-recovery threshold
-  if (sleeve.shock > options['min-shock-recovery'])
-    return shockRecoveryTask(sleeve, i, `shock is above ${options['min-shock-recovery'].toFixed(0)}% (--min-shock-recovery)`);
-  // To time-balance between being useful and recovering from shock more quickly - sleeves have a random chance to be put
-  // on shock recovery. To avoid frequently interrupting tasks that take a while to complete, only re-roll every so often.
-  if (sleeve.shock > 0 && options['shock-recovery'] > 0) {
-    if (shouldRerollShockRecovery(Date.now(), lastRerollTime[i])) {
-      shockChance[i] = Math.random();
-      lastRerollTime[i] = Date.now();
-    }
-    if (shockChance[i] < options['shock-recovery'])
-      return shockRecoveryTask(sleeve, i, `there is a ${(options['shock-recovery'] * 100).toFixed(1)}% chance (--shock-recovery) of picking this task every minute until fully recovered.`);
+  const stagedRecoveryActive = stagedShockRecovery?.active === true;
+  const stagedRecoverySleeve = stagedRecoveryActive &&
+    stagedShockRecovery.recoverySleeves?.includes(i) === true;
+
+  if (stagedRecoverySleeve) {
+    const reason = stagedShockRecovery.mode === 'prime'
+      ? 'this is the single sleeve recovering first so the fleet gets one fully recovered worker'
+      : `sleeve ${stagedShockRecovery.anchor} is fully recovered and working while the rest recover`;
+    return shockRecoveryTask(sleeve, i, reason);
   }
-  // Gang karma is a true priority: after mandatory/periodic recovery, do not let training or player-follow
+
+  // The staged fleet policy supersedes independent per-sleeve recovery rolls. During the prime phase,
+  // non-anchor sleeves keep working; during the drain phase, every shocked sleeve was returned above.
+  if (!stagedRecoveryActive) {
+    if (sleeve.shock > options['min-shock-recovery'])
+      return shockRecoveryTask(sleeve, i,
+        `shock is above ${options['min-shock-recovery'].toFixed(0)}% (--min-shock-recovery)`);
+    if (sleeve.shock > 0 && options['shock-recovery'] > 0) {
+      if (shouldRerollShockRecovery(Date.now(), lastRerollTime[i])) {
+        shockChance[i] = Math.random();
+        lastRerollTime[i] = Date.now();
+      }
+      if (shockChance[i] < options['shock-recovery'])
+        return shockRecoveryTask(sleeve, i,
+`there is a ${(options['shock-recovery'] * 100).toFixed(1)}% chance ` +
+`(--shock-recovery) of picking this task every minute until fully recovered.`);
+    }
+  }  // Gang karma is a true priority: after mandatory/periodic recovery, do not let training or player-follow
   // work consume the only usable sleeve while the player is still unlocking gangs.
   if (gangKarmaPriority)
     return await crimeTask(ns, 'Homicide', i, sleeve, 'we want gang karma');
@@ -386,7 +467,8 @@ log(ns, `WARNING: Failed to move Sleeve ${i} to Volhaven: ${String(traveled)}`, 
       [action, contractName] = ["Diplomacy"];
     // If the sleeve is on cooldown ,do not perform their designated bladeburner task
     else if (onCooldown()) { // When on cooldown from a failed task, recover shock if applicable, or else add contracts
-      if (sleeve.shock > 0) return shockRecoveryTask(sleeve, i, `bladeburner task is on cooldown`);
+      if (sleeve.shock > 0 && !stagedRecoveryActive)
+        return shockRecoveryTask(sleeve, i, `bladeburner task is on cooldown`);
       [action, contractName] = ["Infiltrate Synthoids"]; // Fall-back to something long-term useful
     }
     return [`Bladeburner ${action} ${contractName || ''}`.trimEnd(),
@@ -394,7 +476,7 @@ log(ns, `WARNING: Failed to move Sleeve ${i} to Volhaven: ${String(traveled)}`, 
         /*   */ `doing ${action}${contractName ? ` - ${contractName}` : ''} in Bladeburner.`];
   }
   // If there's nothing more productive to do (above) and there's still shock, prioritize recovery
-  if (sleeve.shock > 0)
+  if (sleeve.shock > 0 && !stagedRecoveryActive)
     return shockRecoveryTask(sleeve, i, `there appears to be nothing better to do`);
 
   //default to comiting crimes for stats/karma
