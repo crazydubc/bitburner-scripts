@@ -1,0 +1,54 @@
+name: Apply BN10 corporation bootstrap cash-flow fix
+
+on:
+  push:
+    branches:
+      - agent/fix-bn10-corporation-cashflow
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+
+      - name: Apply source changes
+        run: python3 .github/apply_bn10_corp_cashflow.py
+
+      - name: Validate source and regressions
+        shell: bash
+        run: |
+          node --check corporation.js
+          node tests/corporation-bootstrap-capital.test.mjs
+          node tests/corporation-investment-multipliers.test.mjs
+          node tests/corporation-round1-cashflow.test.mjs
+          node tests/sleeve-karma-priority.test.mjs
+          node tests/sleeve-task-serialization.test.mjs
+          git diff --check
+
+      - name: Commit validated runtime files
+        shell: bash
+        run: |
+          rm .github/apply_bn10_corp_cashflow.py
+          rm .github/workflows/apply-bn10-corporation-cashflow.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- corporation.js \
+            tests/corporation-bootstrap-capital.test.mjs \
+            tests/corporation-round1-cashflow.test.mjs \
+            .github/apply_bn10_corp_cashflow.py \
+            .github/workflows/apply-bn10-corporation-cashflow.yml
+          git diff --cached --check
+          git commit -m "Stabilize corporation bootstrap cash flow outside BN3"
+          git push origin HEAD:${GITHUB_REF_NAME}

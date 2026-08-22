@@ -1,0 +1,52 @@
+name: Apply BN10 corporation debt recovery
+
+on:
+  push:
+    branches:
+      - agent/fix-bn10-corporation-cashflow
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+
+      - name: Apply debt recovery hardening
+        run: python3 .github/apply_bn10_debt_recovery.py
+
+      - name: Validate source and regressions
+        shell: bash
+        run: |
+          node --check corporation.js
+          node tests/corporation-bootstrap-capital.test.mjs
+          node tests/corporation-investment-multipliers.test.mjs
+          node tests/corporation-round1-cashflow.test.mjs
+          git diff --check
+
+      - name: Commit validated runtime files
+        shell: bash
+        run: |
+          rm .github/apply_bn10_debt_recovery.py
+          rm .github/workflows/apply-bn10-debt-recovery.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- corporation.js \
+            tests/corporation-bootstrap-capital.test.mjs \
+            tests/corporation-round1-cashflow.test.mjs \
+            .github/apply_bn10_debt_recovery.py \
+            .github/workflows/apply-bn10-debt-recovery.yml
+          git diff --cached --check
+          git commit -m "Recover insolvent corporation material orders"
+          git push origin HEAD:${GITHUB_REF_NAME}
