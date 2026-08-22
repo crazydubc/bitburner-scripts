@@ -1,0 +1,98 @@
+name: Apply final corporation faction bribes
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+
+      - name: Integrate runtime files
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          corporation_path = Path('corporation.js')
+          corporation = corporation_path.read_text()
+          import_anchor = "import { getReset, log, corpRun, getBNMults } from './utils.js'\n"
+          import_replacement = import_anchor + "import {manageActiveFactionBribe} from './corporation-bribes.js'\n"
+          if corporation.count(import_anchor) != 1:
+              raise RuntimeError(f'corporation import anchor count: {corporation.count(import_anchor)}')
+          corporation = corporation.replace(import_anchor, import_replacement, 1)
+
+          round_five = corporation.index('    while (round >= 5) {')
+          start_block = '''      if (nState === "START") {
+        await manageOffice(ns)
+        teaNeeded = await teaParty(ns)
+      }
+'''
+          replacement = '''      if (nState === "START") {
+        await manageOffice(ns)
+        teaNeeded = await teaParty(ns)
+        await manageActiveFactionBribe(ns, resetInfo)
+      }
+'''
+          tail = corporation[round_five:]
+          if tail.count(start_block) != 1:
+              raise RuntimeError(f'round-five START anchor count: {tail.count(start_block)}')
+          corporation = corporation[:round_five] + tail.replace(start_block, replacement, 1)
+          corporation_path.write_text(corporation)
+
+          utils_path = Path('utils.js')
+          utils = utils_path.read_text()
+          dependency_anchor = '  "donation-favor.js",\n];'
+          dependency_replacement = '  "donation-favor.js",\n  "corporation-bribes.js",\n];'
+          if utils.count(dependency_anchor) != 1:
+              raise RuntimeError(f'utils dependency anchor count: {utils.count(dependency_anchor)}')
+          utils_path.write_text(utils.replace(dependency_anchor, dependency_replacement, 1))
+
+          pull_path = Path('git-pull.js')
+          pull = pull_path.read_text()
+          pull_anchor = "['new-file', ['donation-favor.js', 'intel-farm.js']]"
+          pull_replacement = "['new-file', ['donation-favor.js', 'intel-farm.js', 'corporation-bribes.js']]"
+          if pull.count(pull_anchor) != 1:
+              raise RuntimeError(f'git-pull new-file anchor count: {pull.count(pull_anchor)}')
+          pull_path.write_text(pull.replace(pull_anchor, pull_replacement, 1))
+          PY
+
+      - name: Validate source and regressions
+        shell: bash
+        run: |
+          node --check corporation.js
+          node --check corporation-bribes.js
+          node --check utils.js
+          node --check git-pull.js
+          node tests/corporation-bootstrap-capital.test.mjs
+          node tests/corporation-investment-multipliers.test.mjs
+          node tests/corporation-faction-bribes.test.mjs
+          git diff --check
+
+      - name: Commit runtime changes
+        shell: bash
+        run: |
+          rm .github/workflows/apply-corporation-bribe-final.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- corporation.js corporation-bribes.js utils.js git-pull.js \
+            tests/corporation-faction-bribes.test.mjs \
+            .github/workflows/apply-corporation-bribe-final.yml
+          git diff --cached --check
+          git commit -m "Bribe active factions with post-round corporation funds"
+          git push origin HEAD:${GITHUB_HEAD_REF}
