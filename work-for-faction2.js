@@ -1,6 +1,6 @@
 import {
   findPids, getActiveSourceFiles, getReset, gangRun, singRun, log, getBNMults, getPlayerInfo,
-  getOwnedAugs, getErrorInfo, bbRun, addRepToFavor, favorToRep, formatDuration, getServ
+  getOwnedAugs, getErrorInfo, bbRun, addRepToFavor, favorToRep, formatDuration, getServ, corpRun
 } from './utils.js';
 import {
   DEFAULT_PRIORITY_AUGS, DEFAULT_DESIRED_AUGS, getDefaultDesiredStats, buildDesiredAugSet,
@@ -15,6 +15,35 @@ const PROGRESS_CHECK_INTERVAL = 5 * 1000;
 const INVITE_REPLAN_INTERVAL = 15 * 1000;
 const GANG_KARMA_REQUIREMENT = -54_000;
 const COMPANY_FACTION_REP = 400_000;
+const CORPORATION_BRIBE_MIN_RESERVE = 1e18;
+const CORPORATION_BRIBE_OPERATING_RESERVE_SECONDS = 10 * 60;
+
+/** Return the exact full bribe cost, or zero when corporation excess cannot finish the target. */
+export function getCorporationBribeAmount({
+  funds,
+  expenses = 0,
+  currentRep,
+  targetRep,
+  bribeAmountPerReputation,
+  minimumReserve = CORPORATION_BRIBE_MIN_RESERVE,
+  operatingReserveSeconds = CORPORATION_BRIBE_OPERATING_RESERVE_SECONDS,
+} = {}) {
+  const corporationFunds = Number(funds);
+  const corporationExpenses = Math.max(0, Number(expenses) || 0);
+  const current = Number(currentRep);
+  const target = Number(targetRep);
+  const costPerRep = Number(bribeAmountPerReputation);
+  if (!Number.isFinite(corporationFunds) || corporationFunds <= 0 ||
+    !Number.isFinite(current) || !Number.isFinite(target) || target <= current ||
+    !Number.isFinite(costPerRep) || costPerRep <= 0) return 0;
+
+  const reserve = Math.max(
+    Math.max(0, Number(minimumReserve) || 0),
+    corporationExpenses * Math.max(0, Number(operatingReserveSeconds) || 0),
+  );
+  const required = Math.ceil((target - current) * costPerRep);
+  return corporationFunds - reserve >= required ? required : 0;
+}
 
 const FACTIONS = [
   "Illuminati", "Daedalus", "The Covenant", "ECorp", "MegaCorp", "Bachman & Associates", "Blade Industries", "NWO",
@@ -594,7 +623,50 @@ export async function main(ns) {
       `ETA ${formatDuration((plan.eta ?? 0) * 1000)}, unlocks [${(plan.unlockedAugs ?? []).join(", ")}].`, false, "info");
   }
 
+  async function tryCorporationBribe(plan) {
+    if (await corpRun(ns, "hasCorporation") !== true) return false;
+
+    const corporation = await corpRun(ns, "getCorporation");
+    const constants = await corpRun(ns, "getConstants");
+    if (!corporation || typeof corporation !== "object" ||
+      !constants || typeof constants !== "object") return false;
+
+    const valuation = Number(corporation.valuation);
+    const bribeThreshold = Number(constants.bribeThreshold);
+    const costPerRep = Number(constants.bribeAmountPerReputation);
+    if (!Number.isFinite(valuation) || !Number.isFinite(bribeThreshold) ||
+      valuation < bribeThreshold || !Number.isFinite(costPerRep) || costPerRep <= 0) return false;
+
+    const targetRep = Number(plan.targetRep);
+    const currentRep = Number(await singRun(ns, "getFactionRep", plan.faction));
+    if (!Number.isFinite(targetRep) || !Number.isFinite(currentRep)) return false;
+    if (currentRep >= targetRep) {
+      factionRep[plan.faction] = currentRep;
+      return true;
+    }
+
+    const amount = getCorporationBribeAmount({
+      funds: corporation.funds,
+      expenses: corporation.expenses,
+      currentRep,
+      targetRep,
+      bribeAmountPerReputation: costPerRep,
+    });
+    if (!(amount > 0) || await corpRun(ns, "bribe", plan.faction, amount) !== true) return false;
+
+    const measuredRep = Number(await singRun(ns, "getFactionRep", plan.faction));
+    const updatedRep = Number.isFinite(measuredRep)
+      ? measuredRep
+      : currentRep + amount / costPerRep;
+    factionRep[plan.faction] = updatedRep;
+    log(ns, `Corporation spent $${ns.format.number(amount, 3)} to raise ${plan.faction} reputation ` +
+      `from ${Math.floor(currentRep).toLocaleString()} to ${Math.floor(updatedRep).toLocaleString()} ` +
+      `for [${(plan.unlockedAugs ?? []).join(", ")}].`, false, "success");
+    return updatedRep >= targetRep;
+  }
+
   async function executeRepPlan(plan) {
+    if (await tryCorporationBribe(plan)) return true;
     const work = workCache[plan.faction] ?? await detectBestFactionWork(plan.faction);
     if (!work) return false;
     currentWork = (await singRun(ns, "getCurrentWork")) ?? {};
