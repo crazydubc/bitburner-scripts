@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/bribe-active-factions-after-round-5
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -16,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -95,4 +98,4 @@ jobs:
             .github/workflows/apply-corporation-bribe-integration.yml
           git diff --cached --check
           git commit -m "Bribe active factions with post-round corporation funds"
-          git push origin HEAD:${GITHUB_REF_NAME}
+          git push origin HEAD:${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}
