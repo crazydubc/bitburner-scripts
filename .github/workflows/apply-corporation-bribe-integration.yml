@@ -1,12 +1,9 @@
 name: Integrate active faction corporation bribes
 
 on:
-  push:
-    branches:
-      - agent/bribe-active-factions-after-round-5-v2
   pull_request:
     branches:
-      - main
+      - agent/bribe-integration-base
 
 permissions:
   contents: write
@@ -19,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref || github.ref_name }}
+          ref: ${{ github.head_ref }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -91,11 +88,13 @@ jobs:
         shell: bash
         run: |
           rm .github/workflows/apply-corporation-bribe-integration.yml
+          rm -f .github/bribe-integration-run.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- corporation.js corporation-bribes.js utils.js git-pull.js \
             tests/corporation-faction-bribes.test.mjs \
-            .github/workflows/apply-corporation-bribe-integration.yml
+            .github/workflows/apply-corporation-bribe-integration.yml \
+            .github/bribe-integration-run.txt
           git diff --cached --check
           git commit -m "Bribe active factions with post-round corporation funds"
-          git push origin HEAD:${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}
+          git push origin HEAD:${GITHUB_HEAD_REF}
