@@ -4,7 +4,7 @@ const argsSchema = [
     ['repository', 'bitburner-scripts'],
     ['branch', 'main'],
     ['download', []], // By default, all supported files in the repository will be downloaded. Override with just a subset of files here
-    ['new-file', ['donation-favor.js', 'intel-farm.js']], // If a repository listing fails, explicitly seek newly added files that ns.ls() cannot discover yet.
+    ['new-file', ['donation-favor.js', 'intel-farm.js', 'corporation-bribes.js', 'bin/startCorporationBribes.js']], // If a repository listing fails, explicitly seek newly added files that ns.ls() cannot discover yet.
     ['subfolder', ''], // Can be set to download to a sub-folder that is not part of the remote repository structure
     ['extension', ['.js', '.ts', '.ns', '.txt', '.script']], // Files to download by extension
     ['omit-folder', ['Temp/']], // Folders to omit when getting a list of files to update (TODO: This may be obsolete now that we get a list of files from github itself.)
