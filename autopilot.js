@@ -25,6 +25,8 @@ export async function main(ns) {
     11.3, // Normal. Decrease augmentation cost scaling in a reset (4% -> 6% -> 7%) (can buy more augs per reset). Also boosts company salary/rep (32% -> 48% -> 56%), which we have little use for with gangs.)
 
     5.3,  // Normal. Unlock intelligence stat early to maximize growth, getBitNodeMultipliers + Formulas.exe for more accurate scripts, and +8% hack mults
+    3.1,  // Hard.   Corporations. While hard, these are insanely profitable.
+    9.3,  // Hard.   Hacknet nodes are more profitable and cheaper to upgrade. Also unlocks the ability to spend hashes on useful things.
     3.3,  // Hard.   Corporations. While hard, these are insanely profitable.
     10.3, // Hard.   Get the sleeves
     6.1, // Normal. Unlocks the bladeburner API (and bladeburner outside of BN 6/7). Many recommend it before BN9 since it ends up being a faster win condition in some of the tougher bitnodes ahead.
