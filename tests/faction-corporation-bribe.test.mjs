@@ -25,7 +25,7 @@ const constants = [
   source.match(/const CORPORATION_BRIBE_OPERATING_RESERVE_SECONDS = [^\n]+/)?.[0],
 ].join('\n')
 assert.doesNotMatch(constants, /undefined/)
-const helperSource = `${constants}\n${extractFunction('export function getCorporationBribeAmount')}`
+const helperSource = `${constants}\n${extractFunction('export function getCorporationBribeAmount')}\n${extractFunction('export function normalizeCorporationBribeRequest')}`
 const strategy = await import(`data:text/javascript;base64,${Buffer.from(helperSource).toString('base64')}`)
 
 assert.equal(strategy.getCorporationBribeAmount({
@@ -61,13 +61,25 @@ assert.equal(strategy.getCorporationBribeAmount({
   bribeAmountPerReputation: 1e9,
 }), 0)
 
+
+assert.deepEqual(strategy.normalizeCorporationBribeRequest({faction: '  NiteSec  '}, 123), {
+  faction: 'NiteSec', amount: 123,
+})
+assert.equal(strategy.normalizeCorporationBribeRequest({faction: undefined}, 123), null)
+assert.equal(strategy.normalizeCorporationBribeRequest({faction: 'NiteSec'}, undefined), null)
+assert.equal(strategy.normalizeCorporationBribeRequest({faction: 'NiteSec'}, Infinity), null)
 const bribeRuntime = extractFunction('async function tryCorporationBribe')
 const executeRuntime = extractFunction('async function executeRepPlan')
 assert.match(source, /getServ, corpRun/)
 assert.match(bribeRuntime, /corpRun\(ns, "hasCorporation"\)/)
 assert.match(bribeRuntime, /corpRun\(ns, "getCorporation"\)/)
 assert.match(bribeRuntime, /corpRun\(ns, "getConstants"\)/)
-assert.match(bribeRuntime, /corpRun\(ns, "bribe", plan\.faction, amount\)/)
+assert.match(bribeRuntime, /corpRun\(ns, "bribe", request\.faction, request\.amount\)/)
+assert.match(bribeRuntime, /catch \(error\)/)
+assert.match(bribeRuntime, /continuing with normal faction work/)
+assert.doesNotMatch(bribeRuntime, /corpRun\(ns, "bribe", plan\.faction/)
+assert.match(executeRuntime, /const faction = typeof plan\?\.faction/)
+assert.match(executeRuntime, /detectBestFactionWork\(faction\)/)
 assert.doesNotMatch(bribeRuntime, /round/i)
 assert.ok(executeRuntime.indexOf('tryCorporationBribe(plan)') < executeRuntime.indexOf('detectBestFactionWork'),
   'executeRepPlan should try the exact corporation bribe before starting faction work')

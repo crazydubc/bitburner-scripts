@@ -45,6 +45,15 @@ export function getCorporationBribeAmount({
   return corporationFunds - reserve >= required ? required : 0;
 }
 
+
+/** Normalize the only dynamic Corporation API arguments before they reach ns.exec(). */
+export function normalizeCorporationBribeRequest(plan, amount) {
+  const faction = typeof plan?.faction === "string" ? plan.faction.trim() : "";
+  const numericAmount = Number(amount);
+  if (!faction || !Number.isFinite(numericAmount) || numericAmount <= 0) return null;
+  return { faction, amount: numericAmount };
+}
+
 const FACTIONS = [
   "Illuminati", "Daedalus", "The Covenant", "ECorp", "MegaCorp", "Bachman & Associates", "Blade Industries", "NWO",
   "Clarke Incorporated", "OmniTek Incorporated", "Four Sigma", "KuaiGong International", "Fulcrum Secret Technologies",
@@ -200,6 +209,7 @@ export async function main(ns) {
   let waitingForGangLogged = false;
   let activePlan = null;
   let requestedReplanDelay = REPLAN_INTERVAL;
+  let lastCorporationBribeError = "";
   const workCache = {};
   const repRateCache = {};
   const repRateMeasuredAt = {};
@@ -624,54 +634,74 @@ export async function main(ns) {
   }
 
   async function tryCorporationBribe(plan) {
-    if (await corpRun(ns, "hasCorporation") !== true) return false;
+    const faction = typeof plan?.faction === "string" ? plan.faction.trim() : "";
+    const targetRep = Number(plan?.targetRep);
+    if (!faction || !Number.isFinite(targetRep)) return false;
 
-    const corporation = await corpRun(ns, "getCorporation");
-    const constants = await corpRun(ns, "getConstants");
-    if (!corporation || typeof corporation !== "object" ||
-      !constants || typeof constants !== "object") return false;
+    try {
+      if (await corpRun(ns, "hasCorporation") !== true) return false;
 
-    const valuation = Number(corporation.valuation);
-    const bribeThreshold = Number(constants.bribeThreshold);
-    const costPerRep = Number(constants.bribeAmountPerReputation);
-    if (!Number.isFinite(valuation) || !Number.isFinite(bribeThreshold) ||
-      valuation < bribeThreshold || !Number.isFinite(costPerRep) || costPerRep <= 0) return false;
+      const corporation = await corpRun(ns, "getCorporation");
+      const constants = await corpRun(ns, "getConstants");
+      if (!corporation || typeof corporation !== "object" ||
+        !constants || typeof constants !== "object") return false;
 
-    const targetRep = Number(plan.targetRep);
-    const currentRep = Number(await singRun(ns, "getFactionRep", plan.faction));
-    if (!Number.isFinite(targetRep) || !Number.isFinite(currentRep)) return false;
-    if (currentRep >= targetRep) {
-      factionRep[plan.faction] = currentRep;
-      return true;
+      const valuation = Number(corporation.valuation);
+      const bribeThreshold = Number(constants.bribeThreshold);
+      const costPerRep = Number(constants.bribeAmountPerReputation);
+      if (!Number.isFinite(valuation) || !Number.isFinite(bribeThreshold) ||
+        valuation < bribeThreshold || !Number.isFinite(costPerRep) || costPerRep <= 0) return false;
+
+      const currentRep = Number(await singRun(ns, "getFactionRep", faction));
+      if (!Number.isFinite(currentRep)) return false;
+      if (currentRep >= targetRep) {
+        factionRep[faction] = currentRep;
+        return true;
+      }
+
+      const amount = getCorporationBribeAmount({
+        funds: corporation.funds,
+        expenses: corporation.expenses,
+        currentRep,
+        targetRep,
+        bribeAmountPerReputation: costPerRep,
+      });
+      const request = normalizeCorporationBribeRequest({ faction }, amount);
+      if (!request || await corpRun(ns, "bribe", request.faction, request.amount) !== true) return false;
+
+      const measuredRep = Number(await singRun(ns, "getFactionRep", faction));
+      const updatedRep = Number.isFinite(measuredRep)
+        ? measuredRep
+        : currentRep + request.amount / costPerRep;
+      factionRep[faction] = updatedRep;
+      lastCorporationBribeError = "";
+      log(ns, `Corporation spent $${ns.format.number(request.amount, 3)} to raise ${faction} reputation ` +
+        `from ${Math.floor(currentRep).toLocaleString()} to ${Math.floor(updatedRep).toLocaleString()} ` +
+        `for [${(plan.unlockedAugs ?? []).join(", ")}].`, false, "success");
+      return updatedRep >= targetRep;
+    } catch (error) {
+      // Corporation assistance is optional. A helper launch/API failure must never block ordinary faction work.
+      const detail = String(error?.message ?? error);
+      if (detail !== lastCorporationBribeError) {
+        lastCorporationBribeError = detail;
+        log(ns, `Corporation bribe probe for ${faction} failed (${detail}); ` +
+          `continuing with normal faction work.`, false, "warning");
+      }
+      return false;
     }
-
-    const amount = getCorporationBribeAmount({
-      funds: corporation.funds,
-      expenses: corporation.expenses,
-      currentRep,
-      targetRep,
-      bribeAmountPerReputation: costPerRep,
-    });
-    if (!(amount > 0) || await corpRun(ns, "bribe", plan.faction, amount) !== true) return false;
-
-    const measuredRep = Number(await singRun(ns, "getFactionRep", plan.faction));
-    const updatedRep = Number.isFinite(measuredRep)
-      ? measuredRep
-      : currentRep + amount / costPerRep;
-    factionRep[plan.faction] = updatedRep;
-    log(ns, `Corporation spent $${ns.format.number(amount, 3)} to raise ${plan.faction} reputation ` +
-      `from ${Math.floor(currentRep).toLocaleString()} to ${Math.floor(updatedRep).toLocaleString()} ` +
-      `for [${(plan.unlockedAugs ?? []).join(", ")}].`, false, "success");
-    return updatedRep >= targetRep;
   }
 
   async function executeRepPlan(plan) {
+    const faction = typeof plan?.faction === "string" ? plan.faction.trim() : "";
+    if (!faction) return false;
     if (await tryCorporationBribe(plan)) return true;
-    const work = workCache[plan.faction] ?? await detectBestFactionWork(plan.faction);
+    const work = workCache[faction] ?? await detectBestFactionWork(faction);
     if (!work) return false;
     currentWork = (await singRun(ns, "getCurrentWork")) ?? {};
-    if (currentWork.type === "FACTION" && currentWork.factionName === plan.faction && currentWork.factionWorkType === work) return true;
-    return isTrue(await singRun(ns, "workForFaction", plan.faction, work, !installedAugs.includes("Neuroreceptor Management Implant")));
+    if (currentWork.type === "FACTION" && currentWork.factionName === faction &&
+      currentWork.factionWorkType === work) return true;
+    return isTrue(await singRun(ns, "workForFaction", faction, work,
+      !installedAugs.includes("Neuroreceptor Management Implant")));
   }
 
   async function workTowardGang() {
