@@ -218,11 +218,6 @@ export function getRoundOneJobPlan(
       return plan
     }
 
-function logBootstrapWarning(ns, message) {
-  if (Date.now() - lastBootstrapWarning < 30_000) return
-  lastBootstrapWarning = Date.now()
-  log(ns, message, true, 'warning')
-}
 
 function hasCompleteDivisionInfrastructure(division) {
   return cities.every(city => hasOfficeDB[division + city] && hasWarehouseDB[division + city])
@@ -249,7 +244,6 @@ async function ensureCorporationApis(ns) {
     }
     const cost = Number(await corpRun(ns, 'getUnlockCost', unlock))
     if (!Number.isFinite(cost)) {
-      logBootstrapWarning(ns, `Unable to read the ${unlock} unlock cost; corporation bootstrap paused.`)
       return false
     }
     missing.push({ unlock, cost })
@@ -260,15 +254,12 @@ async function ensureCorporationApis(ns) {
 
   const funds = await corpFunds(ns)
   if (!canAffordCorporationPurchase(funds, totalCost)) {
-    logBootstrapWarning(ns, `Corporation bootstrap needs ${ns.format.number(totalCost, 3)} for ` +
-      `${missing.map(item => item.unlock).join(' + ')}, but only ${ns.format.number(funds, 3)} is available.`)
     return false
   }
 
   for (const { unlock } of missing) {
     await corpRun(ns, 'purchaseUnlock', unlock)
     if (await corpRun(ns, 'hasUnlock', unlock) !== true) {
-      logBootstrapWarning(ns, `Failed to purchase ${unlock}; corporation bootstrap will retry.`)
       return false
     }
     researchedDB[unlock] = true
@@ -292,7 +283,6 @@ async function hireAdVertsUpTo(ns, divisionName, target) {
     await corpRun(ns, 'hireAdVert', divisionName)
     division = await corpRun(ns, 'getDivision', divisionName)
     if (!division || division.numAdVerts <= previousCount) {
-      logBootstrapWarning(ns, `Unable to buy AdVert ${previousCount + 1} for ${divisionName}; retrying later.`)
       return false
     }
   }
@@ -600,7 +590,6 @@ async function checkInvest(ns) {
 
   const accepted = await corpRun(ns, 'acceptInvestmentOffer')
   if (accepted !== true) {
-    logBootstrapWarning(ns, `Unable to accept corporation investment round ${round}; retrying.`)
     return round
   }
 
@@ -612,8 +601,6 @@ async function checkInvest(ns) {
   resetInvestmentPeakTracking(nextRound)
 
   const resolvedNextRound = Number.isInteger(nextRound) && nextRound > round ? nextRound : round + 1
-  log(ns, `Accepted round ${round} investment offer for ${ns.format.number(offerFunds, 3)}. ` +
-    `Off to round ${resolvedNextRound}!`, true, 'success', 20)
   return resolvedNextRound
 }
 /** @param {NS} ns */
@@ -631,15 +618,12 @@ async function expandCities(ns, division, options = {}) {
     const startingCost = Number(industryData?.startingCost)
     const funds = await corpFunds(ns)
     if (!canAffordCorporationPurchase(funds, startingCost, reserve)) {
-      logBootstrapWarning(ns, `Waiting to create ${division}: ${ns.format.number(startingCost, 3)} required, ` +
-        `${ns.format.number(funds, 3)} available.`)
       return false
     }
 
     await corpRun(ns, 'expandIndustry', division, division)
     divisionInfo = await corpRun(ns, 'getDivision', division)
     if (!divisionInfo) {
-      logBootstrapWarning(ns, `Failed to create ${division}; corporation bootstrap will retry.`)
       return false
     }
   }
@@ -647,7 +631,6 @@ async function expandCities(ns, division, options = {}) {
   hasDivDB[division] = divisionInfo
   const constants = await getCorporationConstants(ns)
   if (!constants) {
-    logBootstrapWarning(ns, 'Unable to read corporation infrastructure costs; expansion paused.')
     return true
   }
 
@@ -663,25 +646,18 @@ async function expandCities(ns, division, options = {}) {
       const combinedCost = Number(constants.officeInitialCost) + Number(constants.warehouseInitialCost)
       const funds = await corpFunds(ns)
       if (!canAffordCorporationPurchase(funds, combinedCost, reserve)) {
-        const required = combinedCost + reserve
-        logBootstrapWarning(ns, `Agriculture bootstrap is operating in ${divisionInfo.cities.length}/${cities.length} cities. ` +
-          `Waiting for ${ns.format.number(required, 3)} corporation funds to open ${city} and preserve ` +
-          `${ns.format.number(reserve, 3)} working capital; currently ${ns.format.number(funds, 3)}. ` +
-          `Hacknet corporation-fund sales are optional acceleration, not a prerequisite.`)
         return true
       }
 
       await corpRun(ns, 'expandCity', division, city)
       const office = await corpRun(ns, 'getOffice', division, city)
       if (!office) {
-        logBootstrapWarning(ns, `Failed to open the ${division} office in ${city}; retrying later.`)
         return true
       }
       hasOfficeDB[key] = office
 
       await corpRun(ns, 'purchaseWarehouse', division, city)
       if (await corpRun(ns, 'hasWarehouse', division, city) !== true) {
-        logBootstrapWarning(ns, `Failed to purchase the ${division} warehouse in ${city}; retrying later.`)
         return true
       }
       hasWarehouseDB[key] = true
@@ -693,7 +669,6 @@ async function expandCities(ns, division, options = {}) {
     const office = await corpRun(ns, 'getOffice', division, city)
     if (!office) {
       delete hasOfficeDB[key]
-      logBootstrapWarning(ns, `The ${division} office in ${city} could not be read; expansion paused.`)
       return true
     }
     hasOfficeDB[key] = office
@@ -712,7 +687,6 @@ async function expandCities(ns, division, options = {}) {
 
     await corpRun(ns, 'purchaseWarehouse', division, city)
     if (await corpRun(ns, 'hasWarehouse', division, city) !== true) {
-      logBootstrapWarning(ns, `Failed to purchase the ${division} warehouse in ${city}; retrying later.`)
       return true
     }
     hasWarehouseDB[key] = true
@@ -740,7 +714,6 @@ async function prep(ns) {
   investOffer = await corpRun(ns, 'getInvestmentOffer')
   const round = Number(investOffer?.round)
   if (!Number.isFinite(round)) {
-    logBootstrapWarning(ns, 'Unable to read the corporation investment round; bootstrap paused.')
     return false
   }
 
@@ -1201,7 +1174,6 @@ async function manageOffice(ns) {
                 await corpRun(ns, 'hireEmployee', div, city)
                 office = await corpRun(ns, 'getOffice', div, city)
                 if (!office || office.numEmployees <= previousEmployees) {
-                  logBootstrapWarning(ns, `Unable to finish hiring the ${div} office in ${city}; retrying next cycle.`)
                   break
                 }
               }
@@ -1739,8 +1711,6 @@ async function manageRoundOneBoostMaterials(ns) {
   if (!Number.isFinite(funds)) return false
   if (funds < 0) {
     await setRoundOneBoostMaterialOrders(ns, true)
-    logBootstrapWarning(ns, `Corporation funds are ${ns.format.number(funds, 3)}. ` +
-      `Stopped boost-material purchases and liquidating them at market price to restore cash flow.`)
     return false
   }
 
@@ -1753,9 +1723,6 @@ async function manageRoundOneBoostMaterials(ns) {
   const estimatedCost = await estimateBoostMaterialOptimizationCost(ns, [div1])
   if (!canRunBoostMaterialOptimization(funds, estimatedCost)) {
     await setRoundOneBoostMaterialOrders(ns, false)
-    logBootstrapWarning(ns, `Round-one boost materials need approximately ` +
-      `${ns.format.number(estimatedCost, 3)} plus ${ns.format.number(ROUND_ONE_OPERATING_RESERVE, 3)} ` +
-      `working capital; currently ${ns.format.number(funds, 3)}. Purchases are paused.`)
     return false
   }
 
