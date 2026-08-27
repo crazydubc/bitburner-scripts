@@ -1,0 +1,53 @@
+name: Materialize Tobacco-first corporation strategy
+
+on:
+  push:
+    branches:
+      - agent/stage-corporation-tobacco-first
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+
+      - name: Apply the validated strategy diff onto current main
+        shell: bash
+        run: |
+          git fetch origin agent/use-free-api-corp-fast-path
+          base=$(git merge-base origin/main origin/agent/use-free-api-corp-fast-path)
+          git diff "$base" origin/agent/use-free-api-corp-fast-path -- \
+            corporation.js \
+            tests/corporation-bootstrap-capital.test.mjs \
+            tests/corporation-tobacco-round-two.test.mjs > /tmp/tobacco-first.patch
+          git apply --3way /tmp/tobacco-first.patch
+
+      - name: Validate source and regressions
+        shell: bash
+        run: |
+          node --check corporation.js
+          for test in tests/*.test.mjs; do node "$test"; done
+          git diff --check
+
+      - name: Commit clean runtime tree
+        shell: bash
+        run: |
+          rm .github/workflows/materialize-tobacco-first.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Prioritize the Tobacco product engine after round one"
+          git push origin HEAD:${GITHUB_REF_NAME}
