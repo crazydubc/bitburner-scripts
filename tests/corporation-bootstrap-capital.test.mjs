@@ -28,6 +28,8 @@ assert.doesNotMatch(constants, /undefined/)
 const moduleSource = [
   constants,
   extractFunction('canAffordCorporationPurchase'),
+  extractFunction('getOwnedSourceFileLevel'),
+  extractFunction('shouldUseCapitalConstrainedBootstrap'),
   extractFunction('isRoundOneBootstrapReady'),
   extractFunction('getRoundOneExpansionReserve'),
   extractFunction('getRoundOneAdvertTarget'),
@@ -36,6 +38,20 @@ const moduleSource = [
   extractFunction('canRunBoostMaterialOptimization'),
 ].join('\n')
 const strategy = await import(`data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`)
+
+const mapResetInfo = {ownedSF: new Map([[3, 3]])}
+const objectResetInfo = {ownedSF: {3: 2}}
+assert.equal(strategy.getOwnedSourceFileLevel(mapResetInfo, 3), 3)
+assert.equal(strategy.getOwnedSourceFileLevel(objectResetInfo, 3), 2)
+assert.equal(strategy.getOwnedSourceFileLevel({}, 3), 0)
+
+// Being outside BN3 is not enough to justify the emergency bootstrap. SF3.3 grants both APIs for free.
+assert.equal(strategy.shouldUseCapitalConstrainedBootstrap(3, 0), false)
+assert.equal(strategy.shouldUseCapitalConstrainedBootstrap(10, 0), true)
+assert.equal(strategy.shouldUseCapitalConstrainedBootstrap(10, 1), true)
+assert.equal(strategy.shouldUseCapitalConstrainedBootstrap(10, 2), true)
+assert.equal(strategy.shouldUseCapitalConstrainedBootstrap(10, 3), false)
+assert.equal(strategy.shouldUseCapitalConstrainedBootstrap(10, NaN), true)
 
 assert.equal(strategy.getRoundOneExpansionReserve(1, 6, false), 1e9)
 assert.equal(strategy.getRoundOneExpansionReserve(5, 6, false), 1e9)
@@ -94,8 +110,11 @@ assert.equal(strategy.canRunBoostMaterialOptimization(-1.8e9, 0, 5e9), false)
 
 assert.match(source, /allowExpansion: false/)
 assert.match(source, /manageRoundOneBoostMaterials/)
-assert.match(source, /Stopped boost-material purchases and liquidating them at market price/)
 assert.match(source, /const officeTarget = getRoundOneOfficeTarget/)
+assert.match(source, /getOwnedSourceFileLevel\(resetInfo, 3\)/)
+assert.match(source, /capitalConstrainedBootstrap = shouldUseCapitalConstrainedBootstrap/)
+assert.doesNotMatch(source, /capitalConstrainedBootstrap = selfFund/)
+assert.doesNotMatch(source, /selfFundedCorporation/)
 assert.doesNotMatch(source, /const ROUND_ONE_EXPANSION_RESERVE = 1e9/)
 
 console.log('corporation bootstrap-capital regression checks passed')
