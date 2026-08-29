@@ -1,3 +1,16 @@
+export function prepareSingularityResultForPort(fn, result) {
+  if (fn !== "getCurrentWork" || result === null || typeof result !== "object" || Array.isArray(result))
+    return result;
+
+  // Work API snapshots include nextCompletion, an unresolved Promise inherited from PlayerBaseWork.
+  // Ports use structuredClone(), so copy the public work data and omit only that non-serializable field.
+  const cloneableWork = {};
+  for (const [key, value] of Object.entries(result)) {
+    if (key !== "nextCompletion") cloneableWork[key] = value;
+  }
+  return cloneableWork;
+}
+
 /** @param {NS} ns */
 export async function main(ns) {
   ns.ramOverride(6.6);
@@ -17,7 +30,7 @@ export async function main(ns) {
     const f = ns.singularity?.[fn];
     if (typeof f !== "function") throw new Error(`Invalid singularity function: ${String(fn)}`);
 
-    response = await f(...args);
+    response = prepareSingularityResultForPort(fn, await f(...args));
   } catch (error) {
     response = `ERROR:${String(error?.stack ?? error)}`;
   }
