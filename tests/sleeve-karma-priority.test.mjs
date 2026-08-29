@@ -32,7 +32,7 @@ assert.equal(shouldPrioritizeGangKarma(false, false, false, -10_000), false)
 const source = fs.readFileSync(new URL('../sleeve.js', import.meta.url), 'utf8')
 const karmaIndex = source.indexOf('if (gangKarmaPriority)')
 const trainingIndex = source.indexOf("// Train if our sleeve's physical stats")
-const followIndex = source.indexOf('If player is currently working for faction or company rep')
+const followIndex = source.indexOf("if (repAssignment?.type === 'FACTION')")
 assert.ok(karmaIndex >= 0 && karmaIndex < trainingIndex && karmaIndex < followIndex,
   'gang karma must take precedence over training and player-follow work')
 assert.match(source, /await sleeveRun\(ns, 'travel', i, ns\.enums\.CityName\.Sector12\)/)

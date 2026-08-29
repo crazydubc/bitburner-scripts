@@ -237,6 +237,51 @@ export function planBestFactionRepRoute({
   return best;
 }
 
+
+/**
+ * Plan several simultaneous faction-reputation routes. Selected factions remain in the simulated joined set at
+ * their target reputation, so later routes do not duplicate augmentations that the earlier routes will unlock.
+ */
+export function planDistinctFactionRepRoutes(options = {}, limit = Infinity, preferredFaction = null) {
+  const joinedFactions = [...new Set(options.joinedFactions ?? [])];
+  const activeFactions = new Set(joinedFactions);
+  const baseRates = {...(options.factionRepRate ?? {})};
+  const simulatedRep = {...(options.factionRep ?? {})};
+  const routes = [];
+  const numericLimit = Number(limit);
+  const maxRoutes = Number.isFinite(numericLimit) ? Math.max(0, Math.floor(numericLimit)) : joinedFactions.length;
+
+  const chooseRoute = onlyFaction => {
+    const rates = {};
+    for (const faction of joinedFactions) {
+      rates[faction] = activeFactions.has(faction) && (!onlyFaction || faction === onlyFaction)
+        ? (Number(baseRates[faction]) || 0)
+        : 0;
+    }
+    return planBestFactionRepRoute({
+      ...options,
+      joinedFactions,
+      factionRep: simulatedRep,
+      factionRepRate: rates,
+    });
+  };
+
+  const addRoute = route => {
+    if (!route || routes.length >= maxRoutes || !activeFactions.has(route.faction)) return false;
+    routes.push(route);
+    activeFactions.delete(route.faction);
+    simulatedRep[route.faction] = Math.max(Number(simulatedRep[route.faction]) || 0, Number(route.targetRep) || 0);
+    return true;
+  };
+
+  if (preferredFaction && activeFactions.has(preferredFaction)) addRoute(chooseRoute(preferredFaction));
+  while (routes.length < maxRoutes) {
+    const route = chooseRoute(null);
+    if (!addRoute(route)) break;
+  }
+  return routes;
+}
+
 export function rankFactionInviteRoutes({
   candidateFactions,
   factionAugs,
