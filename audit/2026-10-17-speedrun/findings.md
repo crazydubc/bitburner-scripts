@@ -4,7 +4,7 @@ Locations refer to the audited commit recorded in [sources.md](sources.md). P1 m
 
 “Execution” below means the actual function or extracted function was run with bounded mocks. “Source” and “arithmetic” checks establish narrower facts; they are not live-game reproductions.
 
-**Current testing-branch status:** B03, B04, B06, B10, B17, and B18 have implemented fixes and positive checks. B01, B02 and B11 are partially repaired. The table and original evidence below describe the audited baseline; follow-up notes distinguish applied changes from remaining work. See [resource-purchase-fixes.md](resource-purchase-fixes.md) and [helper-state-fixes.md](helper-state-fixes.md) for implementation and live-test limits.
+**Current testing-branch status:** B03, B04, B06, B10, B12, B17, and B18 have implemented fixes and positive checks. B01, B02 and B11 are partially repaired. The table and original evidence below describe the audited baseline; follow-up notes distinguish applied changes from remaining work. See [resource-purchase-fixes.md](resource-purchase-fixes.md), [helper-state-fixes.md](helper-state-fixes.md) and [corporation-cross-bn.md](corporation-cross-bn.md) for implementation and live-test limits.
 
 | ID | Priority | Finding | Evidence |
 | --- | --- | --- | --- |
@@ -187,6 +187,8 @@ The helper's fixed 6.6 GB override is also insufficient outside BN4 with partial
 **Accept when:** a denied/throwing API cannot hang reset or claim a faction join; SF4.1/.2/.3 outside BN4 either run within correct RAM or fail explicitly without hanging callers.
 
 ## B12 — Hash target has the wrong type and is recalculated unnecessarily
+
+**Testing-branch follow-up:** server-specific purchases now receive a validated hostname, with automatic selection cached for one minute. Cash, corporation, research and Bladeburner purchases perform no target scans. Explicit corporation purchases precede bulk cash sales, and the default cash seller retains low priority. Positive runtime checks are in `checks/hash-spending.mjs`; see [corporation-cross-bn.md](corporation-cross-bn.md).
 
 **Where:** `spend-hashes.js:43,81` and its server-specific `spendHashes` calls.
 

@@ -2,7 +2,7 @@
 
 The highest-value work is fixing progression stalls and making the early-game launch/spending rules reliable. Keep the current hacking batcher as the performance baseline. Two confined batcher defects are documented separately; neither calls for replacing its scheduling design.
 
-**The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) combines the audit, BN1.1 on-screen prompts, focused Go fixes, and resource/purchase repairs for in-game testing.** B03, B04, B06, B10, B17, and B18 have fixes with positive regression checks. B01/B02/B11 now have partial repairs for launch/reply failures, home reserve/configuration state and Singularity RAM/errors. Their remaining scope is recorded in [helper-state-fixes.md](helper-state-fixes.md). Batch scheduling and the $8b reserve policy are unchanged.
+**The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) combines the audit, BN1.1 on-screen prompts, focused Go fixes, resource/purchase repairs, and corporation lifecycle fixes for in-game testing.** B03, B04, B06, B10, B12, B17, and B18 have fixes with positive regression checks. B01/B02/B11 now have partial repairs for launch/reply failures, home reserve/configuration state and Singularity RAM/errors. Their remaining scope is recorded in [helper-state-fixes.md](helper-state-fixes.md). Batch scheduling and the $8b reserve policy are unchanged.
 
 ## Pull the combined testing branch
 
@@ -29,6 +29,8 @@ node audit/2026-10-17-speedrun/checks/stock-liquidation.mjs
 node audit/2026-10-17-speedrun/checks/resource-purchases.mjs
 node audit/2026-10-17-speedrun/checks/rpc-reserve.mjs
 node audit/2026-10-17-speedrun/checks/go-lifecycle.mjs
+node audit/2026-10-17-speedrun/checks/corporation-lifecycle.mjs
+node audit/2026-10-17-speedrun/checks/hash-spending.mjs
 ```
 
 The focused checks pass, and changed gameplay files parse; the previously removed test directory stays removed. Live BN1 progression, tail layout, and Go win-rate changes still require in-game testing.
@@ -48,6 +50,8 @@ The latest [resource/purchase follow-up](resource-purchase-fixes.md) fixes cloud
 
 The subsequent [helper/state follow-up](helper-state-fixes.md) adds bounded failed launches, dead-child recovery, effective Singularity RAM budgets, authoritative home reserve state, configuration deployment and persistent home fallback. An official-source RAM check preserves the guide's 8 GB cold-start fit and accounts for the added manager costs. The [reported Go baseline](go-assessment.md#user-reported-game-baseline--2026-10-17) is 26 wins from 30 games; Illuminati accounts for three of four losses. No Go strategy change accompanies this follow-up.
 
+The [corporation follow-up](corporation-cross-bn.md) fixes creation eligibility/reserve checks, public-corporation resumption, and a $10^70 revenue gate that delayed dividends after all investments. It retains the 1% default payout with working-capital checks and keeps all four private offers. It also fixes B12 and makes hash funding explicit, with non-cash purchases preceding bulk cash sales. The follow-up explains the $150b entry cost, SF3.3's free APIs, hash commands, BN penalties and remaining experiments. Restart autopilot, corporation and hash-spending processes after pulling.
+
 ## Read in this order
 
 | File | Purpose |
@@ -58,6 +62,7 @@ The subsequent [helper/state follow-up](helper-state-fixes.md) adds bounded fail
 | [optimization-plan.md](optimization-plan.md) | Implementation order and measurements that can establish real speed gains |
 | [resource-purchase-fixes.md](resource-purchase-fixes.md) | B04/B06/B10/B17/B18 changes, verification, and live-test notes |
 | [helper-state-fixes.md](helper-state-fixes.md) | B01/B02/B11 partial repairs, RAM checks, and remaining scope |
+| [corporation-cross-bn.md](corporation-cross-bn.md) | Corporation lifecycle/payout repairs, B12, funding options, BN suitability and remaining experiments |
 | [sources.md](sources.md) | Pinned repository/game references and scope limitations |
 | [reproduce.mjs](reproduce.mjs) / [evidence.json](evidence.json) | Bounded offline reproductions and source/arithmetic checks |
 

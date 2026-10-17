@@ -10,6 +10,16 @@ import {
   buildAscendArgs, getFreshDonationFavorProgress, NEUROFLUX
 } from './donation-favor.js'
 
+/** Preserve player reserves and don't repeatedly launch a disabled corporation feature. */
+export function shouldStartCorporation(ns, sourceFiles, currentNode, money, reserve) {
+  if (!(3 in sourceFiles)) return false
+  if (ns.corporation.hasCorporation()) return true
+  const selfFund = Number(currentNode) !== 3
+  const status = ns.corporation.canCreateCorporation(selfFund)
+  if (status !== 'Success' && status !== true) return false
+  return !selfFund || (Number.isFinite(money) && Number.isFinite(reserve) && reserve >= 0 && money >= 150e9 + reserve)
+}
+
 
 /** @param {NS} ns */
 export async function main(ns) {
@@ -130,7 +140,7 @@ export async function main(ns) {
     },
     {
       name: "corporation.js",
-      shouldRun: () => 3 in unlockedSFs && (resetInfo.currentNode == 3 || ns.corporation.hasCorporation() || getPlayerMoney(ns) > 150_000_000_000),
+      shouldRun: () => shouldStartCorporation(ns, unlockedSFs, resetInfo.currentNode, getPlayerMoney(ns), currentMoneyReserve),
       args: () => []
     },
     {

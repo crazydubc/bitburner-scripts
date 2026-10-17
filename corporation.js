@@ -1,4 +1,4 @@
-import { getReset, log, corpRun, getBNMults } from './utils.js'
+import { getReset, log, corpRun, getBNMults, getReserve } from './utils.js'
 
 //Can we get rid of these?
 const corpName = "Shady-Ent"
@@ -40,6 +40,76 @@ let investOffer
 let corporationConstants
 let lastBootstrapWarning = 0
 let capitalConstrainedBootstrap = false
+let dividendRate = 0.01
+const argsSchema = [['dividend-rate', 0.01], ['help', false]]
+
+export function autocomplete(data) { data.flags(argsSchema); return [] }
+
+/** Creation eligibility is a status string in 3.x; older games returned a boolean. */
+export async function waitForCorporation(ns, currentNode) {
+  const selfFund = Number(currentNode) !== 3
+  let lastNotice = -Infinity
+  while (!ns.corporation.hasCorporation()) {
+    const status = ns.corporation.canCreateCorporation(selfFund)
+    if (status !== 'Success' && status !== true) {
+      log(ns, `Cannot create a corporation (${String(status)}). Requires BN3 or SF3 and corporation access enabled.`, true, 'warning')
+      return false
+    }
+    const reserve = selfFund ? await getReserve(ns) : 0
+    const requiredMoney = selfFund ? 150e9 + reserve : 0
+    if (!selfFund || ns.getServerMoneyAvailable('home') >= requiredMoney) {
+      await corpRun(ns, 'createCorporation', corpName, selfFund)
+      // A reply, including a truthy error, is not proof that creation succeeded.
+      if (ns.corporation.hasCorporation()) return true
+    }
+    if (Date.now() - lastNotice >= 60_000) {
+      log(ns, selfFund
+        ? `Waiting to create a corporation: need $150b plus the home reserve ($${ns.format.number(reserve, 3)}). Keep income scripts running.`
+        : 'BN3 seed-funded creation has not succeeded; retrying.', true, 'info')
+      lastNotice = Date.now()
+    }
+    await ns.sleep(1000)
+  }
+  return true
+}
+
+/** Public corporations no longer receive investment offers, even if they skipped private rounds. */
+export function getCorporationPhase(corporation, offer) {
+  if (!corporation) return 0
+  if (corporation.public === true) return 5
+  const round = Number(offer?.round)
+  return Number.isInteger(round) && round >= 1 && round <= 5 ? round : 0
+}
+
+async function readInvestmentOffer(ns) {
+  const offer = await corpRun(ns, 'getInvestmentOffer')
+  const round = getCorporationPhase(await getCorp(ns), offer)
+  return round ? { ...offer, round } : undefined
+}
+
+/** Keep three market cycles of operating expenses before distributing a small share of profits. */
+export function getSafeDividendRate(corporation, requestedRate, secondsPerCycle) {
+  const { funds, revenue, expenses } = corporation ?? {}
+  if (![funds, revenue, expenses, requestedRate, secondsPerCycle].every(Number.isFinite) ||
+    requestedRate < 0 || requestedRate > 1 || secondsPerCycle <= 0 || expenses < 0 ||
+    revenue <= expenses || funds < Math.max(ROUND_ONE_OPERATING_RESERVE, expenses * secondsPerCycle * 3)) return 0
+  return requestedRate
+}
+
+/** All four offers remain available before the default IPO; no player-owned shares are sold. */
+export async function manageCorporationPayout(ns, round, requestedRate = 0.01) {
+  let corporation = await getCorp(ns)
+  if (!corporation || (corporation.public !== true && Number(round) !== 5)) return
+  if (corporation.public !== true) {
+    if (await corpRun(ns, 'goPublic', 0) !== true) return
+    corporation = await getCorp(ns)
+    if (corporation?.public !== true) return
+    log(ns, 'All private funding rounds complete. Corporation is public; retained all remaining shares.', true, 'info')
+  }
+  const constants = await getCorporationConstants(ns)
+  const rate = getSafeDividendRate(corporation, requestedRate, Number(constants?.secondsPerMarketCycle))
+  if (corporation.dividendRate !== rate) await corpRun(ns, 'issueDividends', rate)
+}
 
 const REQUIRED_CORPORATION_APIS = ["Office API", "Warehouse API"]
 const ROUND_ONE_OPERATING_RESERVE = 5e9
@@ -358,7 +428,13 @@ async function hireAdVertsUpTo(ns, divisionName, target) {
 
 /** @param {NS} ns */
 export async function main(ns) {
-  ns.ramOverride(5.3) // Include shared RPC launch/reply checks without changing corporation strategy.
+  ns.ramOverride(5.5) // Include the home reserve and player-cash checks at startup.
+  const options = ns.flags(argsSchema)
+  dividendRate = Number(options['dividend-rate'])
+  if (options.help || !Number.isFinite(dividendRate) || dividendRate < 0 || dividendRate > 1) {
+    ns.tprint('Usage: run corporation.js [--dividend-rate 0.01] (0 to 1; 0 retains all profits). BN3 uses seed funding; other BNs require $150b above the home reserve. Dividends begin after all four private offers, or resume for an already-public corporation.')
+    return
+  }
   ns.disableLog("ALL")
   //ns.ui.openTail();
   ns.clearLog()
@@ -372,11 +448,10 @@ export async function main(ns) {
   bnMults = await getBNMults(ns)
   const corporationValuation = Number(bnMults?.CorporationValuation)
   const corporationDivisions = Number(bnMults?.CorporationDivisions)
-  if (!(corporationValuation > 0) || !(corporationDivisions > 0)) {
+  if (!(corporationValuation > 0) || !(corporationDivisions > 0) || !(Number(bnMults?.CorporationSoftcap) >= 0.15)) {
     log(ns, `Corporations are disabled in BN${myBN}; corporation.js is exiting.`, true, 'warning')
     return
   }
-  const selfFund = myBN !== 3
   capitalConstrainedBootstrap = shouldUseCapitalConstrainedBootstrap(myBN, sourceFile3Level)
   const bootstrapMode = capitalConstrainedBootstrap
     ? `paid-API constrained bootstrap (SF3.${sourceFile3Level})`
@@ -385,19 +460,22 @@ export async function main(ns) {
     `Round-one funding scales with valuation but retains a ` +
     `${ns.format.number(ROUND_ONE_MINIMUM_TRANSITION_CAPITAL, 3)} minimum transition floor.`,
     true, 'info')
-  while (!ns.corporation.hasCorporation() && ns.corporation.canCreateCorporation(selfFund)
-    && !(await corpRun(ns, 'createCorporation', corpName, selfFund))) await ns.sleep(1000)
+  if (!(await waitForCorporation(ns, myBN))) return
   log(ns, `Corporation is up, detecting investment round`, true)
-  let round = (await corpRun(ns, 'getInvestmentOffer')).round;
+  investOffer = await readInvestmentOffer(ns)
+  let round = investOffer?.round ?? 0
   log(ns, `Round ${round}!`, true)
   teaNeeded = true
   tobaccoBooster = false
   while (true) {
     while (round === 1) {
-      if (!(await prep(ns))) {
+      const ready = await prep(ns)
+      round = investOffer?.round ?? round
+      if (!ready) {
         await ns.corporation.nextUpdate()
         continue
       }
+      if (round !== 1) continue
       await updateHud(ns)
       const agriculture = await corpRun(ns, 'getDivision', div1)
       const advertTarget = getRoundOneAdvertTarget(agriculture?.cities?.length, cities.length)
@@ -428,10 +506,13 @@ export async function main(ns) {
       await ns.corporation.nextUpdate();
     }
     while (round === 2) {
-      if (!(await prep(ns))) {
+      const ready = await prep(ns)
+      round = investOffer?.round ?? round
+      if (!ready) {
         await ns.corporation.nextUpdate()
         continue
       }
+      if (round !== 2) continue
       await updateHud(ns)
       await manageProducts(ns)
       let hasDiv2 = false
@@ -476,10 +557,13 @@ export async function main(ns) {
       await ns.corporation.nextUpdate();
     }
     while (round === 3 || round === 4) {
-      if (!(await prep(ns))) {
+      const ready = await prep(ns)
+      round = investOffer?.round ?? round
+      if (!ready) {
         await ns.corporation.nextUpdate()
         continue
       }
+      if (round !== 3 && round !== 4) continue
       await updateHud(ns)
       while ((await corpRun(ns, 'getUpgradeLevel', "Smart Factories")) < 20 && (await corpRun(ns, 'getUpgradeLevelCost', "Smart Factories")) <= await corpFunds(ns))
         (await corpRun(ns, 'levelUpgrade', "Smart Factories"))
@@ -507,10 +591,13 @@ export async function main(ns) {
       await ns.corporation.nextUpdate();
     }
     while (round >= 5) {
-      if (!(await prep(ns))) {
+      const ready = await prep(ns)
+      round = investOffer?.round ?? round
+      if (!ready) {
         await ns.corporation.nextUpdate()
         continue
       }
+      if (round < 5) continue
       await updateHud(ns)
       await manageProducts(ns)
       await spendRP(ns)
@@ -534,7 +621,8 @@ export async function main(ns) {
     }
     log(ns, `Unexpected corporation investment round ${String(round)}; refreshing state.`, true, 'warning')
     await ns.sleep(1000)
-    round = (await corpRun(ns, 'getInvestmentOffer'))?.round
+    investOffer = await readInvestmentOffer(ns)
+    round = investOffer?.round ?? 0
   }
 }
 
@@ -548,6 +636,8 @@ async function updateHud(ns) {
   const cObj = await getCorp(ns)
   ns.printf("%s", cObj.name)
   ns.printf("Funds : $%s  Profit: $%s/s", ns.format.number(cObj.funds, 3), ns.format.number(cObj.revenue - cObj.expenses, 3))
+  ns.printf("%s | Player dividends: $%s/s | Rate: %s%%", cObj.public ? "Public" : "Private",
+    ns.format.number(cObj.dividendEarnings || 0, 3), ns.format.number((cObj.dividendRate || 0) * 100, 2))
   const invest = investOffer
   const upgrades = await getUpgradeLevel(ns, "Neural Accelerators")
     + await getUpgradeLevel(ns, "Project Insight")
@@ -631,6 +721,7 @@ function resetInvestmentPeakTracking(round = 0) {
 async function checkInvest(ns) {
   const round = Number(investOffer?.round)
   const corp = await getCorp(ns)
+  if (corp?.public === true) return 5
   if (!corp || !Number.isInteger(round) || round < 1 || round > 4) return round
 
   if (investmentPeakRound !== round) resetInvestmentPeakTracking(round)
@@ -785,13 +876,14 @@ async function tryPurchaseUnlock(ns, purchase) {
 }
 /** @param {NS} ns */
 async function prep(ns) {
-  investOffer = await corpRun(ns, 'getInvestmentOffer')
+  investOffer = await readInvestmentOffer(ns)
   const round = Number(investOffer?.round)
   if (!Number.isFinite(round)) {
     return false
   }
 
   if (!(await ensureCorporationApis(ns))) return false
+  if (round >= 5) await manageCorporationPayout(ns, round, dividendRate)
 
   if (round >= 1) {
   const agriculture = await corpRun(ns, 'getDivision', div1)
@@ -861,12 +953,6 @@ async function prep(ns) {
     if ((await getCorp(ns)).revenue >= 1e70) {
       await tryPurchaseUnlock(ns, "Government Partnership")
       await tryPurchaseUnlock(ns, "Shady Accounting")
-      if (!(await getCorp(ns)).public) {
-        await corpRun(ns, 'goPublic', 0)
-      }
-      if ((await getCorp(ns)).public) {
-        await corpRun(ns, 'issueDividends', 0.01)
-      }
       try {
         const div = (await corpRun(ns, 'getDivision', div5))
         hasDivDB[div5] = div

@@ -64,6 +64,8 @@ The finding text gives the additional line locations within each file. The offli
 
 Reward descriptions are cross-checked against implementation where the distinction matters (notably Bladeburner API access, SF4 RAM, SF11 scaling, and weakening). Route placement is an inference combining these mechanics with the suite's capabilities and the user's preferences; it is not a claim made by the official source.
 
+The [corporation follow-up](corporation-cross-bn.md#official-references) adds pinned primary references for creation status/costs, seed funding, free SF3.3 APIs, public offers/dividends, hash-funded cash/research, augmentation persistence, division caps, and the official corporation guide. The same 3.0.1 engine revision is used. Its BN suitability discussion is an inference from those mechanics, not a measured fastest-route claim.
+
 ## Method
 
 Mapped startup, launch transport, money reservations, augmentation/reset decisions, target calculations, progression gates, and the larger subsystem entry points. Used syntax checks plus targeted bounded execution of relevant functions. Source checks were used where realistic UI/reset/engine behavior would require a running game.
