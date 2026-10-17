@@ -1,4 +1,6 @@
 // A read-only, non-modal guide for the first BN1 run. No Singularity calls.
+import { isScriptRunning } from './utils.js';
+
 export const BN1_CRACKERS = [
   ['BruteSSH.exe', 500_000], ['FTPCrack.exe', 1_500_000],
   ['relaySMTP.exe', 5_000_000], ['HTTPWorm.exe', 30_000_000], ['SQLInject.exe', 250_000_000],
@@ -65,13 +67,16 @@ export function getBn1Guidance(s) {
 }
 
 /** @param {NS} ns */
-export function readBn1Snapshot(ns) {
+export async function readBn1Snapshot(ns) {
   const reset = ns.getResetInfo();
+  const homeRam = ns.getServerMaxRam('home');
   return {
-    reset, player: ns.getPlayer(), homeRam: ns.getServerMaxRam('home'), hasTor: ns.hasTorRouter(),
+    reset, player: ns.getPlayer(), homeRam, hasTor: ns.hasTorRouter(),
     casinoEarned: ns.getMoneySources().sinceInstall.casino ?? 0,
     crackers: BN1_CRACKERS.map(([file]) => file).filter(file => ns.fileExists(file, 'home')),
-    autopilotRunning: ns.ps('home').some(p => p.filename === 'autopilot.js'),
+    // Autopilot can be offloaded. The lookup uses a home helper, so skip it in
+    // low-RAM mode, where casino/RAM guidance takes priority over automation.
+    autopilotRunning: homeRam >= 64 && await isScriptRunning(ns, 'autopilot.js'),
     servers: Object.fromEntries(BN1_FACTION_SERVERS.map(([host]) => [host, ns.getServer(host)])),
     daemon: reset.ownedAugs.has('The Red Pill') && ns.serverExists('w0r1d_d43m0n') ? ns.getServer('w0r1d_d43m0n') : null,
   };
@@ -87,7 +92,7 @@ export async function main(ns) {
   ns.ui.setTailTitle('BN1.1 — Next action');
   let previous = '', lastToast = -Infinity;
   while (true) {
-    const snapshot = readBn1Snapshot(ns);
+    const snapshot = await readBn1Snapshot(ns);
     const next = getBn1Guidance(snapshot);
     ns.clearLog();
     ns.print(`BN1.1 — ${next.title}\n`);
