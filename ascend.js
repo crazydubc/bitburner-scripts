@@ -10,7 +10,7 @@ const argsSchema = [
   ['skip-staneks-gift', false], // By default, we get stanek's gift before our first install (except in BN8). If set to true, skip this step.
     /* Deprecated */['bypass-stanek-warning', false], // (Obsoleted by the above option) Used to warn you if you were installing augs without accepting stanek's gift
   // Spawn this script after installing augmentations (Note: Args not supported by the game)
-  ['on-reset-script', 'autopilot.js'], // By default, will start with `stanek.js` if you have stanek's gift, otherwise `daemon.js`.
+  ['on-reset-script', 'autopilot.js'], // Resume autopilot after installing augmentations or a soft reset.
   ['ticks-to-wait-for-additional-purchases', 10], // Don't reset until we've gone this many game ticks without any new purchases being made (10 * 200ms (game tick time) ~= 2 seconds)
   ['max-wait-time', 60000], // The maximum number of milliseconds we'll wait for external scripts to purchase whatever permanent upgrades they can before we ascend anyway.
   ['prioritize-home-ram', false], // If set to true, will spend as much money as possible on upgrading home RAM before buying augmentations
@@ -34,6 +34,39 @@ async function countOwnedStocks(ns, stkSymbols) {
   }
   return owned;
 }
+
+/** One finite bulk sale; a continuous hash manager would never finish reset preparation. */
+export function liquidateHashesForReset(ns, sourceFiles) {
+  if (!(9 in sourceFiles)) return;
+  try {
+    const cost = ns.hacknet.hashCost('Sell for Money');
+    const hashes = ns.hacknet.numHashes();
+    if (!(cost > 0) || !Number.isFinite(cost) || !Number.isFinite(hashes)) return;
+    const count = Math.floor(hashes / cost);
+    if (count > 0 && ns.hacknet.spendHashes('Sell for Money', undefined, count) !== true)
+      log(ns, 'WARNING: Hash liquidation failed; continuing reset preparation.', true, 'warning');
+  } catch (error) {
+    log(ns, `WARNING: Skipping hash liquidation: ${String(error)}`, true, 'warning');
+  }
+}
+
+/** Spend up to 80% of this phase's starting cash, then return to augmentation preparation. */
+export async function upgradeHomeForReset(ns) {
+  let remainingBudget = Math.max(0, ns.getServerMoneyAvailable('home') * 0.8);
+  try {
+    for (let count = 0; count < 64; count++) {
+      const cost = await singRun(ns, 'getUpgradeHomeRamCost');
+      if (!Number.isFinite(cost) || cost <= 0 || cost > remainingBudget || cost > ns.getServerMoneyAvailable('home')) return;
+      if (await singRun(ns, 'upgradeHomeRam') !== true) {
+        log(ns, 'WARNING: Home RAM upgrade failed; continuing reset preparation.', true, 'warning');
+        return;
+      }
+      remainingBudget -= cost;
+    }
+  } catch (error) {
+    log(ns, `WARNING: Skipping further home RAM upgrades: ${String(error)}`, true, 'warning');
+  }
+}
 /** @param {NS} ns
  * This script is meant to do all the things best done when ascending (in a generally ideal order) **/
 export async function main(ns) {
@@ -43,6 +76,9 @@ export async function main(ns) {
   let dictSourceFiles = await getActiveSourceFiles(ns); // Find out what source files the user has unlocked
   if (!(4 in dictSourceFiles))
     return log(ns, "ERROR: You cannot automate installing augmentations until you have unlocked singularity access (SF4).", true, 'error');
+  const resetScript = options['on-reset-script'] || getFilePath('autopilot.js');
+  if ((options.reset || options['install-augmentations']) && !ns.fileExists(resetScript, 'home'))
+    return log(ns, `ERROR: Reset callback ${resetScript} is missing on home; aborting before stopping scripts.`, true, 'error');
   ns.disableLog('sleep');
   if (options['prioritize-augmentations'])
     log(ns, "INFO: The --prioritize-augmentations flag is deprecated, as this is now the default behaviour. Use --prioritize-home-ram to get back the old behaviour.")
@@ -61,7 +97,8 @@ export async function main(ns) {
 
   // STEP 1: Liquidate Stocks and (SF9) Hacknet Hashes
   log(ns, 'Sell stocks and hashes...', true, 'info');
-  let pid = ns.run(getFilePath('spend-hacknet-hashes.js'), 1, '--liquidate');
+  liquidateHashesForReset(ns, dictSourceFiles);
+  let pid;
 
   // If we do not have tix api access, we cannot automate checking on or selling stocks, so skip this
   const hasTixApiAccess = ns.stock.hasTixApiAccess();
@@ -81,7 +118,7 @@ export async function main(ns) {
   // STEP 2: Buy Home RAM Upgrades (more important than squeezing in a few extra augs)
   const spendOnHomeRam = async () => {
     log(ns, 'Try Upgrade Home RAM...', true, 'info');
-    ns.run(getFilePath('Tasks/ram-manager.js'), 1, '--reserve', '0', '--budget', '0.8');
+    await upgradeHomeForReset(ns);
   };
   if (options['prioritize-home-ram']) await spendOnHomeRam();
 
@@ -206,9 +243,6 @@ export async function main(ns) {
   if (options.reset || options['install-augmentations']) {
     log(ns, '\nCatch you on the flippity-flip\n', true, 'success');
     await ns.sleep(1000); // Pause for effect?
-    const resetScript = options['on-reset-script'] ??
-      // Default script (if none is specified) is stanek.js if we have it (which in turn will spawn daemon.js when done)
-      (purchasedAugmentations.includes(`Stanek's Gift - Genesis`) ? getFilePath('stanek.js') : getFilePath('daemon.js'));
     await singRun(ns, noAugsToInstall ? 'softReset' : 'installAugmentations', resetScript)
   } else
     log(ns, `SUCCESS: Ready to ascend. In the future, you can run with --reset (or --install-augmentations) ` +

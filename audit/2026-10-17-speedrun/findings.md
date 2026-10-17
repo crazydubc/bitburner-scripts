@@ -91,6 +91,8 @@ The manager computes `min(money - reserve, money * 0.2)`, but its loop filling s
 
 ## B05 — Intelligence farming lacks a live phase transition
 
+**Testing-branch follow-up:** live readiness now requires installed CashRoot plus all ten company factions/invitations. Home-owned state is keyed to the actual BN run and survives augmentation resets. Target, time-budget, no-progress, low-ROI and empty-join exits persist completion and resume this BN without another reset; a first already-joined cycle may prime invitations once. Automatic company workers leave preparation when the farm completes. See [progression-fixes.md](progression-fixes.md) for bounds, recovery checks and live-test limits.
+
 **Where:** `autopilot.js:84–105,273,442`; `farm-intel.js:19–89`.
 
 `shouldIntelFarm` is latched from startup intelligence. `readyToFarmIntel` is assigned only before the main loop. Invitations arriving later do not make the farm ready. Meanwhile `checkIfBnIsComplete` keeps returning false whenever the original farm intent was true, even if intelligence later reaches the threshold. The prerequisite logic has no explicit installed-CashRoot check.
@@ -119,6 +121,8 @@ After Covenant membership is acquired, the purchase loop never refreshes `player
 
 ## B07 — Missing filenames silently disable reset work
 
+**Testing-branch follow-up:** reset-time hashes use one finite bulk sale; home RAM upgrades use a finite 80%-of-starting-cash allowance with fresh affordability checks. Optional failures warn and let reset preparation continue. The callback defaults to autopilot and is checked before stopping scripts. Bladeburner launches the existing `spend-hashes.js` on home, deduplicates its arguments, and continues if that optional launch fails. The downloader includes the correct farm and new shared/state modules.
+
 **Where:** `ascend.js:64,85,208`; `bladeburner.js:438,456`.
 
 - `spend-hacknet-hashes.js` does not exist; the current script is `spend-hashes.js`.
@@ -134,6 +138,8 @@ After Covenant membership is acquired, the purchase loop never refreshes `player
 
 ## B08 — Bladeburner access and victory are incomplete
 
+**Testing-branch follow-up:** shared BN6-or-BN7 capability checks now govern autopilot, Bladeburner, sleeves and faction-work arbitration. Exact membership plus `getNextBlackOp() === null` qualifies as the alternate victory. The intelligence and BN10 sleeve/memory gates remain in front of either victory route; invalid sleeve RPC results cannot bypass them. A world daemon absent on the first scan is checked again. Offline checks pass; the complete lifecycle still needs a backed-up live save.
+
 **Where:** `autopilot.js:160,441–475`; `bladeburner.js:70,158`; `work-for-faction2.js:621`; `sleeve.js:462`.
 
 The launch and entry gates require BN7/SF7. Reference game 3.0.1 grants the Bladeburner API through **BN6/SF6 or BN7/SF7**. A BN6-first route therefore has valid access that these scripts reject. Related faction/sleeve coordination also checks only 7.
@@ -145,6 +151,8 @@ After the final BlackOp, the Bladeburner manager alerts, but autopilot's complet
 **Accept when:** a BN6-only capability state launches and runs the manager; player work does not cancel it; final BlackOp completion can end the BN below world-daemon hacking requirements. Check behavior against the user's installed game version before rollout.
 
 ## B09 — Periodic `alwaysRun` is inverted
+
+**Testing-branch status: still open.** Hash spending now has explicit SF9/BN-income eligibility independent of new hacknet investment, repairing that subissue. The `alwaysRun` scheduler and unused helper `nextRun` fields are unchanged; the effectively unlimited-payback investment pass has not been enabled.
 
 **Where:** `autopilot.js:218,225,397–402,170`.
 

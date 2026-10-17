@@ -2,7 +2,7 @@
 
 The highest-value work is fixing progression stalls and making the early-game launch/spending rules reliable. Keep the current hacking batcher as the performance baseline. Two confined batcher defects are documented separately; neither calls for replacing its scheduling design.
 
-**The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) combines the audit, BN1.1 on-screen prompts, focused Go fixes, resource/purchase repairs, and corporation lifecycle fixes for in-game testing.** B03, B04, B06, B10, B12, B17, and B18 have fixes with positive regression checks. B01/B02/B11 now have partial repairs for launch/reply failures, home reserve/configuration state and Singularity RAM/errors. Their remaining scope is recorded in [helper-state-fixes.md](helper-state-fixes.md). Batch scheduling and the $8b reserve policy are unchanged.
+**The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) combines the audit, BN1.1 on-screen prompts, focused Go fixes, resource/purchase repairs, corporation lifecycle fixes, and the revised BN route for in-game testing.** Ten findings have fixes with positive checks: B03/B04/B05/B06/B07/B08/B10/B12/B17/B18. B01/B02/B11 remain partially repaired; B09/B13/B14/B15/B16 remain open. B09's hash-spender eligibility subissue is repaired, but its scheduler policy is still open. The latest [progression follow-up](progression-fixes.md) covers intelligence, reset, and Bladeburner fixes. Batch scheduling and the $8b reserve policy are unchanged.
 
 ## Pull the combined testing branch
 
@@ -31,6 +31,7 @@ node audit/2026-10-17-speedrun/checks/rpc-reserve.mjs
 node audit/2026-10-17-speedrun/checks/go-lifecycle.mjs
 node audit/2026-10-17-speedrun/checks/corporation-lifecycle.mjs
 node audit/2026-10-17-speedrun/checks/hash-spending.mjs
+node audit/2026-10-17-speedrun/checks/progression.mjs
 ```
 
 The focused checks pass, and changed gameplay files parse; the previously removed test directory stays removed. Live BN1 progression, tail layout, and Go win-rate changes still require in-game testing.
@@ -58,7 +59,8 @@ The [corporation follow-up](corporation-cross-bn.md) fixes creation eligibility/
 | --- | --- |
 | [findings.md](findings.md) | 18 findings, source locations, reproduction evidence, and repair acceptance criteria |
 | [bn1-guide.md](bn1-guide.md) | Practical instructions for a fresh BN1.1, including current-code workarounds |
-| [bitnode-route.md](bitnode-route.md) | Proposed order for this automation suite, dependencies, and alternatives to benchmark |
+| [bitnode-route.md](bitnode-route.md) | Implemented testing-branch order, rationale, and alternatives to benchmark |
+| [progression-fixes.md](progression-fixes.md) | B05/B07/B08 fixes, integer route selection, finite intel farming, reset checks and live-test notes |
 | [optimization-plan.md](optimization-plan.md) | Implementation order and measurements that can establish real speed gains |
 | [resource-purchase-fixes.md](resource-purchase-fixes.md) | B04/B06/B10/B17/B18 changes, verification, and live-test notes |
 | [helper-state-fixes.md](helper-state-fixes.md) | B01/B02/B11 partial repairs, RAM checks, and remaining scope |

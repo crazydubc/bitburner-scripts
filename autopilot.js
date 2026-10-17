@@ -9,6 +9,10 @@ import { recordBnStart, printBnRunSummary, RUNLOG_FILE } from './logger.js'
 import {
   buildAscendArgs, getFreshDonationFavorProgress, NEUROFLUX
 } from './donation-favor.js'
+import {
+  selectNextBitNode, sourceFileLevel, hasBladeburnerAccess, hasCompletedBladeburner,
+  getIntelFarmReadiness, intelFarmState
+} from './progression.js'
 
 /** Preserve player reserves and don't repeatedly launch a disabled corporation feature. */
 export function shouldStartCorporation(ns, sourceFiles, currentNode, money, reserve) {
@@ -25,31 +29,6 @@ export function shouldStartCorporation(ns, sourceFiles, currentNode, money, rese
 export async function main(ns) {
   ns.ramOverride(4.2) // Include the reply watchdog's API cost, with a small margin.
   const factionManagerOutputFile = "/Temp/affordable-augs.txt"; // Temp file produced by faction manager with status information
-    const defaultBnOrder = [ // The order in which we intend to play bitnodes
-    // 1st Priority: Key new features and/or major stat boosts
-    4.3,  // Normal. Need singularity to automate everything, and need the API costs reduced from 16x -> 4x -> 1x reliably do so from the start of each BN
-    1.3,  // Easy.   Big boost to all multipliers (16% -> 24%), and no penalties to slow us down. Should go quick.
-    5.1,  // Normal. Unlocks intelligence stat early to maximize growth
-    2.3,  // Easy.   Boosts to crime tasks.
-    
-    11.3, // Normal. Decrease augmentation cost scaling in a reset (4% -> 6% -> 7%) (can buy more augs per reset). Also boosts company salary/rep (32% -> 48% -> 56%), which we have little use for with gangs.)
-
-    5.3,  // Normal. Unlock intelligence stat early to maximize growth, getBitNodeMultipliers + Formulas.exe for more accurate scripts, and +8% hack mults
-    3.1,  // Hard.   Corporations. While hard, these are insanely profitable.
-    9.3,  // Hard.   Hacknet nodes are more profitable and cheaper to upgrade. Also unlocks the ability to spend hashes on useful things.
-    3.3,  // Hard.   Corporations. While hard, these are insanely profitable.
-    10.3, // Hard.   Get the sleeves
-    6.1, // Normal. Unlocks the bladeburner API (and bladeburner outside of BN 6/7). Many recommend it before BN9 since it ends up being a faster win condition in some of the tougher bitnodes ahead.
-    7.3,
-    6.3,
-    5.3,
-    9.3,
-    13.3,
-    14.3,
-    15.3,
-    8.3,
-    12.9999999
-  ];
   //disableLogs(ns, ['getServerMaxRam', 'getServerUsedRam', 'getServerMoneyAvailable', 'getServerGrowth', 'getServerSecurityLevel', 'exec', 'scan', 'sleep', 'scp'])
   log(ns, `Cracking initial hosts..`, 'info')
   await crackHosts(ns); //do an initial crack to run scripts on other servers
@@ -61,8 +40,7 @@ export async function main(ns) {
   let resetInfo = await getReset(ns);
   let dictOwnedSourceFiles = await getActiveSourceFiles(ns, false);
   const unlockedSFs = await getActiveSourceFiles(ns, true);
-  const getSFLevel = bn => Number(bn + "." + ((dictOwnedSourceFiles[bn] || 0) + (resetInfo.currentNode == bn ? 1 : 0)));
-  const currBN = getSFLevel(resetInfo.currentNode);
+  const currBN = `${resetInfo.currentNode}.${sourceFileLevel(dictOwnedSourceFiles, resetInfo.currentNode) + 1}`;
   let ownedCracks = [];
   const STAGGER = 1000; //default staggering of routine scripts
   const PERIOD = 30000; //timeframe in which we will attempt to rerun routine scripts. (30 sec)
@@ -91,29 +69,34 @@ export async function main(ns) {
     bitNodeMults.HacknetNodeMoney > 0 && // Ensure hacknet is not disabled in this BN
     getPlayerMoney(ns) > reservedMoney(ns); // Player money exceeds the reserve (otherwise it will sit there buying nothing)
   let playerInGang = false;
-  const COMPANY_FACTIONS = [
-  "Bachman & Associates", "ECorp", "Clarke Incorporated", "OmniTek Incorporated", "NWO",
-  "Blade Industries", "MegaCorp", "KuaiGong International", "Fulcrum Secret Technologies", "Four Sigma"
-];
-  /** @param {NS} ns */
-  async function waitForCompanyAccess(ns) {
-    while (true) {
-      const invitations = await singRun(ns, 'checkFactionInvitations');
-      const available = new Set([
-        ...(Array.isArray(player?.factions) ? player.factions : []),
-        ...(Array.isArray(invitations) ? invitations : []),
-      ]);
-      const missing = COMPANY_FACTIONS.filter(faction => !available.has(faction));
-      if (missing.length === 0) return false;
-      return true;
+  let shouldIntelFarm = false, readyToFarmIntel = false, farmState;
+  let lastIntelPreparationCheck = -Infinity;
+  async function refreshIntelFarmReadiness(ns, force = false) {
+    // Readiness is live, but expensive invite/state reads need only run once per planning interval.
+    if (force || Date.now() - lastIntelPreparationCheck >= 30_000) {
+      try {
+        farmState = await intelFarmState(ns);
+        const invitations = sourceFileLevel(dictOwnedSourceFiles, 5) > 0 && 4 in unlockedSFs
+          ? await singRun(ns, 'checkFactionInvitations') : [];
+        const readiness = getIntelFarmReadiness(player, installedAugmentations, invitations, dictOwnedSourceFiles, farmState);
+        shouldIntelFarm = readiness.needed;
+        readyToFarmIntel = readiness.ready;
+      } catch (error) {
+        // An unavailable state helper must not take down money/augmentation automation or start an untracked farm.
+        shouldIntelFarm = getIntelFarmReadiness(player, installedAugmentations, [], dictOwnedSourceFiles, farmState).needed;
+        readyToFarmIntel = false;
+        log(ns, `WARNING: Intelligence preparation state unavailable; retrying in 30 seconds: ${String(error)}`);
+      }
+      lastIntelPreparationCheck = Date.now();
     }
+    // A live INT increase can release the finish gate without waiting for the next invite poll.
+    if (!getIntelFarmReadiness(player, installedAugmentations, [], dictOwnedSourceFiles, farmState).needed)
+      shouldIntelFarm = readyToFarmIntel = false;
   }
-  let shouldIntelFarm = (5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 230;
-  let readyToFarmIntel = shouldIntelFarm && !(await waitForCompanyAccess(ns));
 
   function getFactionWorkerArgs() {
     if (shouldIntelFarm)
-      return ["--fast-crimes-only", "--prioritize-invites", "--all-company-invites"];
+      return ["--fast-crimes-only", "--prioritize-invites", "--all-company-invites", "--intel-farm-preparation"];
     return 2 in unlockedSFs && !playerInGang
       ? ["--fast-crimes-only", "--get-invited-to-every-faction", "--crime-focus",
         "--training-stat-per-multi-threshold", 200, "--prioritize-invites"]
@@ -169,7 +152,7 @@ export async function main(ns) {
     {
       name: "bladeburner.js",
       shouldRun: () => 
-        7 in unlockedSFs && bitNodeMults.BladeburnerRank > 0,
+        !shouldIntelFarm && hasBladeburnerAccess(unlockedSFs) && bitNodeMults.BladeburnerRank > 0,
       args: () => []
     },
     {
@@ -179,7 +162,7 @@ export async function main(ns) {
     },
     {
       name: "spend-hashes.js",
-      shouldRun: () => shouldUpgradeHacknet && 9 in unlockedSFs,
+      shouldRun: () => 9 in unlockedSFs && bitNodeMults.HacknetNodeMoney > 0,
       args: () => [],
       nextRun: Date.now() + (6 * STAGGER)
     },
@@ -244,12 +227,6 @@ export async function main(ns) {
       args: () => [],
       nextRun: Date.now() + (5 * STAGGER)
     },
-    {
-      name: "farm-intel.js",
-      shouldRun: () => readyToFarmIntel,
-      args: () => [],
-      nextRun: Date.now() + (6 * STAGGER)
-    },
   ];
 
   let kernelStartTime = 0; // The time we personally launched daemon.
@@ -282,7 +259,6 @@ export async function main(ns) {
     await crackHosts(ns); 
     //do an initial crack to run scripts on other servers
     log(ns, "INFO: Cracked", true, 'info');
-    readyToFarmIntel = shouldIntelFarm && !(await waitForCompanyAccess(ns));
     // Intelligence farming is coordinated by mainLoop so preparation can survive augmentation resets.
     if (ns.getHostname() == 'home') {
       if (await getServerMaxRam(ns, 'home') < 64) {
@@ -338,9 +314,11 @@ export async function main(ns) {
     }
     await recordBnStart(ns, currBN);
     printBnRunSummary(ns, 25);
-    const nextRecommendedSf = defaultBnOrder.find(v => v - Math.floor(v) > getSFLevel(Math.floor(v)) - Math.floor(v));
-    nextRecommendedBn = Math.floor(nextRecommendedSf);
-    log(ns, `INFO: After the current BN (${currBN}), the next recommended BN is ${nextRecommendedBn} until you have SF ${nextRecommendedSf}.`, true);
+    const next = selectNextBitNode(dictOwnedSourceFiles, resetInfo.currentNode);
+    nextRecommendedBn = next.node;
+    log(ns, `INFO: After BN${currBN}, next is BN${next.node}` +
+      (next.repeat ? ' (repeat).' : ` until SF${next.node}.${next.targetLevel}.`), true);
+    await refreshIntelFarmReadiness(ns, true);
     return true;
   }
 
@@ -350,6 +328,15 @@ export async function main(ns) {
     //crack hosts if we increased in hacking level, or gain cracks.
     const playerHackLevel = player.skills.hacking
     player = await getPlayerInfo(ns);
+    await refreshIntelFarmReadiness(ns);
+    if (readyToFarmIntel) {
+      // The farm owns the reset phase. Do not race it with augmentation installation or new work.
+      if (!await isScriptRunning(ns, 'farm-intel.js')) {
+        await refreshIntelFarmReadiness(ns, true);
+        if (readyToFarmIntel) await runScriptLocal(ns, 'farm-intel.js', true, []);
+      }
+      if (readyToFarmIntel) return true;
+    }
     const numCracksOwned = ownedCracks.length;
     ownedCracks = await getPortCrackers(ns);
     if (player.skills.hacking > playerHackLevel || ownedCracks.length > numCracksOwned) await crackHosts(ns);
@@ -460,31 +447,31 @@ export async function main(ns) {
     // Check if there is some reason not to automatically destroy this BN
     if (resetInfo.currentNode == 10) { // Suggest the user doesn't reset until they buy all sleeves and max memory
       let sleeveCost = await sleeveRun(ns, 'getSleeveCost');
-      if (sleeveCost < Number.POSITIVE_INFINITY)
+      if (sleeveCost !== Number.POSITIVE_INFINITY)
         return false;
 
       const numSleeves = await sleeveRun(ns, `getNumSleeves`);
+      if (!Number.isInteger(numSleeves) || numSleeves < 0) return false;
 
       for (let i = 0; i < numSleeves; i++) {
         const sleeve = await sleeveRun(ns, 'getSleeve', i);
-        if (sleeve.memory < 100) return false;
+        if (!Number.isFinite(sleeve?.memory) || sleeve.memory < 100) return false;
       }
     }
-    if (wdHack === null) { // If we haven't checked yet, see if w0r1d_d43m0n (server) has been unlocked and get its required hack level
+    const bladeburnerComplete = await hasCompletedBladeburner(ns, unlockedSFs);
+    if (!bladeburnerComplete && !Number.isFinite(wdHack)) {
       wdHack = ns.scan("The-Cave").includes("w0r1d_d43m0n") ? ns.getServerRequiredHackingLevel("w0r1d_d43m0n") : Number.POSITIVE_INFINITY;
     }
 
-    if (player.skills.hacking >= wdHack) {
-      if (ns.hasRootAccess("w0r1d_d43m0n")) {
+    if (bladeburnerComplete || (Number.isFinite(wdHack) && player.skills.hacking >= wdHack && ns.hasRootAccess("w0r1d_d43m0n"))) {
         //time to leave....
         if (!(4 in unlockedSFs)) {
           log(ns, `You do not own SF4, so you must manually exit the bitnode (` +
-            `${player.skills.hacking >= wdHack ? "by hacking W0r1dD43m0n" : "on the bladeburner BlackOps tab"}).`, true);
+            `${bladeburnerComplete ? "on the Bladeburner BlackOps tab" : "by hacking W0r1dD43m0n"}).`, true);
           return true;
         } else {
           await destroyWD(ns, nextRecommendedBn, ns.getScriptName()); //this should kill it.
         }
-      }
     }
     return false;
   }

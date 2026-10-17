@@ -2,6 +2,7 @@ import {
   log, getConfiguration, disableLogs, getActiveSourceFiles, singRun, gangRun, hnRun,
   formatMoney, formatDuration, getPlayerInfo, getReset, findPids, sleeveRun, bbRun, getOwnedAugs, getReserve
 } from './utils.js'
+import { hasBladeburnerAccess } from './progression.js'
 import {
   DEFAULT_DESIRED_AUGS, DEFAULT_PRIORITY_AUGS, buildAugUtilityMap, buildDesiredAugSet,
   getDefaultDesiredStats, planDistinctFactionRepRoutes
@@ -433,8 +434,8 @@ async function mainLoop(ns) {
   numSleeves = (await sleeveRun(ns, 'getNumSleeves'));
   const playerInfo = await getPlayerInfo(ns);
   // If we have not yet detected that we are in bladeburner, do that now (unless disabled)
-  if (!options['disable-bladeburner'] && !playerInBladeburner)
-    playerInBladeburner = await bbRun(ns, 'inBladeburner');
+  if (!options['disable-bladeburner'] && hasBladeburnerAccess(ownedSourceFiles) && !playerInBladeburner)
+    playerInBladeburner = await bbRun(ns, 'inBladeburner') === true;
   const playerWorkInfo = await getCurrentWorkInfo(ns);
   if (!playerInGang && (2 in ownedSourceFiles)) {
     const inGangResult = await gangRun(ns, 'inGang');
@@ -466,7 +467,7 @@ async function mainLoop(ns) {
   if (canTrain && task.some(t => t?.startsWith("study")) && !options['disable-spending-hashes-for-study-upgrades'])
     if (await hnRun(ns, 'spendHashes', "Improve Studying"))
       log(ns, `SUCCESS: Bought "Improve Studying" to speed up Sleeve studying.`, false, 'success');
-  if (playerInBladeburner && (7 in ownedSourceFiles)) {
+  if (playerInBladeburner && hasBladeburnerAccess(ownedSourceFiles)) {
     const bladeburnerCity = await bbRun(ns, 'getCity');
     bladeburnerCityChaos = await bbRun(ns, 'getCityChaos', bladeburnerCity);
     bladeburnerContractChances = {};

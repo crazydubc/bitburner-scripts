@@ -2,6 +2,7 @@ import {
   findPids, getActiveSourceFiles, getReset, gangRun, singRun, log, getBNMults, getPlayerInfo,
   getOwnedAugs, getErrorInfo, bbRun, addRepToFavor, favorToRep, formatDuration, getServ, corpRun
 } from './utils.js';
+import { hasBladeburnerAccess, getIntelFarmReadiness, intelFarmState } from './progression.js';
 import {
   DEFAULT_PRIORITY_AUGS, DEFAULT_DESIRED_AUGS, getDefaultDesiredStats, buildDesiredAugSet,
   buildAugUtilityMap, getUsefulAugsForFaction, planBestFactionRepRoute,
@@ -167,7 +168,7 @@ export async function main(ns) {
   const crimeFocused = ns.args.includes("--crime-focus");
   const fastCrimesOnly = ns.args.includes("--fast-crimes-only");
   const prioritizeInvites = ns.args.includes("--prioritize-invites");
-  const collectAllCompanyInvites = ns.args.includes("--all-company-invites");
+  let collectAllCompanyInvites = ns.args.includes("--all-company-invites");
   const trainingStatPerMultiThreshold = getNumericFlag(ns.args, "--training-stat-per-multi-threshold", 100);
   const desiredStatOverrides = [
     ...getFlagValues(ns.args, "--desired-stats"),
@@ -618,7 +619,7 @@ export async function main(ns) {
   }
 
   async function isBladeburnerInterruption() {
-    if (!(7 in sourceFiles) || installedAugs.includes("The Blade's Simulacrum")) return false;
+    if (!hasBladeburnerAccess(sourceFiles) || installedAugs.includes("The Blade's Simulacrum")) return false;
     if (!isTrue(await bbRun(ns, "inBladeburner"))) return false;
     if (currentWork?.type) await singRun(ns, "stopAction");
     return true;
@@ -765,6 +766,10 @@ false, "info");
     requestedReplanDelay = REPLAN_INTERVAL;
     await loadData();
     currentWork = (await singRun(ns, "getCurrentWork")) ?? {};
+    // A farm can finish without resetting (target/ROI/error recovery). Release its existing worker too.
+    if (collectAllCompanyInvites && ns.args.includes("--intel-farm-preparation") &&
+        !getIntelFarmReadiness(playerInfo, installedAugs, [], resetInfo.ownedSF, await intelFarmState(ns)).needed)
+      collectAllCompanyInvites = false;
     if (collectAllCompanyInvites) return await collectCompanyInvitations();
     if (await isBladeburnerInterruption()) return true;
     if (crimeFocused && !playerInGang) {
