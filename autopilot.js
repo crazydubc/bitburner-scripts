@@ -312,13 +312,15 @@ export async function main(ns) {
       log(ns, `WARNING: This script requires SF4 (singularity) functions to assess purchasable augmentations ascend automatically. ` +
         `Some functionality will be disabled and you'll have to manage working for factions, purchasing, and installing augmentations yourself.`, true);
 
-      log(ns, `Manual hacking checklist`
-        + `\n1. You should start by going to the slums and mugging people for initial cash.`
-        + `\n2. Info: After getting some intial money, the casino will be ran giving a big boost.`
-        + `\n3. Visit a store like [alpha ent.] and purchase a tor router.`
-        + `\n4. Run buy -a for extra hacks and consider upgrading your home ram.`
-        + `\n5. Work for factions, install augments, and work towards hacking world dominion to destory the BN. Repeat steps 1-4 on each augment install loop.`
-        + `\nNOTE: After this bitnode, bitnode 4 is recommended and provides full automation.`, true);
+      if (resetInfo.currentNode === 1 && !dictOwnedSourceFiles[1]) {
+        // Read-only, non-modal guidance. A failed optional launch must not stall the income loop.
+        if (!await isScriptRunning(ns, 'bn1-guide.js')) {
+          const guidePid = ns.exec('bn1-guide.js', 'home', { threads: 1, temporary: true });
+          if (!guidePid) log(ns, 'BN1.1 guide could not start. Free home RAM, then run bn1-guide.js.', true);
+        }
+      }
+      log(ns, 'Manual steps: work for factions, buy/install useful augmentation bundles, then restart automation. ' +
+        'For first-BN1 prompts, run bn1-guide.js. After BN1.1, complete BN4.1–4.3 for Singularity automation.', true);
     }
     await recordBnStart(ns, currBN);
     printBnRunSummary(ns, 25);
