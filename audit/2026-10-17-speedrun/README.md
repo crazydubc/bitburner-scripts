@@ -2,7 +2,7 @@
 
 The highest-value work is fixing progression stalls and making the early-game launch/spending rules reliable. Keep the current hacking batcher as the performance baseline. Two confined batcher defects are documented separately; neither calls for replacing its scheduling design.
 
-**The `testing/bn1-go-audit` branch combines the audit, BN1.1 on-screen prompts, and focused Go fixes for in-game testing.** The initial audit documented 18 repair candidates; B03 is fixed here and the other findings remain open. The current hacking batcher and $8b reserve policy are unchanged.
+**The `testing/bn1-go-audit` branch combines the audit, BN1.1 on-screen prompts, and focused Go fixes for in-game testing.** The initial audit documented 18 repair candidates; B03 is fixed, and B02's Daedalus launch flag is now enforced. B02's remote reserve transport and the other findings remain open. The current hacking batcher and $8b reserve policy are unchanged.
 
 ## Pull the combined testing branch
 
@@ -15,7 +15,9 @@ run git-pull.js --branch testing/bn1-go-audit
 
 Wait for `Pull complete` and check for download warnings. Keep `--branch testing/bn1-go-audit` on later pulls; the downloader's default remains `main`. If your older downloader falls back to a local file listing and misses the new guide, rerun the same command after it has updated itself.
 
-On a fresh BN1.1, run `bn1-guide.js` first. Below 64 GB home RAM, the panel prints the next step and exits so coinflip has room; rerun it after each step. At 64 GB or more it refreshes automatically. Existing autopilot/Go processes need restarting to use their updated code.
+On a fresh BN1.1, run `bn1-guide.js` first. Below 64 GB home RAM, the panel prints the next step and exits so coinflip has room; rerun it after each step. At 64 GB or more it refreshes automatically and can start autopilot once per augmentation cycle when 48 GB is free and travel/betting cash are ready. Rerun it after each installation, or use `--manual` for prompts only. Existing autopilot/Go processes need restarting to use their updated code.
+
+The guide includes early darknet purchase/Charisma advice, `--roadmap` faction guidance, and an `--install` checklist. Leave autopilot running when using `run stockmaster.js --liquidate`: the liquidator sells, stays active without buying, and blocks normal trading until stopped or reset. Automated reset/Daedalus callers use the separate `--liquidate-once` mode. See [bn1-screen-guide.md](bn1-screen-guide.md).
 
 For a single Go game without cheats, run `go.js --runOnce --disable-cheats` when another Go process is not running. Check the log for errors and whether play finishes normally. Record opponent, board size, wins/losses, and duration over repeated games before judging strength. The archived tactical rewrite is not active: it did not improve aggregate wins in the recorded comparison.
 
@@ -23,10 +25,11 @@ Combined-branch checks:
 
 ```sh
 node audit/2026-10-17-speedrun/checks/bn1-guide.mjs
+node audit/2026-10-17-speedrun/checks/stock-liquidation.mjs
 node audit/2026-10-17-speedrun/checks/go-lifecycle.mjs
 ```
 
-Both checks pass together. All 86 gameplay JavaScript files parse; the previously removed test directory stays removed. Live BN1 progression, tail layout, and Go win-rate changes still require in-game testing.
+The focused checks pass, and changed gameplay files parse; the previously removed test directory stays removed. Live BN1 progression, tail layout, and Go win-rate changes still require in-game testing.
 
 ## Implementation follow-ups
 
@@ -59,7 +62,7 @@ PRs #31 and #32 are combined with the audit from [#33](https://github.com/crazyd
 
 ## Requirements preserved
 
-- The **$8 billion reserve is intentional**: it stops stock purchases while `coinflip.js` is finishing. Do not remove it as an alleged optimization. B02 concerns whether that intent actually reaches remote consumers, plus a separate Daedalus stop flag that is not read.
+- The **$8 billion reserve is intentional**: it stops stock purchases while `coinflip.js` is finishing. Do not remove it as an alleged optimization. B02's remote state transport remains open; the separate Daedalus launch flag is now enforced on the testing branch.
 - Preserve the successful batcher as the comparison baseline. Apply B15/B16 independently and verify completion order/security before changing allocation or target selection.
 - Preserve the corporation sequence: six-city Agriculture bootstrap → Tobacco in investment round 2 → Chemical. This audit proposes no replacement corporation strategy.
 - After SF5, preserve CashRoot + all ten corporate faction invitations → intelligence farming → resume the **same BN**. No BitFlume transition is proposed.

@@ -70,8 +70,7 @@ export async function main(ns) {
     let ownedStocks = await countOwnedStocks(ns, stkSymbols);
     while (ownedStocks > 0) {
       //log(ns, `INFO: Waiting for ${ownedStocks} owned stocks to be sold...`, false, "info");
-      pid = await launchScriptHelper(ns, 'stockmaster.js', ["--liquidate"])
-      //pid = ns.run(getFilePath("stockmaster.js"), 1, "--liquidate");
+      pid = await launchScriptHelper(ns, 'stockmaster.js', ["--liquidate-once"]);
       while (ns.isRunning(pid))
         await ns.sleep(10);
       ownedStocks = await countOwnedStocks(ns, stkSymbols);

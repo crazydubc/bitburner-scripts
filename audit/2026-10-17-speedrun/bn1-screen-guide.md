@@ -6,13 +6,23 @@ On a fresh first BN1 run, start with:
 run bn1-guide.js
 ```
 
-The script opens a log panel showing the next manual action: seed money, Aevum travel, actual coinflip completion, home RAM, TOR/program purchases, hacking automation, faction backdoors/invitations, augmentation cycles, Daedalus, and the final transition to BN4. It reads current game state without requiring Singularity. Prompts do not spend money, click the UI, change faction work, or interrupt the casino with dialogs.
+The script opens a log panel showing the next action: seed money, Aevum travel, actual coinflip completion, home RAM, TOR/program purchases, hacking automation, darknet, faction backdoors/invitations, augmentation cycles, Daedalus, and the final transition to BN4. It reads current game state without requiring Singularity. It can start autopilot, which runs coinflip and the other automation. Purchases, faction work, and augmentation installation still require manual input; prompts do not interrupt the casino with dialogs.
 
 Below 64 GB home RAM, the panel prints the next step and exits to free capacity for coinflip and its helpers. Its log remains available. Complete the step, then rerun the guide; after casino completion, upgrade home RAM to 64 GB or more. At 64 GB+, the panel updates every five seconds and toasts changed actions at most once every 15 seconds. These RAM thresholds are conservative workarounds for the suite's existing home-helper requirements.
 
-Autopilot also opens the guide during first-BN1 startup when possible. Starting `autopilot.js` directly on an 8 GB home is still subject to the audited RPC bootstrap problem; use the guide first. The optional guide launch never waits for RAM. On augmentation installation, start `bn1-guide.js` again; autopilot restarts also reopen it when appropriate.
+After an augmentation installation, run `bn1-guide.js` again. With at least 64 GB home RAM and 48 GB currently free, it starts autopilot automatically once the casino is complete or you are in Aevum with at least $10k betting cash. It waits if a manually started coinflip is still running. Launch failure returns immediately and retries on a later refresh.
 
-The guide uses `isScriptRunning` from `utils.js` to recognize autopilot on any server, including offloaded instances. Below 64 GB, it skips that helper lookup because casino and home-RAM prompts take priority; this preserves the low-RAM exit without waiting for an extra process on home.
+The guide records a successful launch or an already running autopilot in `bn1-guide-state.txt`, keyed to the current BitNode and augmentation reset. It starts autopilot at most once per cycle, including across guide restarts, so it respects later manual stops. A new augmentation reset allows another handoff. Use `--manual` to keep the normal panel in prompts-only mode, or restart autopilot manually after deliberately stopping it.
+
+Autopilot also opens the guide during first-BN1 startup when possible. Starting `autopilot.js` directly on an 8 GB home is still subject to the audited RPC bootstrap problem; use the guide first. The optional guide launch never waits for RAM.
+
+The guide uses `isScriptRunning` from `utils.js` to recognize autopilot on any server, including offloaded instances. Below 64 GB, it skips that helper lookup because casino and home-RAM prompts take priority. At higher capacities it also skips the lookup when less than 4 GB is free, reports the unknown status, and asks for helper headroom instead of starting a possible duplicate. These checks reduce home-RAM stalls; they do not repair the suite's general RPC transport.
+
+## Early darknet setup
+
+After coinflip and the main bootstrap purchases, the guide recommends `buy DarkscapeNavigator.exe` for $50m through TOR. The cheaper alternative is Chongqing > Shadowed Walkway: $30m, including TOR if missing. Visiting Chongqing does not join its city faction or block Sector-12. The purchase prompt does not block faction progress if cash is short.
+
+Autopilot detects the program and starts `darknet.js` from home. A rejected launch now returns immediately, allowing other helpers to run and a later retry. Check Active Scripts/logs for its darknet workers. Their phishing actions train Charisma; in fresh BN1.1 this improves Field Work, not Hacking Contracts. Compare displayed rep/sec where both are offered: Sector-12, The Black Hand, and Daedalus. CyberSec, NiteSec, and BitRunners offer hacking work only. The direct Charisma contribution to Hacking Contracts is a later SF15.3 bonus.
 
 ## Faction roadmap and work
 
@@ -33,18 +43,18 @@ run bn1-guide.js --install
 This opens a separate, one-shot checklist that remains available after exiting. The normal augmentation and Red Pill prompts also include the stock-liquidation reminder. The sequence is:
 
 1. Check the desired bundle, reputation, prerequisites, and queued purchases.
-2. Stop **all autopilot instances**, including offloaded ones, using Active Scripts. Leave them stopped until installation so trading is not restarted.
-3. On home, enter `run stockmaster.js --liquidate` (or `run stockmaster.js -l`). The liquidator stops other stockmaster instances and sells long/short positions.
-4. Wait for its summary and verify that the Stock Market screen shows no positions. Without TIX API access, sell manually; if no stocks are held, skip selling.
+2. Leave autopilot running. On home, enter `run stockmaster.js --liquidate` (or `run stockmaster.js -l`). The liquidator stops other stockmaster instances, sells long/short positions, and remains running without buying. Its presence prevents autopilot from launching normal trading.
+3. Wait for its summary and verify that the Stock Market screen shows no positions. Without TIX API access, sell manually; the liquidator still remains active to hold trading paused.
+4. Leave the liquidator running until installation.
 5. Pause competing spending scripts if needed, buy the useful augmentation bundle in an appropriate price/prerequisite order, use suitable leftovers for NeuroFlux and home upgrades, then install through Augmentations.
-6. After installation, restart `bn1-guide.js`. If abandoning the installation, resume autopilot when ready.
+6. After installation, restart `bn1-guide.js`; it can start autopilot on the new cycle. If abandoning the installation, stop only the liquidating stockmaster process in Active Scripts. Autopilot can then resume trading when eligible, or you can run stockmaster yourself.
 
-The static checklist remains useful after stopping autopilot even if the normal guide returns to its startup prompt. The guide never executes the liquidation command, kills processes, buys augmentations, or installs them.
+Opening the static checklist does not pause automatic startup or change running processes. The guide never executes the liquidation command, kills processes, buys augmentations, or installs them. Internal reset/Daedalus callers use `--liquidate-once` to preserve their wait-for-exit/resume behavior; use the persistent `--liquidate` command for this manual checklist.
 
 Your $8b reserve remains intact. The panel checks casino earnings this installation, not total cash, sampling completion, or whether coinflip exited. It uses a read-only view of installed augmentations; without Singularity it cannot inspect queued purchases or faction reputation, so those prompts explicitly direct you to the relevant game screens. The guide is advisory and does not change the existing money-management implementation.
 
-Use `--no-tail` for log-only operation or `--once` for a single snapshot. Stop the guide process to silence it for the current session. It exits outside BN1 or once SF1/SF4 is active.
+Use `--no-tail` for log-only operation or `--once` for a single snapshot without starting autopilot. `--roadmap` and `--install` also never start it. Stop the guide process to silence it for the current session. It exits outside BN1 or once SF1/SF4 is active.
 
 This PR also corrects the cracker-inventory offset so buying BruteSSH immediately becomes visible to autopilot. The downloader fallback includes the guide and uses the real `farm-intel.js` filename.
 
-Validation: `node audit/2026-10-17-speedrun/checks/bn1-guide.mjs`. Live tail layout and complete first-BN1 timing still need an in-game check; no speedup percentage is claimed.
+Validation: `node audit/2026-10-17-speedrun/checks/bn1-guide.mjs` and `node audit/2026-10-17-speedrun/checks/stock-liquidation.mjs`. These execute the guide, liquidation flow, and affected callers with mocked game transport. Live tail layout and complete first-BN1 timing still need an in-game check; no speedup percentage is claimed.

@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
-import {getBn1Guidance, getBn1InstallGuidance, getBn1FactionRoadmap, readBn1Snapshot, main, BN1_CRACKERS, BN1_FACTION_SERVERS} from '../../../bn1-guide.js';
+import {readFile} from 'node:fs/promises';
+import {getBn1Guidance, getBn1InstallGuidance, getBn1FactionRoadmap, readBn1Snapshot, maybeStartBn1Autopilot, main, BN1_CRACKERS, BN1_FACTION_SERVERS, BN1_GUIDE_STATE} from '../../../bn1-guide.js';
 import {filesExist, getPortCrackers} from '../../../utils.js';
 
 function snapshot() {
   return {
-    reset: {currentNode: 1, lastAugReset: 100, ownedSF: new Map(), ownedAugs: new Map()},
+    reset: {currentNode: 1, lastNodeReset: 1, lastAugReset: 100, ownedSF: new Map(), ownedAugs: new Map()},
     player: {money: 10e9, city: 'Aevum', skills: {hacking: 60}, factions: []},
-    homeRam: 64, casinoEarned: 10e9, hasTor: true, autopilotRunning: true,
+    homeRam: 64, homeFreeRam: 56, casinoEarned: 10e9, hasTor: true, hasDarknet: true, autopilotRunning: true, coinflipRunning: false,
     crackers: BN1_CRACKERS.map(([file]) => file), daemon: null,
     servers: Object.fromEntries(BN1_FACTION_SERVERS.map(([host], i) => [host, {
       requiredHackingSkill: [55, 210, 350, 530][i], numOpenPortsRequired: i + 1,
@@ -52,6 +53,16 @@ assert.equal(getBn1Guidance(s).id, 'finish-node', 'Do not force another casino c
 s.reset.ownedSF.set(1, 1);
 assert.equal(getBn1Guidance(s).id, 'finished');
 
+// Darknet is an early post-casino purchase, not a blocker when cash is short.
+const dark = snapshot(); dark.hasDarknet = false;
+assert.equal(getBn1Guidance(dark).id, 'darknet');
+assert(getBn1Guidance(dark).steps.some(step => step.includes('buy DarkscapeNavigator.exe')));
+assert(getBn1Guidance(dark).steps.some(step => step.includes('Field Work')));
+dark.player.money = 0;
+assert.equal(getBn1Guidance(dark).id, 'backdoor-CSEC');
+dark.casinoEarned = 0; dark.player.money = 10e9;
+assert.equal(getBn1Guidance(dark).id, 'casino', 'Do not recommend darknet purchases before the casino is finished');
+
 // Work suggestions advance past installed targets without requiring Singularity.
 const progress = snapshot();
 progress.player.factions = ['CyberSec', 'Sector-12', 'NiteSec'];
@@ -69,37 +80,36 @@ assert(roadmap.includes('do not join Chongqing, New Tokyo, Ishima, or Volhaven')
 assert(roadmap.includes('Optional for unattended work: Tian Di Hui'));
 assert(getBn1FactionRoadmap(progress).steps.some(step => step.includes('CashRoot Starter Kit (installed)')));
 
-// Every install path must remind the user to stop the launcher and liquidate;
+// Every install path keeps autopilot active and asks the user to liquidate;
 // the expanded checklist must verify positions before purchases/installation.
 for (const factions of [['CyberSec'], ['Daedalus']]) {
   const ready = snapshot(); ready.player.factions = factions;
   const text = getBn1Guidance(ready).steps.join('\n');
-  assert(text.includes('stop every autopilot.js instance'));
+  assert(text.includes('leave autopilot running'));
   assert(text.includes('run stockmaster.js --liquidate'));
   assert(text.includes('Verify all stock positions are zero'));
 }
 const installSteps = getBn1InstallGuidance().steps;
-const stopAt = installSteps.findIndex(step => step.startsWith('Stop every autopilot.js'));
 const sellAt = installSteps.findIndex(step => step.includes('run stockmaster.js --liquidate'));
 const verifyAt = installSteps.findIndex(step => step.includes('verify zero positions'));
 const buyAt = installSteps.findIndex(step => step.includes('Buy desired expensive augmentations'));
-assert(stopAt >= 0 && stopAt < sellAt && sellAt < verifyAt && verifyAt < buyAt);
+assert(sellAt >= 0 && sellAt < verifyAt && verifyAt < buyAt);
+assert(installSteps.some(step => step.includes('Leave autopilot running')));
+assert(!installSteps.some(step => /stop every autopilot|keep autopilot stopped|pauses the guide/i.test(step)));
 assert(installSteps.some(step => step.includes('Without TIX API access, sell manually')));
 
-// One-shot reference panels can open while the normal guide is running. They
-// neither launch helpers nor trade/stop scripts; the install view reads no state.
+// Reference panels never launch helpers, alter startup state, trade, or stop scripts.
 for (const mode of ['install', 'roadmap']) {
-  const live = snapshot(), rendered = [];
+  const live = snapshot(), rendered = [], writes = new Map();
   await main({
     pid: 1, flags: () => ({'no-tail': true, [mode]: true}), getHostname: () => 'home',
     getScriptName: () => 'bn1-guide.js', ps: () => [{pid: 2, filename: 'bn1-guide.js'}],
-    getResetInfo: () => {
-      assert.notEqual(mode, 'install', 'Install checklist must not need a live snapshot');
-      return live.reset;
-    },
-    getPlayer: () => live.player, getServerMaxRam: () => live.homeRam,
+    getResetInfo: () => { assert.notEqual(mode, 'install'); return live.reset; },
+    getPlayer: () => { assert.notEqual(mode, 'install'); return live.player; }, getServerMaxRam: () => live.homeRam,
     hasTorRouter: () => live.hasTor, getMoneySources: () => ({sinceInstall: {casino: live.casinoEarned}}),
-    fileExists: file => live.crackers.includes(file), getServer: host => live.servers[host],
+    fileExists: file => live.crackers.includes(file) || (file === 'DarkscapeNavigator.exe' && live.hasDarknet),
+    getServer: host => host === 'home' ? {ramUsed: 8} : live.servers[host],
+    write: async (file, value) => writes.set(file, value),
     exec: () => {throw Error('Reference panels must not launch helpers or automate actions');},
     sleep: () => {throw Error('Reference panels should exit after rendering');},
     disableLog() {}, clearLog() {}, ui: {setTailTitle() {}}, print: message => rendered.push(message),
@@ -107,6 +117,7 @@ for (const mode of ['install', 'roadmap']) {
   assert(rendered.some(message => message.includes(mode === 'install'
     ? 'run stockmaster.js --liquidate' : 'Faction roadmap')));
   assert(rendered.some(message => message.includes('Reference view exits now')));
+  assert.equal(writes.size, 0);
 }
 
 // Use the real shared lookup with a mocked helper transport. An offloaded
@@ -121,7 +132,8 @@ for (const runningOn of ['home', 'n00dles', null]) {
     getResetInfo: () => live.reset, getPlayer: () => live.player,
     getServerMaxRam: () => live.homeRam, hasTorRouter: () => live.hasTor,
     getMoneySources: () => ({sinceInstall: {casino: live.casinoEarned}}),
-    fileExists: file => live.crackers.includes(file), getServer: host => live.servers[host],
+    fileExists: file => live.crackers.includes(file) || (file === 'DarkscapeNavigator.exe' && live.hasDarknet),
+    getServer: host => host === 'home' ? {ramUsed: 8} : live.servers[host],
     exec: (file, host) => {
       assert.equal(file, 'bin/getServers.js'); assert.equal(host, 'home');
       return 42;
@@ -147,7 +159,7 @@ await main({
   getScriptName: () => 'bn1-guide.js', ps: () => [{pid: 1, filename: 'bn1-guide.js'}],
   getResetInfo: () => low.reset, getPlayer: () => low.player, getServerMaxRam: () => low.homeRam,
   hasTorRouter: () => low.hasTor, getMoneySources: () => ({sinceInstall: {casino: 0}}),
-  fileExists: () => true, getServer: host => low.servers[host],
+  fileExists: () => true, getServer: host => host === 'home' ? {ramUsed: 0} : low.servers[host],
   exec: () => {throw Error('Low-RAM guide must not launch a server lookup helper');},
   disableLog() {}, clearLog() {}, ui: {setTailTitle() {}},
   print: m => messages.push(m), tprint: m => messages.push(m),
@@ -156,6 +168,93 @@ await main({
 assert(messages.some(message => message.includes('guide exits now')));
 assert(messages.some(message => message.includes('$8b reserve')));
 
+// Automatic startup is bounded, recognizes existing remote instances, and is
+// re-armed by an augmentation reset rather than by restarting the guide.
+function handoffHarness() {
+  const files = new Map(), launches = [];
+  const ns = {
+    read: file => files.get(file) ?? '', write: async (file, value) => files.set(file, value),
+    fileExists: () => true, exec: (...args) => { launches.push(args); return 7; }, tprint() {},
+  };
+  return {ns, files, launches};
+}
+const handoff = handoffHarness(), ready = snapshot(); ready.autopilotRunning = false;
+await maybeStartBn1Autopilot(handoff.ns, ready);
+assert.equal(ready.autopilotRunning, true);
+assert.deepEqual(handoff.launches, [['autopilot.js', 'home', {threads: 1, temporary: true, preventDuplicates: true}]]);
+assert.equal(JSON.parse(handoff.files.get(BN1_GUIDE_STATE)).reason, 'started');
+ready.autopilotRunning = false;
+await maybeStartBn1Autopilot({...handoff.ns}, ready);
+assert.equal(handoff.launches.length, 1, 'Restarting the guide must not undo a manual stop');
+ready.reset.lastAugReset++;
+await maybeStartBn1Autopilot(handoff.ns, ready);
+assert.equal(handoff.launches.length, 2, 'A new augmentation cycle must allow another handoff');
+const observed = handoffHarness(), remote = snapshot();
+await maybeStartBn1Autopilot(observed.ns, remote);
+remote.autopilotRunning = false;
+await maybeStartBn1Autopilot(observed.ns, remote);
+assert.equal(observed.launches.length, 0, 'Do not duplicate an existing autopilot, including after it later stops');
+for (const change of [
+  live => { live.homeRam = 8; }, live => { live.homeFreeRam = 47; },
+  live => { live.autopilotRunning = null; }, live => { live.reset.currentNode = 4; },
+  live => { live.reset.ownedSF.set(1, 1); }, live => { live.reset.ownedSF.set(4, 1); },
+  live => { live.casinoEarned = 0; live.player.city = 'Sector-12'; },
+  live => { live.casinoEarned = 0; live.player.money = 0; },
+  live => { live.casinoEarned = 0; live.coinflipRunning = true; },
+  live => { live.reset.ownedAugs.set('The Red Pill', 1); live.player.skills.hacking = 3000; live.daemon = {hasAdminRights: true, requiredHackingSkill: 3000}; },
+]) {
+  const harness = handoffHarness(), live = snapshot(); live.autopilotRunning = false; change(live);
+  await maybeStartBn1Autopilot(harness.ns, live);
+  assert.equal(harness.launches.length, 0);
+  assert.equal(harness.files.size, 0);
+}
+const bootstrap = handoffHarness(), cycle = snapshot();
+cycle.autopilotRunning = false; cycle.casinoEarned = 0; cycle.player.money = 10_000;
+await maybeStartBn1Autopilot(bootstrap.ns, cycle);
+assert.equal(bootstrap.launches.length, 1, 'After a reset, a ready Aevum start can hand coinflip to autopilot');
+for (const failedExec of [() => 0, () => { throw Error('missing dependency'); }]) {
+  const retry = handoffHarness(), live = snapshot(); live.autopilotRunning = false;
+  await maybeStartBn1Autopilot({...retry.ns, exec: failedExec}, live);
+  assert.equal(retry.files.size, 0, 'Failed launches must not consume the cycle handoff');
+  await maybeStartBn1Autopilot(retry.ns, live);
+  assert.equal(retry.launches.length, 1);
+}
+
+// Exercise the real panel loop and shared lookup with a bounded mock scheduler.
+for (const mode of ['automatic', 'manual', 'once']) {
+  const live = snapshot(), harness = handoffHarness(), stop = Error('end panel check');
+  const ns = {
+    ...harness.ns, pid: 1, flags: () => ({'no-tail': true, [mode]: true}),
+    getHostname: () => 'home', getScriptName: () => 'bn1-guide.js', ps: () => [],
+    getResetInfo: () => live.reset, getPlayer: () => live.player,
+    getServerMaxRam: () => live.homeRam, getServer: host => host === 'home' ? {ramUsed: 8} : live.servers[host],
+    hasTorRouter: () => true, getMoneySources: () => ({sinceInstall: {casino: live.casinoEarned}}),
+    exec: (...args) => args[0] === 'bin/getServers.js' ? 42 : harness.ns.exec(...args),
+    nextPortWrite: async () => {}, readPort: () => [{hostname: 'home'}, {hostname: 'n00dles'}],
+    disableLog() {}, clearLog() {}, ui: {setTailTitle() {}}, print() {}, toast() {},
+    sleep: async () => { throw stop; },
+  };
+  if (mode === 'once') await main(ns);
+  else await assert.rejects(main(ns), error => error === stop);
+  assert.equal(harness.launches.length, mode === 'automatic' ? 1 : 0);
+  assert.equal(harness.files.size, mode === 'automatic' ? 1 : 0);
+}
+
+// A rejected darknet launch must not prevent the next helper from being checked.
+const autopilotSource = await readFile(new URL('../../../autopilot.js', import.meta.url), 'utf8');
+const helperSource = autopilotSource.slice(autopilotSource.indexOf('async function checkOnRunningScripts(ns)'),
+  autopilotSource.indexOf('async function runPeriodicScripts(ns)'));
+const helperLaunches = [];
+const checkHelpers = Function('asynchronousHelpers', 'isScriptRunning', 'runScriptSomewhere',
+  helperSource + '; return checkOnRunningScripts;')(
+  ['darknet.js', 'next-helper.js'].map(name => ({name, shouldRun: () => true, args: () => []})),
+  async () => false, async (ns, file) => helperLaunches.push(file));
+await checkHelpers({exec: (file, host, options) => {
+  assert.equal(host, 'home'); assert.equal(options.preventDuplicates, true);
+  helperLaunches.push(file); return 0;
+}});
+assert.deepEqual(helperLaunches, ['darknet.js', 'next-helper.js']);
+
 // B03: preserve input-to-result correspondence for all single-cracker inventories.
 const names = BN1_CRACKERS.map(([file]) => file);
 for (const owned of [[], ...names.map(file => [file]), names]) {
@@ -163,4 +262,4 @@ for (const owned of [[], ...names.map(file => [file]), names]) {
   assert.deepEqual(await filesExist(ns, names), names.map(name => owned.includes(name)));
   assert.deepEqual(await getPortCrackers(ns), owned);
 }
-console.log('BN1 progression, faction roadmap, manual-install checklist, reference panels, remote autopilot, low-RAM exit, and cracker detection checks passed');
+console.log('BN1 progression, darknet guidance, install checklist, reference panels, remote detection, bounded startup across resets, low-RAM exit, and cracker checks passed');

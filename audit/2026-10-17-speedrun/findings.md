@@ -43,6 +43,8 @@ Separately, `runScriptSomewhere(..., persistent=true)` cannot use home: its home
 
 ## B02 — Host-local state undermines the intended casino gate
 
+**Testing-branch follow-up:** the Daedalus stop flag now gates normal stockmaster launches. Manual `--liquidate` stays active without buying, while automated reset/Daedalus callers use `--liquidate-once`. Focused checks cover these paths. The host-local reserve/configuration transport described below remains unresolved; this is a partial repair, not closure of B02.
+
 **Where:** `autopilot.js:274,365–380,151–155,727–787`; `utils.js:52–62,415–420`; `stockmaster.js:123,159,198`; other `reserve.txt` consumers.
 
 The owner clarified that **the $8 billion reserve prevents stock buying until the coinflipper finishes**. That requirement is valid and must stay. The issue is transport: `ns.read`/`ns.write` use the executing server, autopilot can relocate off home, and the remote launch bundle contains code but no `reserve.txt` or script configuration. A fresh remote stockmaster reads missing reserve state as zero. A copied-once file can also become stale. Host manager, hacknet, gangs, and sleeves consume the same host-local pattern.

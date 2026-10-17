@@ -1,10 +1,10 @@
 # Fresh BN1.1: practical operating instructions
 
-**On-screen version:** the user requested live in-game prompts. [PR #31](https://github.com/crazydubc/bitburner-scripts/pull/31) implements them in `bn1-guide.js`. After installing that change, start with `run bn1-guide.js`; this document remains the detailed reference behind the prompts.
+**On-screen version:** the combined `testing/bn1-go-audit` branch provides live prompts in `bn1-guide.js`. Start with `run bn1-guide.js`; this document remains the detailed reference behind the prompts. See [bn1-screen-guide.md](bn1-screen-guide.md) for automatic startup and panel options.
 
 This guide targets the audited scripts and game 3.0.1 mechanics. A fresh BN1.1 has **no Singularity API**. Hacking, rooting, server buying, and contracts can be scripted; buying home upgrades, faction work, augmentation purchases/installation, and the final transition still need manual input. A later BN1 with SF4.3 can automate those actions.
 
-The audit branch has not repaired the scripts yet. The startup steps below work around the most important limitations. They are a conservative operating procedure, not a measured world-record route.
+The testing branch includes focused repairs and guidance; the remaining audit findings still need work. The startup steps below are a conservative operating procedure, not a measured world-record route.
 
 ## 1. Install on home
 
@@ -13,10 +13,11 @@ Export a save and preserve any locally edited scripts before updating. In the ga
 ```text
 home
 wget https://raw.githubusercontent.com/crazydubc/bitburner-scripts/main/git-pull.js git-pull.js
-run git-pull.js
+run git-pull.js --branch testing/bn1-go-audit
+run bn1-guide.js
 ```
 
-Wait for the pull to finish and inspect failures. The current downloader always includes an obsolete `intel-farm.js` name; the real file is `farm-intel.js`. A failed repository listing needs attention because its fallback may miss new dependencies. Install at the home root: several helpers use root-relative assumptions.
+Wait for the pull to finish and inspect failures before starting the guide. The testing branch fixes the `farm-intel.js` fallback filename and includes the guide. A failed repository listing still needs attention because its fallback may miss dependencies. Install at the home root: several helpers use root-relative assumptions.
 
 ## 2. Finish the casino bootstrap before allowing stock buying
 
@@ -55,15 +56,17 @@ run Tasks/crack-host.js
 
 The five programs total $287m at the reference prices. `buy -a` also purchases expensive optional programs, including the $5b Formulas.exe; the suite has fallback calculations and does not require spending half the casino proceeds on Formulas in BN1.1. SF5 will later supply it.
 
-Until B03 is fixed, explicitly run `Tasks/crack-host.js` after each new cracker purchase. Root access provides worker RAM even on servers whose hacking requirement is still too high to earn from.
+The testing branch fixes B03's cracker detection. You can also run `Tasks/crack-host.js` after each new cracker purchase. Root access provides worker RAM even on servers whose hacking requirement is still too high to earn from.
 
-Now start the manager:
+Rerun the guide; it starts the manager once per installation when at least 48 GB is free on a 64+ GB home:
 
 ```text
-run autopilot.js
+run bn1-guide.js
 ```
 
 Check Active Scripts and the autopilot/kernel logs. You want a live income process, advancing preparation, and no repeating “unable to launch” messages. Current cloud buying can overspend its budget (B04), so monitor it during bootstrap. If a helper stalls, inspect home RAM and the child process before restarting; repeated blind restarts do not repair the underlying wait.
+
+Buy `DarkscapeNavigator.exe` for $50m through TOR after the casino. Alternatively, visit Chongqing > Shadowed Walkway and buy it for $30m; this also grants TOR. Autopilot then starts `darknet.js` when home has space. Darknet phishing trains Charisma, which helps Field Work reputation in BN1.1. At Sector-12, The Black Hand, and Daedalus, compare Field Work and Hacking Contracts and choose the higher displayed rep/sec. CyberSec, NiteSec, and BitRunners only offer hacking work. Visiting Chongqing does not join its city faction.
 
 ## 4. Work toward useful augmentation bundles
 
@@ -108,17 +111,17 @@ A good installation decision compares:
 
 The script's four-hour cap is a fallback, not a recommended waiting period. Avoid delaying a productive reset solely because cheap NeuroFlux levels continue appearing.
 
-Before final purchases or a manual installation, enter `run bn1-guide.js --install` to open the on-screen checklist. Stop all autopilot instances in Active Scripts, including offloaded ones, so they cannot restart trading. On home, enter `run stockmaster.js --liquidate`, wait for the sale summary, and verify zero stock positions in the Stock Market screen. If TIX API access is unavailable, sell manually; skip selling if there are no holdings. Keep autopilot stopped until installation and pause competing spending scripts if needed while buying the bundle.
+Before final purchases or a manual installation, enter `run bn1-guide.js --install` to open the on-screen checklist. Leave autopilot running. On home, enter `run stockmaster.js --liquidate`, wait for the sale summary, and verify zero stock positions in the Stock Market screen. The liquidator stays running without buying, preventing autopilot from restarting normal stock trading. If TIX API access is unavailable, sell manually while the liquidator keeps trading paused. Leave the liquidator running until installation, and pause competing spending scripts if needed while buying the bundle. To cancel, stop only the liquidating stockmaster process and let autopilot resume trading when eligible.
 
 Then spend appropriate leftover money on home RAM, then cores when useful. Home upgrades persist across augmentation installations; ordinary purchased servers and hacknet investments do not. Use the augmentation UI to install in fresh BN1.1; `ascend.js` assumes APIs you do not yet possess and currently has missing reset helpers (B07/B11).
 
-After installation, start the casino/bootstrap and `autopilot.js` again as needed. Without SF4, explicitly restarting automation is part of the user workflow. CashRoot and retained home RAM make this much shorter than the first cycle.
+After installation, run `bn1-guide.js` again. On a 64+ GB home with 48 GB free, it starts autopilot once the casino is complete or you are in Aevum with $10k betting cash; autopilot handles coinflip from there. CashRoot and retained home RAM make this much shorter than the first cycle. `--manual` keeps startup under your control, and the guide respects a deliberate autopilot stop for the rest of that augmentation cycle.
 
 ## 6. Finish BN1
 
 For the hacking route, Daedalus requires **30 distinct installed augmentations, $100b cash, and hacking 2,500** in BN1. The alternative skill condition is 1,500 in all four combat stats. Check actual requirements if using this guide in another BN.
 
-Hold cash until the invitation arrives; stock portfolio value is not cash. Autopilot's current Daedalus stop flag is not enforced by its stock launch predicate (B02), so supervise this transition until repaired.
+Hold cash until the invitation arrives; stock portfolio value is not cash. Use the persistent liquidation command when you need portfolio value converted to cash, then join Daedalus manually in BN1.1. The testing branch also enforces autopilot's temporary Daedalus stop flag for later runs with automatic joining; B02's remote reserve-file transport issue remains open.
 
 Earn Daedalus reputation for The Red Pill (2.5m rep, $0 base), purchase and install it. Donation access at 150 favor in BN1 can shorten this grind **if** the next cycle can actually fund the needed donation. Favor is awarded on installation; resetting for favor without a funding plan can lose time.
 

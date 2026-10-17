@@ -34,8 +34,9 @@ let bitNodeMults = (/**@returns{BitNodeMultipliers}*/() => undefined)();
 
 let options;
 const argsSchema = [
-  ['l', false], // Stop any other running stockmaster.js instances and sell all stocks
+  ['l', false], // Stop other stockmaster instances, sell all stocks, and stay running without buying until stopped/reset
   ['liquidate', false], // Long-form alias for the above flag.
+  ['liquidate-once', false], // Sell and exit, for automated callers that manage their own trading pause/reset
   ['mock', false], // If set to true, will "mock" buy/sell but not actually buy/sell anything
   ['noisy', false], // If set to true, tprints and announces each time stocks are bought/sold
   ['disable-shorts', false], // If set to true, will not short any stocks. Will be set depending on having SF8.2 by default.
@@ -75,18 +76,26 @@ export async function main(ns) {
   // If given the "liquidate" command, try to kill any versions of this script trading in stocks
   // NOTE: We must do this immediately before we start resetting / overwriting global state below (which is shared between script instances)
   const hasTixApiAccess = await hasTixApi(ns);
-  if (runOptions.l || runOptions.liquidate) {
-    if (!hasTixApiAccess) return log(ns, 'ERROR: Cannot liquidate stocks because we do not have Tix Api Access', true, 'error');
+  if (runOptions.l || runOptions.liquidate || runOptions['liquidate-once']) {
+    if (runOptions.mock) return log(ns, 'ERROR: Liquidation requires real trades; remove --mock to sell and pause trading.', true, 'error');
     log(ns, 'INFO: Killing any other stockmaster processes...', true, 'info');
     const pids = await findPids(ns, 'stockmaster.js');
     for (const pid of pids) {
       if (pid !== ns.pid) ns.kill(pid);
     }
-    log(ns, 'INFO: Checking for and liquidating any stocks...', true, 'info');
-    await liquidate(ns); // Sell all stocks
-    return;
+    mock = false; // Another instance may have left shared mock state behind.
+    if (hasTixApiAccess) {
+      log(ns, 'INFO: Checking for and liquidating any stocks...', true, 'info');
+      await liquidate(ns); // Sell all stocks
+    } else {
+      log(ns, 'WARN: No TIX API access. Sell any positions manually on the Stock Market screen.', true, 'warning');
+    }
+    if (runOptions['liquidate-once']) return;
+    log(ns, 'INFO: Trading paused. Leave this liquidator running until installation; autopilot can stay running. To resume trading, stop this process in Active Scripts.', true, 'info');
+    ns.disableLog('sleep');
+    while (true) await ns.sleep(60_000); // Stay visible to autopilot; never enter the buying loop.
   } // Otherwise, prevent multiple instances of this script from being started, even with different args.
-  if ((await findPids(ns)).length > 1) return;
+  if ((await findPids(ns, 'stockmaster.js')).some(pid => pid !== ns.pid)) return;
 
   ns.disableLog("ALL");
   // Extract various options from the args (globals, purchasing decision factors, pre-4s factors)

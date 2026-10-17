@@ -150,6 +150,7 @@ export async function main(ns) {
     {
       name: "stockmaster.js",
       shouldRun: () => 
+        !disableStockmasterForDaedalus &&
         (reqRam(3000) || !shouldImproveHacking(ns)) &&
         (getTimeInAug() > 20000 || resetInfo.currentNode == 8),
       args: () => []
@@ -313,7 +314,7 @@ export async function main(ns) {
         `Some functionality will be disabled and you'll have to manage working for factions, purchasing, and installing augmentations yourself.`, true);
 
       if (resetInfo.currentNode === 1 && !dictOwnedSourceFiles[1]) {
-        // Read-only, non-modal guidance. A failed optional launch must not stall the income loop.
+        // Non-modal guidance. A failed optional launch must not stall the income loop.
         if (!await isScriptRunning(ns, 'bn1-guide.js')) {
           const guidePid = ns.exec('bn1-guide.js', 'home', { threads: 1, temporary: true });
           if (!guidePid) log(ns, 'BN1.1 guide could not start. Free home RAM, then run bn1-guide.js.', true);
@@ -385,7 +386,8 @@ export async function main(ns) {
       const serverRunning = await isScriptRunning(ns, script.name);
       if (script.shouldRun() && !serverRunning) {
         if (script.name == "darknet.js")
-          await runScriptLocal(ns, script.name, true, script.args())
+          // Darknet bootstraps from home. A full home must not trap the manager in an RPC launch loop.
+          ns.exec(script.name, 'home', { threads: 1, temporary: true, preventDuplicates: true }, ...script.args());
         else
           await runScriptSomewhere(ns, script.name, true, script.args());
       }
@@ -776,7 +778,7 @@ export async function main(ns) {
       if (player.money < moneyReq) { // Only liquidate stocks if we don't have enough cash lying around.
         disableStockmasterForDaedalus = true; // Flag to keep stockmaster offline until we've gotten a daedalus invite
         log(ns, "INFO: Temporarily liquidating stocks to earn an invite to Daedalus...", true, 'info');
-        await launchScriptHelper(ns, 'stockmaster.js', ['--liquidate']);
+        await launchScriptHelper(ns, 'stockmaster.js', ['--liquidate-once']);
         await ns.sleep(5000);
       } // else if we don't liquidate stocks, and our money dips below 100E9 again, we can always do it on the next loop
     } else if (resetInfo.currentNode == 8) {
