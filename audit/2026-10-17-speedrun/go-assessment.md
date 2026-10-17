@@ -56,6 +56,24 @@ The experiment command applies [go-tactics-experiment.patch](go-tactics-experime
 
 ## Next work with the best chance of improving win ratio
 
+### User-reported game baseline — 2026-10-17
+
+Interpreting the supplied records as wins / games played:
+
+| Opponent | Wins / games | Win rate |
+| --- | --- | --- |
+| Netburners | 8 / 8 | 100% |
+| Daedalus | 6 / 6 | 100% |
+| Illuminati | 2 / 5 | 40% |
+| Slum Snakes | 3 / 3 | 100% |
+| Tetrads | 4 / 5 | 80% |
+| The Black Hand | 3 / 3 | 100% |
+| **Total** | **26 / 30** | **86.7%** |
+
+Illuminati accounts for three of the four losses. This makes it the first opponent to investigate with paired tests, while retaining checks against the other five opponents. No strategy was changed in response to this small sample. The board size, cheat settings, SF inventory, exact loaded script revision and match durations were not supplied, so these observations cannot establish a before/after improvement or be pooled with the offline samples above. The user is testing the combined branch, but the exact running code was not inspected.
+
+### Further experiments
+
 1. **Measure per opponent.** Record before/after wins and losses from the Go statistics screen, keeping board size, cheat settings, SF state, and faction mix comparable. Aggregate wins alone can hide a regression against Illuminati or Tetrads. Do not improve the displayed ratio merely by choosing easier factions and forfeiting the desired bonuses.
 2. **Evaluate one strategy change at a time.** Keep a held-out seed set. Separate exact liberties, rescue priority, sacrifice handling, and tie-breaking; the combined experiment cannot identify which change caused an individual loss.
 3. **Add bounded tactical reply analysis.** Candidate moves should be compared against an opponent's immediate capture/escape response, particularly before joining a large weak group or rejecting a sacrifice. Cap analysis work and measure any delay added to live games.

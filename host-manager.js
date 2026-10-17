@@ -1,4 +1,4 @@
-import { singRun, getActiveSourceFiles } from './utils.js'
+import { singRun, getActiveSourceFiles, getReserve } from './utils.js'
 const purchasedServerName = "daemon";
 /** @param {NS} ns */
 export async function main(ns) {
@@ -14,13 +14,13 @@ async function tryUpgradeRam(ns) {
   const unlockedSFlevels = await getActiveSourceFiles(ns, true);
   const money = ns.getServerMoneyAvailable("home");
   let spendable = money * 0.2; // One shared allowance for this pass, including initial purchases.
-  const availableBudget = () => {
-    const reserve = Number(ns.read("reserve.txt") || 0);
+  const availableBudget = async () => {
+    const reserve = await getReserve(ns);
     const cash = ns.getServerMoneyAvailable("home");
     if (!Number.isFinite(reserve) || !Number.isFinite(cash) || !Number.isFinite(spendable)) return 0;
     return Math.max(0, Math.min(spendable, cash - Math.max(0, reserve)));
   };
-  spendable = availableBudget(); // Later income/reserve reductions must not enlarge this pass's allowance.
+  spendable = await availableBudget(); // Later income/reserve reductions must not enlarge this pass's allowance.
   if (spendable <= 0) return false;
 
   //Get basic cloud servers first if able
@@ -29,7 +29,7 @@ async function tryUpgradeRam(ns) {
   let serverAmount = servers.length;
   for (let i = serverAmount; i < maxServers; i++) {
     const cost = ns.cloud.getServerCost(2);
-    if (!Number.isFinite(cost) || cost < 0 || cost > availableBudget()) break;
+    if (!Number.isFinite(cost) || cost < 0 || cost > await availableBudget()) break;
     const server = ns.cloud.purchaseServer(purchasedServerName, 2);
     if (!server) break;
     servers.push(server);
@@ -42,7 +42,7 @@ async function tryUpgradeRam(ns) {
     let currentRam = ns.getServerMaxRam("home");
     let cost = (await singRun(ns, 'getUpgradeHomeRamCost'));
     if (Number.isFinite(cost) && cost >= 0 && currentRam < max_ram) {
-      if (cost <= availableBudget() && (await singRun(ns, 'upgradeHomeRam')) === true) return true;
+      if (cost <= await availableBudget() && (await singRun(ns, 'upgradeHomeRam')) === true) return true;
     }
   }
 
@@ -52,7 +52,7 @@ async function tryUpgradeRam(ns) {
     while (ram < max_ram) {
       const newRam = ram * 2;
       const cost = ns.cloud.getServerUpgradeCost(server, newRam);
-      if (!Number.isFinite(cost) || cost < 0 || cost > availableBudget()) break;
+      if (!Number.isFinite(cost) || cost < 0 || cost > await availableBudget()) break;
 
       if (!ns.cloud.upgradeServer(server, newRam)) break;
 

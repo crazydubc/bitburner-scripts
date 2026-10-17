@@ -21,7 +21,7 @@ Wait for the pull to finish and inspect failures before starting the guide. The 
 
 ## 2. Finish the casino bootstrap before allowing stock buying
 
-On the current code, avoid starting the entire autopilot stack on an 8 GB home. Nested home helpers can exceed that capacity and wait forever (B01).
+Avoid starting the entire autopilot stack on an 8 GB home. Nested home helpers can exceed that capacity (B01). The testing branch now reports failed launches instead of retrying forever; the guide itself still fits 8 GB.
 
 1. Get roughly $250k through short manual crimes such as shoplifting/mugging at the Slums. Choose an action you can complete reliably; the objective is $200k travel plus a betting cushion.
 2. Travel to Aevum manually. This also avoids relying on the coinflipper's brittle travel UI handling.
@@ -64,7 +64,7 @@ Rerun the guide; it keeps the manager running and restarts it whenever at least 
 run bn1-guide.js
 ```
 
-Check Active Scripts and the autopilot/kernel logs. You want a live income process, advancing preparation, and no repeating “unable to launch” messages. The testing branch fixes B04's cloud purchase budget; monitor reserve behavior because B02's remote state transport remains open. If a helper stalls, inspect home RAM and the child process before restarting; repeated blind restarts do not repair the underlying wait.
+Check Active Scripts and the autopilot/kernel logs. You want a live income process, advancing preparation, and no repeating “unable to launch” messages. The testing branch fixes B04's cloud purchase budget and reads/writes reserves on home, including for offloaded managers. Monitor the reserve and casino completion; a separate verified completion gate and cross-script spending coordination remain open. If a helper reports failure, inspect home RAM and the child process before restarting.
 
 Buy `DarkscapeNavigator.exe` for $50m through TOR after the casino. Alternatively, visit Chongqing > Shadowed Walkway and buy it for $30m; this also grants TOR. Autopilot then starts `darknet.js` when home has space. Darknet phishing trains Charisma, which helps Field Work reputation in BN1.1. At Sector-12, The Black Hand, and Daedalus, compare Field Work and Hacking Contracts and choose the higher displayed rep/sec. CyberSec, NiteSec, and BitRunners only offer hacking work. Visiting Chongqing does not join its city faction.
 
@@ -121,7 +121,7 @@ After installation, run `bn1-guide.js` again. On a 64+ GB home with 48 GB free, 
 
 For the hacking route, Daedalus requires **30 distinct installed augmentations, $100b cash, and hacking 2,500** in BN1. The alternative skill condition is 1,500 in all four combat stats. Check actual requirements if using this guide in another BN.
 
-Hold cash until the invitation arrives; stock portfolio value is not cash. Use the persistent liquidation command when you need portfolio value converted to cash, then join Daedalus manually in BN1.1. The testing branch also enforces autopilot's temporary Daedalus stop flag for later runs with automatic joining; B02's remote reserve-file transport issue remains open.
+Hold cash until the invitation arrives; stock portfolio value is not cash. Use the persistent liquidation command when you need portfolio value converted to cash, then join Daedalus manually in BN1.1. The testing branch also enforces autopilot's temporary Daedalus stop flag for later runs with automatic joining, and offloaded readers use home's reserve.
 
 Earn Daedalus reputation for The Red Pill (2.5m rep, $0 base), purchase and install it. Donation access at 150 favor in BN1 can shorten this grind **if** the next cycle can actually fund the needed donation. Favor is awarded on installation; resetting for favor without a funding plan can lose time.
 

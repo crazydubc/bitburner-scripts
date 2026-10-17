@@ -358,7 +358,7 @@ async function hireAdVertsUpTo(ns, divisionName, target) {
 
 /** @param {NS} ns */
 export async function main(ns) {
-  ns.ramOverride(5)
+  ns.ramOverride(5.3) // Include shared RPC launch/reply checks without changing corporation strategy.
   ns.disableLog("ALL")
   //ns.ui.openTail();
   ns.clearLog()

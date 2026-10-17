@@ -1,4 +1,4 @@
-import { log as log_helper, getConfiguration, disableLogs, formatMoney, formatDuration, formatNumberShort, getErrorInfo, getOptimalTarget } from './utils.js'
+import { log as log_helper, getConfiguration, disableLogs, formatMoney, formatDuration, formatNumberShort, getErrorInfo, getOptimalTarget, getReserve } from './utils.js'
 
 const sellForMoney = 'Sell for Money';
 
@@ -172,7 +172,7 @@ export async function main(ns) {
             lowestIndex = i, lowestLevel = ns.hacknet.getNodeStats(i).hashCapacity;
         const nextCacheUpgradeCost = lowestIndex == null ? Number.POSITIVE_INFINITY : ns.hacknet.getCacheUpgradeCost(lowestIndex, 1);
         const nextNodeCost = ns.hacknet.getPurchaseNodeCost();
-        const reservedMoney = options['reserve'] ?? Number(ns.read("reserve.txt") || 0);
+        const reservedMoney = options['reserve'] ?? await getReserve(ns);
         const playerMoney = ns.getServerMoneyAvailable('home');
         const spendableMoney = Math.max(0, playerMoney - reservedMoney,
           // Hack: Because managing global reserve is tricky. We tend to always want to purchase cheap upgrades

@@ -1,7 +1,7 @@
 import {
   log, disableLogs, findPids, getConfiguration, getActiveSourceFiles,
   getStocksValue, formatNumberShort, formatNumber, formatMoney, formatRam, getFilePath,
-  formatDuration, getReset, getPlayerInfo, getServers, bbRun, hnRun, gangRun, corpRun, doSCP
+  formatDuration, getReset, getPlayerInfo, getServers, bbRun, hnRun, gangRun, corpRun, doSCP, getReserve
 } from './utils.js'
 
 const argsSchema = [
@@ -186,8 +186,7 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
   // Show reserved money
   {
     const val = ["Reserve"];
-    if (ns.getHostname() !== 'home') await doSCP(ns, 'reserve.txt', ns.getHostname(), "home");
-    const reserve = Number(ns.read("reserve.txt") || 0);
+    const reserve = await getReserve(ns);
     if (reserve > 0) {
       val.push(true, formatNumberShort(reserve, 3, 2), "Most scripts will leave this much money unspent.");
     } else val.push(false)

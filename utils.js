@@ -31,7 +31,14 @@ export async function stockRun(ns, fn, ...args) { return await runScript(ns, "bi
 export async function sleeveRun(ns, fn, ...args) { return await runScript(ns, "bin/sleeveRun.js", false, [fn, ...args]) }
 export async function hnRun(ns, fn, ...args) { return await runScript(ns, "bin/hnRun.js", false, [fn, ...args]) }
 export async function bbRun(ns, fn, ...args) { return await runScript(ns, "bin/bbRun.js", false, [fn, ...args]) }
-export async function singRun(ns, fn, ...args) { return await runScript(ns, "bin/singRun.js", false, [fn, ...args]) }
+export async function singRun(ns, fn, ...args) {
+  // getFunctionRamCost includes the active BN/SF4 multiplier and costs no RAM itself.
+  const ram = Math.max(6.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`singularity.${fn}`));
+  const result = await runScriptLocal(ns, "bin/singRun.js", false, [fn, ...args], ram);
+  if (typeof result === 'string' && result.startsWith('ERROR:'))
+    throw new Error(`singularity.${fn}: ${result.slice(6)}`);
+  return result;
+}
 export async function stanekRun(ns, fn, ...args) { return await runScript(ns, "bin/stanekRun.js", false, [fn, ...args]) }
 export async function gangRun(ns, fn, ...args) { return await runScript(ns, "bin/gangRun.js", false, [fn, ...args]) }
 export async function destroyWD(ns, bn, script) { return await runScript(ns, "bin/destroyWD.js", false, [bn, script]) }
@@ -49,6 +56,26 @@ export async function crackHosts(ns) { return await runScript(ns, "Tasks/crack-h
 const reservedRam = 16;
 const remoteLaunchTimeout = 10_000;
 const remoteLaunchWarningTimes = new Map();
+
+/** Read current spending state on home, including when the caller has been offloaded. */
+export async function getReserve(ns) {
+  const value = ns.getHostname() === 'home'
+    ? Number(ns.read('reserve.txt') || 0)
+    : await runScriptLocal(ns, getFilePath('bin/reserve.js'), false, ['read']);
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+    throw new Error('Cannot read a valid reserve.txt from home; skipping spending.');
+  return value;
+}
+
+/** Write only on home; never publish an offloaded process's stale local copy. */
+export async function setReserve(ns, value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+    throw new Error(`Invalid cash reserve: ${value}`);
+  if (ns.getHostname() === 'home') await ns.write('reserve.txt', value, 'w');
+  else if (await runScriptLocal(ns, getFilePath('bin/reserve.js'), false, ['write', value]) !== value)
+    throw new Error('Could not update reserve.txt on home.');
+  return value;
+}
 export const remoteScriptDependencies = [
   "utils.js",
   "faction-route-planner.js",
@@ -163,16 +190,54 @@ export async function runScript(ns, scriptName, persistent, args = []) {
 }
 
 /** @param {NS} ns */
-//runs script on the local machine it is called from
-export async function runScriptLocal(ns, scriptName, persistent = false, args = []) {
+// Launch on home. Persistent callers receive a PID; request/reply callers receive the PID-port result.
+export async function runScriptLocal(ns, scriptName, persistent = false, args = [], ramOverride = 0) {
   checkNsInstance(ns, '"runScriptLocal"');
+  const scriptRam = ns.getScriptRam(scriptName, 'home');
+  if (!(scriptRam > 0)) throw new Error(`Cannot launch ${scriptName}: missing or invalid script on home.`);
+  const options = { threads: 1, temporary: true };
+  if (ramOverride > 0) options.ramOverride = ramOverride;
+  const started = Date.now();
   let pidof;
-  while ((pidof = ns.exec(scriptName, "home", { threads: 1, temporary: true }, ...args)) == 0) {
+  while ((pidof = ns.exec(scriptName, "home", options, ...args)) === 0) {
+    if (Date.now() - started >= remoteLaunchTimeout)
+      throw new Error(`Cannot launch ${scriptName} on home after ${remoteLaunchTimeout / 1000}s. ` +
+        `Needs ${Math.max(scriptRam, ramOverride)} GB; free home RAM or inspect the launch log.`);
     await ns.sleep(10);
   }
   if (persistent) return pidof;
-  await ns.nextPortWrite(pidof);
-  return ns.readPort(pidof);
+  return await waitForRpcReply(ns, scriptName, pidof);
+}
+
+/** Preserve event-driven replies without adding a sleep to successful calls. */
+async function waitForRpcReply(ns, scriptName, pid) {
+  const port = ns.getPortHandle(pid);
+  if (!port.empty()) return port.read(); // A fast child may already have replied.
+  if (!ns.isRunning(pid)) throw new Error(`${scriptName} (pid ${pid}) exited without a reply.`);
+  let timer;
+  let deadChild = false;
+  const reply = port.nextWrite();
+  try {
+    await Promise.race([reply, new Promise((resolve, reject) => {
+      const check = () => {
+        try {
+          if (!port.empty()) return resolve();
+          if (!ns.isRunning(pid)) {
+            deadChild = true;
+            return reject(new Error(`${scriptName} (pid ${pid}) exited without a reply.`));
+          }
+          // A live backdoor, Go turn, or calculator may legitimately take a long time.
+          timer = setTimeout(check, 1000);
+        } catch (error) { reject(error); }
+      };
+      timer = setTimeout(check, 1000);
+    })]);
+    return port.read();
+  } finally {
+    clearTimeout(timer);
+    // Resolve/release our pending port listener only after its sole writer has died.
+    if (deadChild && port.empty()) { port.write(undefined); port.read(); }
+  }
 }
 
 /** @param {NS} ns */
@@ -182,8 +247,12 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
   let thispid = 0
   const startedWaiting = Date.now();
   let lastFailure = `no server had enough free RAM for ${script}`;
-  const scriptRam = scriptOverride === 0 ? ns.getScriptRam(script) : scriptOverride
-  const homeAvailRam = Math.ceil(await getServerAvailRam(ns, "home") - reservedRam, 0);
+  const scriptRam = scriptOverride === 0 ? ns.getScriptRam(script, 'home') : scriptOverride;
+  if (!Number.isFinite(scriptRam) || scriptRam <= 0) {
+    if (!quiet) log(ns, `WARNING: Cannot launch ${script}: missing script or invalid RAM requirement on home.`);
+    return 0;
+  }
+  const homeAvailRam = await getServerAvailRam(ns, "home") - reservedRam;
   if (!persistent && Math.floor(homeAvailRam / scriptRam) >= 1) {
     thispid = ns.exec(script, "home", { threads: 1, temporary: true }, ...argmts)
     if (thispid > 0) return thispid;
@@ -217,9 +286,20 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
         }
       }
       if (!copied) continue;
+      if (await runScriptLocal(ns, getFilePath('bin/sync-script-config.js'), false, [script, server]) !== true) {
+        lastFailure = `failed to synchronize configuration for ${script} on ${server}`;
+        continue;
+      }
       thispid = ns.exec(script, server, { threads: 1, temporary: true }, ...argmts)
       if (thispid > 0) return thispid;
       lastFailure = `ns.exec returned 0 for ${script} on ${server} after its dependencies were copied`;
+    }
+    // Prefer offloading persistent managers, but use home when it is the only suitable host.
+    const homeFree = await getServerAvailRam(ns, 'home');
+    const relocatingSelfFromHome = script.replace(/^\/+/, '') === ns.getScriptName() && ns.getHostname() === 'home';
+    if (!relocatingSelfFromHome && homeFree - reservedRam >= scriptRam) {
+      thispid = ns.exec(script, 'home', { threads: 1, temporary: true }, ...argmts);
+      if (thispid > 0) return thispid;
     }
     if (persistent || Date.now() - startedWaiting >= remoteLaunchTimeout) {
       const now = Date.now();
@@ -231,13 +311,6 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
       }
       return 0;
     }
-    //run on home last
-    /*let tmpramavailable = Math.max(await getServerAvailRam(ns, "home") - reservedRam, 0);
-    const threadsonserver = Math.floor(tmpramavailable / scriptRam);
-    if (threadsonserver > 1) {
-      thispid = ns.exec(script, "home", { threads: 1, temporary: true }, ...argmts)
-      if (thispid > 1) return thispid;
-    }*/
     await ns.sleep(50);
   }
 }
@@ -297,14 +370,16 @@ export function getErrorInfo(err) {
    */
 export async function whichServerIsRunning(ns, scriptName) {
   checkNsInstance(ns, '"whichServerIsRunning"');
-  const servers = await getServers(ns);
+  // Process lookup needs only hostnames. Avoid a home RPC and full server snapshots.
+  const servers = new Set(['home']);
   for (const server of servers) {
-    const procs = ns.ps(server.hostname);
+    const procs = ns.ps(server);
     for (const p of procs) {
       if (p.filename === scriptName) {
-        return [server.hostname, p.pid];
+        return [server, p.pid];
       }
     }
+    for (const neighbor of ns.scan(server)) servers.add(neighbor);
   }
   return [null, null];
 }

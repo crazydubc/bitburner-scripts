@@ -154,19 +154,23 @@ export function getBn1Guidance(s) {
 /** @param {NS} ns */
 export async function readBn1Snapshot(ns, checkAutopilot = true) {
   const reset = ns.getResetInfo();
-  const homeRam = ns.getServerMaxRam('home');
-  const homeFreeRam = Math.max(0, homeRam - ns.getServer('home').ramUsed);
+  const home = ns.getServer('home');
+  const homeRam = home.maxRam;
+  const homeFreeRam = Math.max(0, homeRam - home.ramUsed);
+  let daemon = null;
+  if (reset.ownedAugs.has('The Red Pill')) {
+    try { daemon = ns.getServer('w0r1d_d43m0n'); } catch { /* Not available yet. */ }
+  }
   return {
     reset, player: ns.getPlayer(), homeRam, homeFreeRam, hasTor: ns.hasTorRouter(),
     hasDarknet: ns.fileExists('DarkscapeNavigator.exe', 'home'),
     casinoEarned: ns.getMoneySources().sinceInstall.casino ?? 0,
     crackers: BN1_CRACKERS.map(([file]) => file).filter(file => ns.fileExists(file, 'home')),
-    // Autopilot can be offloaded. The lookup uses a home helper, so skip it in
-    // low-RAM mode, where casino/RAM guidance takes priority over automation.
-    autopilotRunning: checkAutopilot && homeRam >= 64 && homeFreeRam >= 4
+    // Autopilot can be offloaded. Process lookup scans directly and needs no home helper.
+    autopilotRunning: checkAutopilot && homeRam >= 64
       ? await isScriptRunning(ns, 'autopilot.js') : null,
     servers: Object.fromEntries(BN1_FACTION_SERVERS.map(([host]) => [host, ns.getServer(host)])),
-    daemon: reset.ownedAugs.has('The Red Pill') && ns.serverExists('w0r1d_d43m0n') ? ns.getServer('w0r1d_d43m0n') : null,
+    daemon,
   };
 }
 

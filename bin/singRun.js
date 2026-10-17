@@ -13,7 +13,7 @@ export function prepareSingularityResultForPort(fn, result) {
 
 /** @param {NS} ns */
 export async function main(ns) {
-  ns.ramOverride(6.6);
+  ns.ramOverride(6.6); // Retain the ordinary launch footprint; singRun preallocates larger calls.
   const port = ns.getPortHandle(ns.pid);
   const [fn, ...args] = ns.args;
   let response = `ERROR:singularity.${String(fn)} exited before returning a result`;
@@ -27,6 +27,9 @@ export async function main(ns) {
   });
 
   try {
+    const requiredRam = Math.max(6.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`singularity.${fn}`));
+    if (ns.ramOverride(requiredRam) < requiredRam)
+      throw new Error(`Insufficient RAM for singularity.${fn}; requires ${requiredRam} GB`);
     const f = ns.singularity?.[fn];
     if (typeof f !== "function") throw new Error(`Invalid singularity function: ${String(fn)}`);
 

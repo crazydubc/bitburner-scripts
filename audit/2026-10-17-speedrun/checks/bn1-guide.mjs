@@ -108,7 +108,7 @@ for (const mode of ['install', 'roadmap']) {
     getPlayer: () => { assert.notEqual(mode, 'install'); return live.player; }, getServerMaxRam: () => live.homeRam,
     hasTorRouter: () => live.hasTor, getMoneySources: () => ({sinceInstall: {casino: live.casinoEarned}}),
     fileExists: file => live.crackers.includes(file) || (file === 'DarkscapeNavigator.exe' && live.hasDarknet),
-    getServer: host => host === 'home' ? {ramUsed: 8} : live.servers[host],
+    getServer: host => host === 'home' ? {maxRam: live.homeRam, ramUsed: 8} : live.servers[host],
     write: async (file, value) => writes.set(file, value),
     exec: () => {throw Error('Reference panels must not launch helpers or automate actions');},
     sleep: () => {throw Error('Reference panels should exit after rendering');},
@@ -129,17 +129,19 @@ for (const runningOn of ['home', 'n00dles', null]) {
     pid: 1, flags: () => ({'no-tail': true, once: true}), getHostname: () => 'home',
     getScriptName: () => 'bn1-guide.js',
     ps: host => host === runningOn ? [{pid: 2, filename: 'autopilot.js'}] : [],
+    scan: host => host === 'home' ? ['n00dles'] : ['home'],
     getResetInfo: () => live.reset, getPlayer: () => live.player,
     getServerMaxRam: () => live.homeRam, hasTorRouter: () => live.hasTor,
     getMoneySources: () => ({sinceInstall: {casino: live.casinoEarned}}),
     fileExists: file => live.crackers.includes(file) || (file === 'DarkscapeNavigator.exe' && live.hasDarknet),
-    getServer: host => host === 'home' ? {ramUsed: 8} : live.servers[host],
+    getServer: host => host === 'home' ? {maxRam: live.homeRam, ramUsed: 8} : live.servers[host],
     exec: (file, host) => {
       assert.equal(file, 'bin/getServers.js'); assert.equal(host, 'home');
       return 42;
     },
-    nextPortWrite: async pid => assert.equal(pid, 42),
-    readPort: pid => { assert.equal(pid, 42); return [{hostname: 'home'}, {hostname: 'n00dles'}]; },
+    getScriptRam: () => 1.6,
+    getPortHandle: pid => { assert.equal(pid, 42); return {empty: () => false,
+      read: () => [{hostname: 'home'}, {hostname: 'n00dles'}]}; },
     disableLog() {}, clearLog() {}, ui: {setTailTitle() {}},
     print: message => messages.push(message),
   };
@@ -159,7 +161,7 @@ await main({
   getScriptName: () => 'bn1-guide.js', ps: () => [{pid: 1, filename: 'bn1-guide.js'}],
   getResetInfo: () => low.reset, getPlayer: () => low.player, getServerMaxRam: () => low.homeRam,
   hasTorRouter: () => low.hasTor, getMoneySources: () => ({sinceInstall: {casino: 0}}),
-  fileExists: () => true, getServer: host => host === 'home' ? {ramUsed: 0} : low.servers[host],
+  fileExists: () => true, getServer: host => host === 'home' ? {maxRam: low.homeRam, ramUsed: 0} : low.servers[host],
   exec: () => {throw Error('Low-RAM guide must not launch a server lookup helper');},
   disableLog() {}, clearLog() {}, ui: {setTailTitle() {}},
   print: m => messages.push(m), tprint: m => messages.push(m),
@@ -236,15 +238,17 @@ for (const mode of ['automatic', 'manual', 'once']) {
     ...harness.ns, pid: 1, flags: () => ({'no-tail': true, [mode]: true}),
     getHostname: () => 'home', getScriptName: () => 'bn1-guide.js',
     ps: host => host === runningOn ? [{pid: 7, filename: 'autopilot.js'}] : [],
+    scan: host => host === 'home' ? ['n00dles'] : ['home'],
     getResetInfo: () => live.reset, getPlayer: () => live.player,
-    getServerMaxRam: () => live.homeRam, getServer: host => host === 'home' ? {ramUsed: 8} : live.servers[host],
+    getServerMaxRam: () => live.homeRam, getServer: host => host === 'home' ? {maxRam: live.homeRam, ramUsed: 8} : live.servers[host],
     hasTorRouter: () => true, getMoneySources: () => ({sinceInstall: {casino: live.casinoEarned}}),
     exec: (...args) => {
       if (args[0] === 'bin/getServers.js') return 42;
       runningOn = 'home';
       return harness.ns.exec(...args);
     },
-    nextPortWrite: async () => {}, readPort: () => [{hostname: 'home'}, {hostname: 'n00dles'}],
+    getScriptRam: () => 1.6,
+    getPortHandle: () => ({empty: () => false, read: () => [{hostname: 'home'}, {hostname: 'n00dles'}]}),
     disableLog() {}, clearLog() {}, ui: {setTailTitle() {}}, print() {}, toast() {},
     sleep: async ms => {
       assert.equal(ms, 5000);

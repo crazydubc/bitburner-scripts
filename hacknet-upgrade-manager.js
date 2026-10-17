@@ -1,4 +1,4 @@
-import { getConfiguration, disableLogs, formatDuration, formatMoney, } from './utils.js'
+import { getConfiguration, disableLogs, formatDuration, formatMoney, getReserve } from './utils.js'
 
 let haveHacknetServers = true; // Cached flag after detecting whether we do (or don't) have hacknet servers
 const argsSchema = [
@@ -38,7 +38,7 @@ export async function main(ns) {
     `. Current fleet: ${ns.hacknet.numNodes()} nodes...`);
   do {
     try {
-      const moneySpent = upgradeHacknet(ns, maxSpend, maxPayoffTime, options);
+      const moneySpent = await upgradeHacknet(ns, maxSpend, maxPayoffTime, options);
       // Using this method, we cannot know for sure that we don't have hacknet servers until we have purchased one
       if (haveHacknetServers && ns.hacknet.numNodes() > 0 && ns.hacknet.hashCapacity() == 0)
         haveHacknetServers = false;
@@ -63,7 +63,7 @@ function setStatus(ns, logMessage) {
 
 // Will buy the most effective hacknet upgrade, so long as it will pay for itself in the next {payoffTimeSeconds} seconds.
 /** @param {NS} ns **/
-export function upgradeHacknet(ns, maxSpend, maxPayoffTimeSeconds = 3600 /* 3600 sec == 1 hour */, options) {
+export async function upgradeHacknet(ns, maxSpend, maxPayoffTimeSeconds = 3600 /* 3600 sec == 1 hour */, options) {
   const currentHacknetMult = ns.getPlayer().mults.hacknet_node_money;
   // Get the lowest cache level, we do not consider upgrading the cache level of servers above this until all have the same cache level
   const minCacheLevel = [...Array(ns.hacknet.numNodes()).keys()].reduce((min, i) => Math.min(min, ns.hacknet.getNodeStats(i).cache), Number.MAX_VALUE);
@@ -135,7 +135,7 @@ export function upgradeHacknet(ns, maxSpend, maxPayoffTimeSeconds = 3600 /* 3600
     setStatus(ns, `The next best purchase would be ${strPurchase}, but the ${strPayoff} is worse than the limit (${formatDuration(1000 * maxPayoffTimeSeconds)})`);
     return false; // Shut-down. As long as maxPayoffTimeSeconds doesn't change, we will never purchase another upgrade
   }
-  const reserve = Number(ns.read("reserve.txt") || 0);
+  const reserve = options['reserve'] ?? await getReserve(ns);
   const playerMoney = ns.getPlayer().money;
   if (cost > playerMoney - reserve) {
     setStatus(ns, `The next best purchase would be ${strPurchase}, but the cost exceeds the our ` +

@@ -2,7 +2,7 @@
 
 The highest-value work is fixing progression stalls and making the early-game launch/spending rules reliable. Keep the current hacking batcher as the performance baseline. Two confined batcher defects are documented separately; neither calls for replacing its scheduling design.
 
-**The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) combines the audit, BN1.1 on-screen prompts, focused Go fixes, and resource/purchase repairs for in-game testing.** B03, B04, B06, B10, B17, and B18 have fixes with positive regression checks. B02's Daedalus launch flag is enforced; its remote reserve transport and the other findings remain open. The current hacking batcher and $8b reserve policy are unchanged.
+**The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) combines the audit, BN1.1 on-screen prompts, focused Go fixes, and resource/purchase repairs for in-game testing.** B03, B04, B06, B10, B17, and B18 have fixes with positive regression checks. B01/B02/B11 now have partial repairs for launch/reply failures, home reserve/configuration state and Singularity RAM/errors. Their remaining scope is recorded in [helper-state-fixes.md](helper-state-fixes.md). Batch scheduling and the $8b reserve policy are unchanged.
 
 ## Pull the combined testing branch
 
@@ -27,6 +27,7 @@ Combined-branch checks:
 node audit/2026-10-17-speedrun/checks/bn1-guide.mjs
 node audit/2026-10-17-speedrun/checks/stock-liquidation.mjs
 node audit/2026-10-17-speedrun/checks/resource-purchases.mjs
+node audit/2026-10-17-speedrun/checks/rpc-reserve.mjs
 node audit/2026-10-17-speedrun/checks/go-lifecycle.mjs
 ```
 
@@ -45,6 +46,8 @@ PRs #31 and #32 are combined with the audit from [#33](https://github.com/crazyd
 
 The latest [resource/purchase follow-up](resource-purchase-fixes.md) fixes cloud purchase budgets, stale sleeve cash/result handling, skipped sleeve augmentations, rooted-RAM eligibility, and darknet stasis worker/helper capacity. Restart the affected managers/workers after pulling. The follow-up records focused evidence, live-game checks, and the remaining reserve/RPC limitations.
 
+The subsequent [helper/state follow-up](helper-state-fixes.md) adds bounded failed launches, dead-child recovery, effective Singularity RAM budgets, authoritative home reserve state, configuration deployment and persistent home fallback. An official-source RAM check preserves the guide's 8 GB cold-start fit and accounts for the added manager costs. The [reported Go baseline](go-assessment.md#user-reported-game-baseline--2026-10-17) is 26 wins from 30 games; Illuminati accounts for three of four losses. No Go strategy change accompanies this follow-up.
+
 ## Read in this order
 
 | File | Purpose |
@@ -54,10 +57,11 @@ The latest [resource/purchase follow-up](resource-purchase-fixes.md) fixes cloud
 | [bitnode-route.md](bitnode-route.md) | Proposed order for this automation suite, dependencies, and alternatives to benchmark |
 | [optimization-plan.md](optimization-plan.md) | Implementation order and measurements that can establish real speed gains |
 | [resource-purchase-fixes.md](resource-purchase-fixes.md) | B04/B06/B10/B17/B18 changes, verification, and live-test notes |
+| [helper-state-fixes.md](helper-state-fixes.md) | B01/B02/B11 partial repairs, RAM checks, and remaining scope |
 | [sources.md](sources.md) | Pinned repository/game references and scope limitations |
 | [reproduce.mjs](reproduce.mjs) / [evidence.json](evidence.json) | Bounded offline reproductions and source/arithmetic checks |
 
-## Conclusions
+## Conclusions from the original audit
 
 1. **Fix shared infrastructure first:** home-only RPC waits can hang indefinitely; reserve/configuration files are local to a host; cracker inventory is shifted; server purchases can violate the computed budget. These directly affect BN1 startup.
 2. **Fix completion blockers next:** intelligence-farm readiness is stale, the sleeve buyer uses stale cash, reset tasks reference missing files, and Bladeburner access/completion handling misses valid BN6 progression.
@@ -66,7 +70,7 @@ The latest [resource/purchase follow-up](resource-purchase-fixes.md) fixes cloud
 
 ## Requirements preserved
 
-- The **$8 billion reserve is intentional**: it stops stock purchases while `coinflip.js` is finishing. Do not remove it as an alleged optimization. B02's remote state transport remains open; the separate Daedalus launch flag is now enforced on the testing branch.
+- The **$8 billion reserve is intentional**: it is intended to prevent stock buying while `coinflip.js` finishes. Keep the rule. The testing branch now reads/writes the reserve on home and enforces the Daedalus launch flag. A separate verified casino-completion gate is still open under B02.
 - Preserve the successful batcher as the comparison baseline. Apply B15/B16 independently and verify completion order/security before changing allocation or target selection.
 - Preserve the corporation sequence: six-city Agriculture bootstrap → Tobacco in investment round 2 → Chemical. This audit proposes no replacement corporation strategy.
 - After SF5, preserve CashRoot + all ten corporate faction invitations → intelligence farming → resume the **same BN**. No BitFlume transition is proposed.

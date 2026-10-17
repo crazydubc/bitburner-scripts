@@ -1,6 +1,6 @@
 # Implementation and measurement plan
 
-Optimize wall-clock time to useful installed augmentations and completed BNs. Keep the existing batcher as the baseline and land small independently reviewable changes. This document records the original proposed work order; current implementation status is in [README.md](README.md) and [resource-purchase-fixes.md](resource-purchase-fixes.md). B01/B11 transport and B02 remote spending state remain the next infrastructure priorities.
+Optimize wall-clock time to useful installed augmentations and completed BNs. Keep the existing batcher as the baseline and land small independently reviewable changes. This document records the original proposed work order; current status is in [README.md](README.md), [resource-purchase-fixes.md](resource-purchase-fixes.md) and [helper-state-fixes.md](helper-state-fixes.md). The latest follow-up repairs dead-child/launch failures, Singularity RAM/results and reserve/configuration transport. Remaining infrastructure work includes low-RAM helper chains, live-but-stalled operations, other wrapper contracts and verified casino completion. Progression blockers B05/B07/B08 remain high priority.
 
 ## Repair order
 

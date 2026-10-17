@@ -21,12 +21,13 @@ function rpcMock(responder, additions = {}) {
   const replies = new Map();
   return {
     print: noop, tprint: noop, toast: noop, sleep: async () => {},
+    getScriptRam: () => 1.6,
     exec(file, host, options, ...args) {
       const pid = nextPid++;
       replies.set(pid, responder(file, args, host));
       return pid;
     },
-    nextPortWrite: async () => {}, readPort: pid => replies.get(pid), ...additions,
+    getPortHandle: pid => ({empty: () => !replies.has(pid), read: () => replies.get(pid)}), ...additions,
   };
 }
 
@@ -64,6 +65,7 @@ async function hostPass(settings = {}) {
   };
   const run = await functionFrom('host-manager.js', 'async function tryUpgradeRam(ns)', null, {
     purchasedServerName: 'daemon', getActiveSourceFiles: async () => settings.homeCost === undefined ? {} : {4: 3},
+    getReserve: async () => state.reserve,
     singRun: async (ns, method) => {
       if (method === 'getUpgradeHomeRamCost') { settings.onHomeCost?.(state); return settings.homeCost; }
       assert.equal(method, 'upgradeHomeRam'); state.homeAttempts++;

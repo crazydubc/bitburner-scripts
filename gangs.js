@@ -1,6 +1,6 @@
 import {
   log, getConfiguration, findPids, getActiveSourceFiles, getBNMults, gangRun,
-  formatMoney, formatNumberShort, formatDuration, getReset, getPlayerInfo, singRun
+  formatMoney, formatNumberShort, formatDuration, getReset, getPlayerInfo, singRun, getReserve
 } from './utils.js'
 
 // Global config
@@ -441,7 +441,7 @@ async function tryUpgradeMembers(ns, dictMembers) {
   equipments.forEach(e => e.cost = Number(dictEquipmentCosts[e.name]) || Number.POSITIVE_INFINITY);
 
   const playerData = await getPlayerInfo(ns);
-  const reserve = options['reserve'] != null ? Number(options['reserve']) : Number(ns.read("reserve.txt") || 0);
+  const reserve = options['reserve'] != null ? Number(options['reserve']) : await getReserve(ns);
   const spendableMoney = Math.max(0, playerData.money - Math.max(0, reserve || 0));
   const maxBudget = 0.99;
   const clampBudget = (value, fallback) => Math.min(maxBudget, Math.max(0, Number(value ?? fallback) || 0));

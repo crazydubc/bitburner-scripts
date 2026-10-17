@@ -1,6 +1,6 @@
 import {
   log, getConfiguration, getFilePath, launchScriptHelper, singRun, runScriptSomewhere,
-  getActiveSourceFiles, getOwnedAugs, stockRun, getServers, runScriptLocal, getReset
+  getActiveSourceFiles, getOwnedAugs, stockRun, getServers, runScriptLocal, getReset, setReserve
 } from './utils.js'
 
 const argsSchema = [
@@ -57,7 +57,7 @@ export async function main(ns) {
   await singRun(ns, 'stopAction');
 
   // Clear any global reserve so that all money can be spent
-  ns.write("reserve.txt", 0, "w");
+  await setReserve(ns, 0);
 
   // STEP 1: Liquidate Stocks and (SF9) Hacknet Hashes
   log(ns, 'Sell stocks and hashes...', true, 'info');
@@ -158,7 +158,11 @@ export async function main(ns) {
 
   // STEP 8: Buy whatever home CPU upgrades we can afford
   log(ns, 'Try Upgrade Home Cores...', true, 'info');
-  while (await singRun(ns, 'upgradeHomeCores')); { await ns.sleep(10); }
+  try {
+    while (await singRun(ns, 'upgradeHomeCores') === true) await ns.sleep(10);
+  } catch (error) {
+    log(ns, `WARNING: Skipping further home core upgrades: ${String(error)}`, true, 'warning');
+  }
   //await waitForProcessToComplete(ns, pid, true); // Wait for the script to shut down, indicating it has bought all it can.
 
   // STEP 9: Join every faction we've been invited to (gives a little INT XP)

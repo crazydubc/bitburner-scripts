@@ -4,7 +4,7 @@ Locations refer to the audited commit recorded in [sources.md](sources.md). P1 m
 
 “Execution” below means the actual function or extracted function was run with bounded mocks. “Source” and “arithmetic” checks establish narrower facts; they are not live-game reproductions.
 
-**Current testing-branch status:** B03, B04, B06, B10, B17, and B18 have implemented fixes and positive checks. B02 is partially repaired. The table and original evidence below describe the audited baseline; follow-up notes distinguish applied changes from remaining work. See [resource-purchase-fixes.md](resource-purchase-fixes.md) for the latest implementation and live-test limits.
+**Current testing-branch status:** B03, B04, B06, B10, B17, and B18 have implemented fixes and positive checks. B01, B02 and B11 are partially repaired. The table and original evidence below describe the audited baseline; follow-up notes distinguish applied changes from remaining work. See [resource-purchase-fixes.md](resource-purchase-fixes.md) and [helper-state-fixes.md](helper-state-fixes.md) for implementation and live-test limits.
 
 | ID | Priority | Finding | Evidence |
 | --- | --- | --- | --- |
@@ -29,6 +29,8 @@ Locations refer to the audited commit recorded in [sources.md](sources.md). P1 m
 
 ## B01 — Unbounded home RPC waits
 
+**Testing-branch follow-up:** missing helpers and ten seconds of failed launches now produce explicit errors. A watchdog detects a child that dies without replying while preserving event-driven successful replies and legitimately long live operations. Persistent launches can fall back to home within its 16 GB reserve; self-offloading cannot loop back onto home. Process lookups no longer need a home RPC. Nested home RAM requirements and recovery for live-but-stalled children remain open; see [helper-state-fixes.md](helper-state-fixes.md).
+
 **Where:** `utils.js:160–175,180–240`; nested helpers including `bin/getHackP.js` and `bin/getbnmultis.js`.
 
 `runScriptLocal` always executes on `home`, despite its name/comment. PID 0 causes an unlimited 10 ms retry loop. A launched child that dies without writing its PID port leaves the parent in `nextPortWrite` forever. The outer remote launch timeout cannot rescue a nested home RPC that never returns.
@@ -45,7 +47,7 @@ Separately, `runScriptSomewhere(..., persistent=true)` cannot use home: its home
 
 ## B02 — Host-local state undermines the intended casino gate
 
-**Testing-branch follow-up:** the Daedalus stop flag now gates normal stockmaster launches. Manual `--liquidate` stays active without buying, while automated reset/Daedalus callers use `--liquidate-once`. Focused checks cover these paths. The host-local reserve/configuration transport described below remains unresolved; this is a partial repair, not closure of B02.
+**Testing-branch follow-up:** the Daedalus stop flag gates normal stockmaster launches. Manual `--liquidate` stays active without buying, while automated callers use `--liquidate-once`. Reserve readers/writers now use home, and remote launches synchronize startup configuration. Checks cover stale remote files, failures and the preserved $8b formula. Verified casino completion, cross-script spending coordination and rollout to running processes remain separate concerns; B02 is still partial.
 
 **Where:** `autopilot.js:274,365–380,151–155,727–787`; `utils.js:52–62,415–420`; `stockmaster.js:123,159,198`; other `reserve.txt` consumers.
 
@@ -169,6 +171,8 @@ The generated purchase list is sliced with `.slice(1)`. A one-item batch makes n
 **Accept when:** one-item and multi-item batches purchase every eligible item; a failure does not erase unbought items or report fictitious spending.
 
 ## B11 — RPC errors are truthy; Singularity RAM is fixed
+
+**Testing-branch follow-up:** `singRun` now budgets the effective API cost before launch and throws on its legacy `ERROR:` replies. The helper validates its RAM allocation; optional reset-core purchases stop on false/errors and Daedalus joining requires true. Other API wrappers still use legacy result contracts. SF4 cost cases and failure/recovery checks pass; see [helper-state-fixes.md](helper-state-fixes.md).
 
 **Where:** `bin/singRun.js`; similar API wrappers; `ascend.js:162`; truthy result consumers including `autopilot.js:743`.
 

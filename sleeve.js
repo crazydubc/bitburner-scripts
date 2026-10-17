@@ -1,6 +1,6 @@
 import {
   log, getConfiguration, disableLogs, getActiveSourceFiles, singRun, gangRun, hnRun,
-  formatMoney, formatDuration, getPlayerInfo, getReset, findPids, sleeveRun, bbRun, getOwnedAugs
+  formatMoney, formatDuration, getPlayerInfo, getReset, findPids, sleeveRun, bbRun, getOwnedAugs, getReserve
 } from './utils.js'
 import {
   DEFAULT_DESIRED_AUGS, DEFAULT_PRIORITY_AUGS, buildAugUtilityMap, buildDesiredAugSet,
@@ -446,8 +446,8 @@ async function mainLoop(ns) {
     2 in ownedSourceFiles,
     ns.heart.break(),
   );
-  let globalReserve = Number(ns.read("reserve.txt") || 0);
-  let budget = (playerInfo.money - (options['reserve'] || globalReserve)) * options['aug-budget'];
+  let globalReserve = await getReserve(ns);
+  let budget = (playerInfo.money - (options['reserve'] ?? globalReserve)) * options['aug-budget'];
   // Estimate the cost of sleeves training over the next time interval to see if (ignoring income) we would drop below our reserve.
   const costByNextLoop = interval / 1000 * task.filter(t => t?.startsWith("train")).length * 12000; // TODO: Training cost/sec seems to be a bug. Should be 1/5 this ($2400/sec)
   // Get time in current bitnode (to cap how long we'll train sleeves)

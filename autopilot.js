@@ -2,7 +2,7 @@ import {
   log, getReset, getPlayerInfo, getBNMults, getErrorInfo, isScriptRunning, getStocksValue, destroyWD,
   launchScriptHelper, crackHosts, getActiveSourceFiles, formatDuration, disableLogs,
   getOwnedAugs, getFacInvReqs, singRun, formatMoney, getServerMaxRam, getPortCrackers,
-  getServers, runScriptSomewhere, runScriptLocal, doSCP, gangRun, sleeveRun, stanekRun, bbRun
+  getServers, runScriptSomewhere, runScriptLocal, doSCP, gangRun, sleeveRun, stanekRun, bbRun, getReserve, setReserve
 } from './utils.js';
 
 import { recordBnStart, printBnRunSummary, RUNLOG_FILE } from './logger.js'
@@ -13,7 +13,7 @@ import {
 
 /** @param {NS} ns */
 export async function main(ns) {
-  ns.ramOverride(4)
+  ns.ramOverride(4.2) // Include the reply watchdog's API cost, with a small margin.
   const factionManagerOutputFile = "/Temp/affordable-augs.txt"; // Temp file produced by faction manager with status information
     const defaultBnOrder = [ // The order in which we intend to play bitnodes
     // 1st Priority: Key new features and/or major stat boosts
@@ -64,6 +64,7 @@ export async function main(ns) {
   let have4sApi;
   let acceptedStanek = false;
   let reservedPurchase = 0;
+  let currentMoneyReserve = await getReserve(ns);
   let wdHack = null;
   let maxRam = 8;
   let lastFactionManagerWarning = 0;
@@ -253,7 +254,7 @@ export async function main(ns) {
 * @param {NS} n 
 * @returns {number} */
   function reservedMoney(ns) {
-    let shouldReserve = Number(ns.read("reserve.txt") || 0);
+    let shouldReserve = currentMoneyReserve;
     let playerMoney = getPlayerMoney(ns);
     // Conserve money if we're close to being able to afford the Stock Market 4s API
     const fourSigmaCost = (bitNodeMults.FourSigmaMarketDataApiCost * 25000000000);
@@ -354,7 +355,7 @@ export async function main(ns) {
     let stocksValue = 0;
     try { stocksValue = await getStocksValue(ns); } catch { /* Assume if this fails (insufficient ram) we also have no stocks */ }
 
-    manageReservedMoney(ns, player, stocksValue);
+    await manageReservedMoney(ns, player, stocksValue);
     await checkOnDaedalusStatus(ns, player, stocksValue);
     await checkIfBnIsComplete(ns);
     await maybeAcceptStaneksGift(ns);
@@ -367,11 +368,11 @@ export async function main(ns) {
   /** Consolidated logic for all the   mes we want to reserve money
    * @  ram {NS} ns
    * @param {Play    player */
-  function manageReservedMoney(ns, player, stocksValue) {
+  async function manageReservedMoney(ns, player, stocksValue) {
     if (reservedPurchase) return; // Do not mess with money reserved for installing augmentations
-    const currentReserve = Number(ns.read("reserve.txt") || 0);
+    const currentReserve = currentMoneyReserve = await getReserve(ns);
     if (reservingMoneyForDaedalus) // Reserve 100b to get the daedalus invite
-      return currentReserve == 100E9 ? true : ns.write("reserve.txt", 100E9, "w");
+      return currentReserve == 100E9 ? true : currentMoneyReserve = await setReserve(ns, 100E9);
     // Otherwise, reserve money for stocks for a while, as it's our main source of income early in the BN
     // It also acts as a decent way to save up for augmentations
     const minStockValue = 8E9; // At a minimum 8 of the 10 billion earned from the casino must be reserved for buying stock
@@ -380,7 +381,7 @@ export async function main(ns) {
     const reserveCap = 1E12; // As we start start to earn crazy money, we will hit the stock market cap, so cap the maximum reserve
     // Dynamically update reserved cash based on how much money is already converted to stocks.
     const reserve = Math.min(reserveCap, Math.max(0, player.money * minStockPercent, minStockValue - stocksValue));
-    return currentReserve == reserve ? true : ns.write("reserve.txt", reserve, "w"); // Reserve for stocks
+    return currentReserve == reserve ? true : currentMoneyReserve = await setReserve(ns, reserve); // Reserve for stocks
   }
 
   async function checkOnRunningScripts(ns) {
@@ -698,7 +699,7 @@ export async function main(ns) {
       return await installAugs(ns);
 
     const totalCost = facman.total_rep_cost + facman.total_aug_cost;
-    ns.write("reserve.txt", totalCost, "w");
+    currentMoneyReserve = await setReserve(ns, totalCost);
 
     // Reaching the donation threshold is its own reset milestone. It must bypass the ordinary
     // augmentation-count and momentum gates, and can require a soft reset when nothing is affordable yet.
@@ -755,7 +756,7 @@ export async function main(ns) {
     // If we've previously set a flag to wait for the daedalus invite and reserve money, try to speed-along joining them
     if (reservingMoneyForDaedalus && player.money >= moneyReq) { // If our cash has dipped below the threshold again, we may need to take action below
       const joined = await singRun(ns, 'joinFaction', "Daedalus"); // Note, we should have already checked that we have SF4 access before reserving money
-      return joined ? markDaedalusJoined() : false;
+      return joined === true ? markDaedalusJoined() : false;
     }
 
     // Remaining logic below is for rushing a Daedalus invite in the current reset
