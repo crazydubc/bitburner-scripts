@@ -1,0 +1,136 @@
+# Fresh BN1.1: practical operating instructions
+
+**On-screen version:** the user requested live in-game prompts. [PR #31](https://github.com/crazydubc/bitburner-scripts/pull/31) implements them in `bn1-guide.js`. After installing that change, start with `run bn1-guide.js`; this document remains the detailed reference behind the prompts.
+
+This guide targets the audited scripts and game 3.0.1 mechanics. A fresh BN1.1 has **no Singularity API**. Hacking, rooting, server buying, and contracts can be scripted; buying home upgrades, faction work, augmentation purchases/installation, and the final transition still need manual input. A later BN1 with SF4.3 can automate those actions.
+
+The audit branch has not repaired the scripts yet. The startup steps below work around the most important limitations. They are a conservative operating procedure, not a measured world-record route.
+
+## 1. Install on home
+
+Export a save and preserve any locally edited scripts before updating. In the game terminal:
+
+```text
+home
+wget https://raw.githubusercontent.com/crazydubc/bitburner-scripts/main/git-pull.js git-pull.js
+run git-pull.js
+```
+
+Wait for the pull to finish and inspect failures. The current downloader always includes an obsolete `intel-farm.js` name; the real file is `farm-intel.js`. A failed repository listing needs attention because its fallback may miss new dependencies. Install at the home root: several helpers use root-relative assumptions.
+
+## 2. Finish the casino bootstrap before allowing stock buying
+
+On the current code, avoid starting the entire autopilot stack on an 8 GB home. Nested home helpers can exceed that capacity and wait forever (B01).
+
+1. Get roughly $250k through short manual crimes such as shoplifting/mugging at the Slums. Choose an action you can complete reliably; the objective is $200k travel plus a betting cushion.
+2. Travel to Aevum manually. This also avoids relying on the coinflipper's brittle travel UI handling.
+3. From the terminal, run:
+
+   ```text
+   run coinflip.js
+   ```
+
+4. Let it navigate the casino and collect its 1,024 observations. Keep the game available while it operates the UI.
+5. **Wait for the actual $10 billion casino-success message.** “You can do something else now” means sampling has ended; the earning loop is still running. Process exit, port 40, and a large balance alone are not reliable completion signals.
+
+Keep your intentional **$8 billion reserve**. Do not launch stock buying early or set the reserve to zero as a bootstrap optimization. In the present implementation, remote processes can miss that file (B02); finishing coinflip before launching the rest of the stack is the straightforward manual workaround. Casino completion is checked per augmentation installation, so revisit this step after an installation when appropriate.
+
+If the UI changes and the coinflipper stops making progress, inspect its log. Its current DOM selectors are version-sensitive; there is no audited guaranteed completion time.
+
+## 3. Buy enough home RAM and open the network
+
+Use a computer store to upgrade home RAM to **at least 64 GB; 128 GB gives more helper headroom**. This is a workaround for current helper concurrency, not a proof that 64/128 GB is the economic optimum. Home RAM survives augmentation installations within a BN.
+
+Purchase the TOR router for $200k at an appropriate technology store, then buy the five port crackers individually:
+
+```text
+home
+buy BruteSSH.exe
+buy FTPCrack.exe
+buy relaySMTP.exe
+buy HTTPWorm.exe
+buy SQLInject.exe
+run Tasks/crack-host.js
+```
+
+The five programs total $287m at the reference prices. `buy -a` also purchases expensive optional programs, including the $5b Formulas.exe; the suite has fallback calculations and does not require spending half the casino proceeds on Formulas in BN1.1. SF5 will later supply it.
+
+Until B03 is fixed, explicitly run `Tasks/crack-host.js` after each new cracker purchase. Root access provides worker RAM even on servers whose hacking requirement is still too high to earn from.
+
+Now start the manager:
+
+```text
+run autopilot.js
+```
+
+Check Active Scripts and the autopilot/kernel logs. You want a live income process, advancing preparation, and no repeating “unable to launch” messages. Current cloud buying can overspend its budget (B04), so monitor it during bootstrap. If a helper stalls, inspect home RAM and the child process before restarting; repeated blind restarts do not repair the underlying wait.
+
+## 4. Work toward useful augmentation bundles
+
+Use Algorithms study when hacking skill is the next blocker. Once faction access is available, work for the faction whose next useful augmentation or prerequisite gives the best near-term improvement. Let the batcher earn in parallel.
+
+With the terminal visible, run:
+
+```text
+run scan.js
+```
+
+Use its connection/backdoor links. Backdoor these faction servers as their **displayed** hacking and port requirements become available, then accept the invitations:
+
+| Server | Faction | Required open ports |
+| --- | --- | --- |
+| `CSEC` | CyberSec | 1 |
+| `avmnite-02h` | NiteSec | 2 |
+| `I.I.I.I` | The Black Hand | 3 |
+| `run4theh111z` | BitRunners | 4 |
+
+Their hacking requirements are randomized within ranges; CSEC, for example, is 51–60 in the reference data. Do not wait on a guide's rounded “50” when the actual server needs more.
+
+Two useful optional faction stops:
+
+- **Sector-12:** be in the city with $15m to obtain the invitation. CashRoot Starter Kit costs 12.5k reputation and $125m base; after installing it, future augmentation resets start with $1m and BruteSSH. This reduces repeated startup work and is also part of the later intelligence-farm prerequisite plan.
+- **Tian Di Hui:** hacking 50, $1m, and presence in Chongqing, New Tokyo, or Ishima. This faction itself does not impose city-faction exclusions. Visiting those cities is fine; accepting their *city faction* invitations conflicts with Sector-12/Aevum. Keep the western city faction path available while obtaining CashRoot.
+
+Favor hacking skill/experience, hacking income/growth/speed, and faction reputation upgrades that advance your next milestone. Cheap examples are CyberSec's Neurotrainer I (1k rep, $4m base) and BitWire (3.75k rep, $10m base). Neuroreceptor Management from Tian Di Hui costs 75k rep/$550m base and removes the unfocused-work penalty; it is much more attractive for an unattended run than for a run where you keep work focused. Do not make every optional augmentation a mandatory detour.
+
+## 5. Install when the next cycle is worth more than waiting
+
+Purchase the expensive desired augmentations first where prerequisites allow. Each purchase inflates subsequent prices; prerequisites may force a different order. Buy NeuroFlux with leftovers after the useful bundle. Repeated NeuroFlux levels do not provide multiple distinct augmentations toward Daedalus.
+
+A good installation decision compares:
+
+- time until the next useful augmentation/prerequisite;
+- improvement from installing the already-affordable bundle;
+- time to recover faction access, income, and working reputation afterward;
+- whether the reset unlocks a meaningful donation-favor threshold or required installed-augmentation count.
+
+The script's four-hour cap is a fallback, not a recommended waiting period. Avoid delaying a productive reset solely because cheap NeuroFlux levels continue appearing.
+
+Before a manual installation, spend appropriate leftover money on home RAM, then cores when useful. Home upgrades persist across augmentation installations; ordinary purchased servers and hacknet investments do not. Use the augmentation UI to install in fresh BN1.1; `ascend.js` assumes APIs you do not yet possess and currently has missing reset helpers (B07/B11).
+
+After installation, start the casino/bootstrap and `autopilot.js` again as needed. Without SF4, explicitly restarting automation is part of the user workflow. CashRoot and retained home RAM make this much shorter than the first cycle.
+
+## 6. Finish BN1
+
+For the hacking route, Daedalus requires **30 distinct installed augmentations, $100b cash, and hacking 2,500** in BN1. The alternative skill condition is 1,500 in all four combat stats. Check actual requirements if using this guide in another BN.
+
+Hold cash until the invitation arrives; stock portfolio value is not cash. Autopilot's current Daedalus stop flag is not enforced by its stock launch predicate (B02), so supervise this transition until repaired.
+
+Earn Daedalus reputation for The Red Pill (2.5m rep, $0 base), purchase and install it. Donation access at 150 favor in BN1 can shorten this grind **if** the next cycle can actually fund the needed donation. Favor is awarded on installation; resetting for favor without a funding plan can lose time.
+
+After The Red Pill installation, reach the world daemon's displayed hacking requirement (3,000 in ordinary BN1), open its five ports, root it, connect, and perform the final hack/backdoor interaction. Use `scan.js` to find the route. Make the first manual transition to **BN4** for the agreed automation-first progression.
+
+## Quick diagnosis
+
+| Symptom | First check |
+| --- | --- |
+| Startup appears frozen | Home RAM and the awaited helper PID; B01 |
+| New cracker did not expand workers | Run `Tasks/crack-host.js`; B03 |
+| Trader starts before casino is done | Host-local reserve and completion signal; B02 |
+| Cash disappears despite a reserve | Initial cloud-server purchases; B04 |
+| A faction backdoor never appears | Actual required hacking level, root access, and manual backdoor completion |
+| Reset seems unusually slow or never finishes | Missing reset helpers / truthy RPC errors; B07/B11 |
+
+Once the main loop is stable and RAM is available, `run go.js --runOnce --disable-cheats` is a useful optional experiment for early passive bonuses. Compare time to the next augmentation with and without it. The current 2 TB total-network gate is a policy choice, not a mechanic requiring SF14 or 2 TB to play Go.
+
+Mechanics and prices above are from the pinned primary sources in [sources.md](sources.md); displayed in-game prices and requirements take precedence when versions or multipliers differ.
