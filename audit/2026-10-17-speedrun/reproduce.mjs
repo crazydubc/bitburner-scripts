@@ -1,5 +1,5 @@
 // Offline evidence for the audited a05225d source. No game, save, network, or purchases.
-// These assertions describe CURRENT defects, not desired regression-test behavior.
+// These assertions describe ORIGINAL audited defects, not desired regression-test behavior.
 // After fixing a finding, update/retire its reproduction rather than restoring the bug.
 import assert from 'node:assert/strict';
 import { readFile, access } from 'node:fs/promises';

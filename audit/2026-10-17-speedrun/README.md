@@ -2,7 +2,7 @@
 
 The highest-value work is fixing progression stalls and making the early-game launch/spending rules reliable. Keep the current hacking batcher as the performance baseline. Two confined batcher defects are documented separately; neither calls for replacing its scheduling design.
 
-**The `testing/bn1-go-audit` branch combines the audit, BN1.1 on-screen prompts, and focused Go fixes for in-game testing.** The initial audit documented 18 repair candidates; B03 is fixed, and B02's Daedalus launch flag is now enforced. B02's remote reserve transport and the other findings remain open. The current hacking batcher and $8b reserve policy are unchanged.
+**The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) combines the audit, BN1.1 on-screen prompts, focused Go fixes, and resource/purchase repairs for in-game testing.** B03, B04, B06, B10, B17, and B18 have fixes with positive regression checks. B02's Daedalus launch flag is enforced; its remote reserve transport and the other findings remain open. The current hacking batcher and $8b reserve policy are unchanged.
 
 ## Pull the combined testing branch
 
@@ -26,6 +26,7 @@ Combined-branch checks:
 ```sh
 node audit/2026-10-17-speedrun/checks/bn1-guide.mjs
 node audit/2026-10-17-speedrun/checks/stock-liquidation.mjs
+node audit/2026-10-17-speedrun/checks/resource-purchases.mjs
 node audit/2026-10-17-speedrun/checks/go-lifecycle.mjs
 ```
 
@@ -40,7 +41,9 @@ The user clarified that BN1.1 guidance should appear on screen. The written runb
 | [#31 — BN1.1 on-screen guidance](https://github.com/crazydubc/bitburner-scripts/pull/31) | Adds `bn1-guide.js`, integrates the non-modal panel into autopilot, fixes B03, and corrects downloader fallback filenames. Start with `run bn1-guide.js` on a fresh BN1.1. |
 | [#32 — Go correctness and assessment](https://github.com/crazydubc/bitburner-scripts/pull/32) | Fixes pattern crashes, stale opponent/move state, edge scans, and cheat threshold handling; secures winning two-pass finishes. Includes engine-backed comparisons and an archived tactical experiment that did not improve aggregate wins. |
 
-PRs #31 and #32 are combined with the audit from [#33](https://github.com/crazydubc/bitburner-scripts/pull/33) on `testing/bn1-go-audit`; `main` is unchanged by this integration. The baseline reproductions below intentionally describe the original audited revision. B03's defect assertion now fails because its repair is applied; use the positive checks above to verify the combined implementation.
+PRs #31 and #32 are combined with the audit from [#33](https://github.com/crazydubc/bitburner-scripts/pull/33) on `testing/bn1-go-audit`; `main` is unchanged by this integration. The baseline reproductions below intentionally describe the original audited revision. Defect assertions for repaired paths now fail as expected; use the positive checks above to verify the combined implementation.
+
+The latest [resource/purchase follow-up](resource-purchase-fixes.md) fixes cloud purchase budgets, stale sleeve cash/result handling, skipped sleeve augmentations, rooted-RAM eligibility, and darknet stasis worker/helper capacity. Restart the affected managers/workers after pulling. The follow-up records focused evidence, live-game checks, and the remaining reserve/RPC limitations.
 
 ## Read in this order
 
@@ -50,6 +53,7 @@ PRs #31 and #32 are combined with the audit from [#33](https://github.com/crazyd
 | [bn1-guide.md](bn1-guide.md) | Practical instructions for a fresh BN1.1, including current-code workarounds |
 | [bitnode-route.md](bitnode-route.md) | Proposed order for this automation suite, dependencies, and alternatives to benchmark |
 | [optimization-plan.md](optimization-plan.md) | Implementation order and measurements that can establish real speed gains |
+| [resource-purchase-fixes.md](resource-purchase-fixes.md) | B04/B06/B10/B17/B18 changes, verification, and live-test notes |
 | [sources.md](sources.md) | Pinned repository/game references and scope limitations |
 | [reproduce.mjs](reproduce.mjs) / [evidence.json](evidence.json) | Bounded offline reproductions and source/arithmetic checks |
 

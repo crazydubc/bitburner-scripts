@@ -271,15 +271,22 @@ async function manageSleeveAugs(ns, i, budget) {
     log(ns, `INFO: With budget ${formatMoney(budget)}, ${(lastPurchaseStatusUpdate[i] = purchaseUpdate)} ` +
       `(Min batch size: ${options['min-aug-batch']}, Cooldown: ${formatDuration(cooldownLeft)})`);
   if (cooldownLeft == 0 && batchCount > 0 && ((batchCount >= availableAugs[i].length - 1) || batchCount >= options['min-aug-batch'])) { // Don't require the last aug it's so much more expensive
-    let strAction = `Purchase ${batchCount}/${availableAugs[i].length} augmentations for sleeve ${i} at total cost of ${formatMoney(batchCost)}`;
-    let toPurchase = availableAugs[i].splice(0, batchCount);
-    const purchase = toPurchase.map(a => a.name).slice(1).reduce((s, aug) => s && ns.sleeve.purchaseSleeveAug(i, aug), true);
-    if (purchase) {
-      //log(ns, `SUCCESS: ${strAction}`, true, 'success');
-      [lastSleeveHp[i], lastSleeveShock[i]] = [undefined, undefined]; // Sleeve stats are reset on installation of augs, so forget saved health info
-    } //else log(ns, `ERROR: Failed to ${strAction}`, true, 'error');
-    lastPurchaseTime[i] = Date.now();
-    return batchCost; // Even if we think we failed, return the predicted cost so if the purchase did go through, we don't end up over-budget
+    let spent = 0, purchased = 0;
+    try {
+      for (const aug of availableAugs[i].slice(0, batchCount)) {
+        if (ns.sleeve.purchaseSleeveAug(i, aug.name) !== true) break;
+        purchased++;
+        spent += aug.cost;
+        availableAugs[i].shift(); // Remove only confirmed purchases; retain failed/unattempted items.
+      }
+    } finally {
+      cacheExpiry[i] = 0; // Reconcile failures or external purchases before selecting another batch.
+      if (purchased > 0) {
+        [lastSleeveHp[i], lastSleeveShock[i]] = [undefined, undefined];
+        lastPurchaseTime[i] = Date.now();
+      }
+    }
+    return spent;
   }
   return 0;
 }

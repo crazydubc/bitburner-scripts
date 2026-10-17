@@ -371,7 +371,7 @@ export async function maxRun(ns, persistent, useHacknet = false) {
   for (const server of servers) {
     if (server.startsWith("hacknet")) {
       if (!useHacknet) continue;
-    } else if (ns.hasRootAccess(server)) continue; //can't check for root on hacknets
+    } else if (!ns.hasRootAccess(server)) continue; //can't check for root on hacknets
     let tmpramavailable = await getServerAvailRam(ns, server)
     if (server === "home" && persistent) tmpramavailable = Math.max(tmpramavailable, 0)
     if (tmpramavailable > highest)
@@ -385,7 +385,7 @@ export async function maxRun(ns, persistent, useHacknet = false) {
   for (const server of servers) {
     if (server.startsWith("hacknet")) {
       if (!useHacknet) continue;
-    } else if (ns.hasRootAccess(server)) continue; //can't check for root on hacknets
+    } else if (!ns.hasRootAccess(server)) continue; //can't check for root on hacknets
     let tmpramavailable = await getServerAvailRam(ns, server)
     if (persistent && emergencyReserve && tmpramavailable >= resRam) {
       emergencyReserve = false

@@ -3,23 +3,24 @@ import { log, formatMoney, getPlayerInfo, sleeveRun } from "./utils.js";
 /** @param {NS} ns */
 export async function main(ns) {
   // Buy sleeves until the game reports no more can be bought (cost becomes Infinity)
-  let sleeveCost = await sleeveRun(ns, "getSleeveCost");
   let player = await getPlayerInfo(ns);
 
   while (!player.factions.includes(ns.enums.FactionName.TheCovenant)) {
     await ns.sleep(5000);
     player = await getPlayerInfo(ns);
   }
-  while (sleeveCost < Number.POSITIVE_INFINITY) {
+  while (true) {
+    const sleeveCost = await sleeveRun(ns, "getSleeveCost");
+    if (sleeveCost === Number.POSITIVE_INFINITY) break;
+    player = await getPlayerInfo(ns); // Income and competing purchases change cash while we wait.
+    if (!Number.isFinite(sleeveCost) || sleeveCost < 0) {
+      log(ns, `Unable to read the next sleeve cost: ${String(sleeveCost)}. Will retry.`, true, "warning");
+    } else if (player.money >= sleeveCost) {
+      const result = await sleeveRun(ns, "purchaseSleeve");
+      if (purchaseSucceeded(result)) log(ns, `Purchased a sleeve for ${formatMoney(sleeveCost)}.`, true, "info");
+      else log(ns, `Sleeve purchase failed: ${result?.message ?? String(result)}. Will retry.`, true, "warning");
+    }
     await ns.sleep(5000);
-
-
-    if (player.money < sleeveCost) continue;
-
-    const ok = await sleeveRun(ns, "purchaseSleeve"); // usually boolean in vanilla API
-    sleeveCost = await sleeveRun(ns, "getSleeveCost");
-
-    if (ok) log(ns, `Purchased a sleeve. Next sleeve cost: ${formatMoney(sleeveCost)}`, true, "info");
   }
 
   log(ns, `Upgrading sleeve memory...`, true, "info");
@@ -38,7 +39,7 @@ export async function main(ns) {
           const cost = await sleeveRun(ns, "getMemoryUpgradeCost", i, amt);
           const ok = await sleeveRun(ns, "upgradeMemory", i, amt);
 
-          if (ok) {
+          if (purchaseSucceeded(ok)) {
             // sleeve.memory doesn't auto-update; compute expected new value or re-fetch sleeve
             const newMem = sleeve.memory + amt;
             log(ns, `Sleeve${i} +${amt} memory for ${formatMoney(cost)} -> ${newMem}/100`, true, "info");
@@ -53,6 +54,11 @@ export async function main(ns) {
 
     await ns.sleep(1000);
   }
+}
+
+// Accept explicit success only; failed result objects and RPC error strings are also truthy.
+function purchaseSucceeded(result) {
+  return result === true || result?.success === true;
 }
 
 /** @param {NS} ns */

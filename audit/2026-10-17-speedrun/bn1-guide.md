@@ -64,7 +64,7 @@ Rerun the guide; it keeps the manager running and restarts it whenever at least 
 run bn1-guide.js
 ```
 
-Check Active Scripts and the autopilot/kernel logs. You want a live income process, advancing preparation, and no repeating “unable to launch” messages. Current cloud buying can overspend its budget (B04), so monitor it during bootstrap. If a helper stalls, inspect home RAM and the child process before restarting; repeated blind restarts do not repair the underlying wait.
+Check Active Scripts and the autopilot/kernel logs. You want a live income process, advancing preparation, and no repeating “unable to launch” messages. The testing branch fixes B04's cloud purchase budget; monitor reserve behavior because B02's remote state transport remains open. If a helper stalls, inspect home RAM and the child process before restarting; repeated blind restarts do not repair the underlying wait.
 
 Buy `DarkscapeNavigator.exe` for $50m through TOR after the casino. Alternatively, visit Chongqing > Shadowed Walkway and buy it for $30m; this also grants TOR. Autopilot then starts `darknet.js` when home has space. Darknet phishing trains Charisma, which helps Field Work reputation in BN1.1. At Sector-12, The Black Hand, and Daedalus, compare Field Work and Hacking Contracts and choose the higher displayed rep/sec. CyberSec, NiteSec, and BitRunners only offer hacking work. Visiting Chongqing does not join its city faction.
 
@@ -134,7 +134,7 @@ After The Red Pill installation, reach the world daemon's displayed hacking requ
 | Startup appears frozen | Home RAM and the awaited helper PID; B01 |
 | New cracker did not expand workers | Run `Tasks/crack-host.js`; B03 |
 | Trader starts before casino is done | Host-local reserve and completion signal; B02 |
-| Cash disappears despite a reserve | Initial cloud-server purchases; B04 |
+| Cash disappears despite a reserve | Remote reserve-file transport (B02); verify B04's budget fix is loaded |
 | A faction backdoor never appears | Actual required hacking level, root access, and manual backdoor completion |
 | Reset seems unusually slow or never finishes | Missing reset helpers / truthy RPC errors; B07/B11 |
 

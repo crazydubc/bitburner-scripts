@@ -4,6 +4,8 @@ Locations refer to the audited commit recorded in [sources.md](sources.md). P1 m
 
 “Execution” below means the actual function or extracted function was run with bounded mocks. “Source” and “arithmetic” checks establish narrower facts; they are not live-game reproductions.
 
+**Current testing-branch status:** B03, B04, B06, B10, B17, and B18 have implemented fixes and positive checks. B02 is partially repaired. The table and original evidence below describe the audited baseline; follow-up notes distinguish applied changes from remaining work. See [resource-purchase-fixes.md](resource-purchase-fixes.md) for the latest implementation and live-test limits.
+
 | ID | Priority | Finding | Evidence |
 | --- | --- | --- | --- |
 | B01 | P1 | Home-only RPC can wait forever; persistent launcher excludes home | Execution + source |
@@ -73,6 +75,8 @@ Related small cleanup: the travel condition `!player.city != "Aevum"` is always 
 
 ## B04 — Initial cloud-server buying ignores its budget
 
+**Testing-branch follow-up:** initial purchases and upgrades now share the original pass budget; actions recheck current cash/reserve and use engine prices. Tests cover the reported reserve breach, exact/partial affordability, spending during yields, and failed operations. B02's remote state transport and cross-script coordination remain separate limitations.
+
 **Where:** `host-manager.js:15–29,33–50`.
 
 The manager computes `min(money - reserve, money * 0.2)`, but its loop filling server slots never checks cost against that budget or subtracts purchases. Subsequent home/cloud upgrades also begin with the stale pre-purchase budget.
@@ -98,6 +102,8 @@ The existing INT 230 threshold is a script policy, not a game cap. Add a finite 
 **Accept when:** invitations arriving after startup trigger farming; missing CashRoot prevents premature farming; low-ROI exit stays complete after restart; the existing BN can then finish. The runner checks the stale assignments, not the complete multi-reset state machine.
 
 ## B06 — Sleeve purchaser waits on stale money
+
+**Testing-branch follow-up:** the buyer refreshes price/cash each iteration and proceeds when income crosses the price. Sleeve and memory purchase results require explicit success, supporting the current result object while rejecting truthy error strings/failed objects. A mocked full buyer run reaches the memory phase after purchasing.
 
 **Where:** `purchaseSleeves.js:6–23`; BN10 completion gate at `autopilot.js:445–457`.
 
@@ -149,6 +155,8 @@ After the final BlackOp, the Bladeburner manager alerts, but autopilot's complet
 **Accept when:** due eligible tasks launch once as intended, duplicate instances remain bounded, and false predicates suppress launches. Asynchronous helper `nextRun` fields are also currently unused by `checkOnRunningScripts`; honor or remove that misleading staggering configuration.
 
 ## B10 — Sleeve augmentation batch skips its first purchase
+
+**Testing-branch follow-up:** all selected items are attempted in order, only successful purchases are removed/counted, and the cache is invalidated after a batch or exception. Partial failures preserve unbought items. Single-item, full-batch, failure, external-purchase, and cooldown cases pass.
 
 **Where:** `sleeve.js:276` in `manageSleeveAugs`.
 
@@ -236,6 +244,8 @@ The target-switch branch calls `batchInfo = getHackP(ns, target, -1, -1, 1)` wit
 
 ## B17 — Maximum-RAM helper reverses the root test
 
+**Testing-branch follow-up:** both root tests are corrected. Positive checks cover rooted home/workers, excluded unrooted hosts, optional hacknet capacity, and both persistent-capacity passes. Persistent-launch fallback remains part of B01.
+
 **Where:** `utils.js:374,388` in `maxRun`.
 
 Both passes skip a server when `hasRootAccess(server)` is true. They therefore ignore usable hosts and count unusable ordinary hosts when selecting the emergency reservation size.
@@ -247,6 +257,8 @@ Both passes skip a server when `hasRootAccess(server)` is true. They therefore i
 **Accept when:** only eligible rooted hosts contribute to available capacity, including home behavior for persistent and one-shot processes.
 
 ## B18 — Darknet stasis respawn overallocates RAM
+
+**Testing-branch follow-up:** stasis/Labyrinth transitions now budget the full worker override plus a separate 13.6 GB stasis helper. Invalid or zero fits and shared-host conflicts are reported before `spawn`, which provides no return PID. Helper exit is checked against the actual link state, and the unused nonexistent `util.js` copy is removed. A mocked 128 GB transition clears stasis and returns to normal workers within the available RAM.
 
 **Where:** `darknet.js:1410`.
 

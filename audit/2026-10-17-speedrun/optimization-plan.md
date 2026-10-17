@@ -1,6 +1,6 @@
 # Implementation and measurement plan
 
-Optimize wall-clock time to useful installed augmentations and completed BNs. Keep the existing batcher as the baseline and land small independently reviewable changes. This document proposes work; the audit branch has not applied it.
+Optimize wall-clock time to useful installed augmentations and completed BNs. Keep the existing batcher as the baseline and land small independently reviewable changes. This document records the original proposed work order; current implementation status is in [README.md](README.md) and [resource-purchase-fixes.md](resource-purchase-fixes.md). B01/B11 transport and B02 remote spending state remain the next infrastructure priorities.
 
 ## Repair order
 
