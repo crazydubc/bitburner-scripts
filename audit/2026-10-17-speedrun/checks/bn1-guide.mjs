@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {getBn1Guidance, main, BN1_CRACKERS, BN1_FACTION_SERVERS} from '../../../bn1-guide.js';
+import {getBn1Guidance, readBn1Snapshot, main, BN1_CRACKERS, BN1_FACTION_SERVERS} from '../../../bn1-guide.js';
 import {filesExist, getPortCrackers} from '../../../utils.js';
 
 function snapshot() {
@@ -52,6 +52,36 @@ assert.equal(getBn1Guidance(s).id, 'finish-node', 'Do not force another casino c
 s.reset.ownedSF.set(1, 1);
 assert.equal(getBn1Guidance(s).id, 'finished');
 
+// Use the real shared lookup with a mocked helper transport. An offloaded
+// autopilot must advance the panel just like one running on home.
+for (const runningOn of ['home', 'n00dles', null]) {
+  const live = snapshot();
+  const messages = [];
+  const ns = {
+    pid: 1, flags: () => ({'no-tail': true, once: true}), getHostname: () => 'home',
+    getScriptName: () => 'bn1-guide.js',
+    ps: host => host === runningOn ? [{pid: 2, filename: 'autopilot.js'}] : [],
+    getResetInfo: () => live.reset, getPlayer: () => live.player,
+    getServerMaxRam: () => live.homeRam, hasTorRouter: () => live.hasTor,
+    getMoneySources: () => ({sinceInstall: {casino: live.casinoEarned}}),
+    fileExists: file => live.crackers.includes(file), getServer: host => live.servers[host],
+    exec: (file, host) => {
+      assert.equal(file, 'bin/getServers.js'); assert.equal(host, 'home');
+      return 42;
+    },
+    nextPortWrite: async pid => assert.equal(pid, 42),
+    readPort: pid => { assert.equal(pid, 42); return [{hostname: 'home'}, {hostname: 'n00dles'}]; },
+    disableLog() {}, clearLog() {}, ui: {setTailTitle() {}},
+    print: message => messages.push(message),
+  };
+  const current = await readBn1Snapshot(ns);
+  assert.equal(current.autopilotRunning, runningOn !== null);
+  assert.equal(getBn1Guidance(current).id, runningOn === null ? 'autopilot' : 'backdoor-CSEC');
+  await main(ns);
+  assert(messages.some(message => message.includes(runningOn === null
+    ? 'Start your hacking automation' : 'Backdoor CSEC')));
+}
+
 // The low-RAM panel must release its RAM without starting scripts or blocking on a modal.
 const low = snapshot(); low.homeRam = 8; low.casinoEarned = 0;
 const messages = [];
@@ -61,6 +91,7 @@ await main({
   getResetInfo: () => low.reset, getPlayer: () => low.player, getServerMaxRam: () => low.homeRam,
   hasTorRouter: () => low.hasTor, getMoneySources: () => ({sinceInstall: {casino: 0}}),
   fileExists: () => true, getServer: host => low.servers[host],
+  exec: () => {throw Error('Low-RAM guide must not launch a server lookup helper');},
   disableLog() {}, clearLog() {}, ui: {setTailTitle() {}},
   print: m => messages.push(m), tprint: m => messages.push(m),
   sleep: () => {throw Error('Low-RAM guide should exit rather than occupy home');},
@@ -75,4 +106,4 @@ for (const owned of [[], ...names.map(file => [file]), names]) {
   assert.deepEqual(await filesExist(ns, names), names.map(name => owned.includes(name)));
   assert.deepEqual(await getPortCrackers(ns), owned);
 }
-console.log('BN1 guidance transitions, low-RAM exit, and cracker detection checks passed');
+console.log('BN1 guidance transitions, offloaded autopilot detection, low-RAM exit, and cracker detection checks passed');
