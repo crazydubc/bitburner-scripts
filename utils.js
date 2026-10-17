@@ -404,7 +404,7 @@ export async function maxRun(ns, persistent, useHacknet = false) {
  * @returns {Promise<boolean[]>} */
 export async function filesExist(ns, fileNames, hostname = "home") {
   checkNsInstance(ns, '"filesExist"');
-  return fileNames.slice(1).map(f => ns.fileExists(f, hostname));
+  return fileNames.map(f => ns.fileExists(f, hostname));
 }
 
 /** A helper to parse the command line arguments with a bunch of extra features, such as
