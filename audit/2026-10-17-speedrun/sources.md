@@ -60,4 +60,4 @@ Mapped startup, launch transport, money reservations, augmentation/reset decisio
 
 The evidence runner's transport, cash, and API responses are mocks. It does not prove live Netscript scheduling, dynamic RAM enforcement, DOM compatibility, market performance, solver correctness for every contract type, or a measured speed improvement. In particular, the B14 fixture injects a failed answer result; it does not identify a faulty prime-factor algorithm.
 
-No save was imported or changed. No game action, trade, augmentation installation, or BitNode transition was performed. Gameplay source files are unchanged in this audit branch.
+No save was imported or changed. No game action, trade, augmentation installation, or BitNode transition was performed. The initial audit changed no gameplay source files; subsequent changes on the combined testing branch are tracked in [README.md](README.md).
