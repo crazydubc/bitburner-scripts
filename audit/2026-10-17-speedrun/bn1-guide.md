@@ -67,6 +67,8 @@ Check Active Scripts and the autopilot/kernel logs. You want a live income proce
 
 ## 4. Work toward useful augmentation bundles
 
+For the on-screen faction route, access requirements, work instructions, and example targets, enter `run bn1-guide.js --roadmap`. It opens a reference panel alongside the normal next-action guide.
+
 Use Algorithms study when hacking skill is the next blocker. Once faction access is available, work for the faction whose next useful augmentation or prerequisite gives the best near-term improvement. Let the batcher earn in parallel.
 
 With the terminal visible, run:
@@ -106,7 +108,9 @@ A good installation decision compares:
 
 The script's four-hour cap is a fallback, not a recommended waiting period. Avoid delaying a productive reset solely because cheap NeuroFlux levels continue appearing.
 
-Before a manual installation, spend appropriate leftover money on home RAM, then cores when useful. Home upgrades persist across augmentation installations; ordinary purchased servers and hacknet investments do not. Use the augmentation UI to install in fresh BN1.1; `ascend.js` assumes APIs you do not yet possess and currently has missing reset helpers (B07/B11).
+Before final purchases or a manual installation, enter `run bn1-guide.js --install` to open the on-screen checklist. Stop all autopilot instances in Active Scripts, including offloaded ones, so they cannot restart trading. On home, enter `run stockmaster.js --liquidate`, wait for the sale summary, and verify zero stock positions in the Stock Market screen. If TIX API access is unavailable, sell manually; skip selling if there are no holdings. Keep autopilot stopped until installation and pause competing spending scripts if needed while buying the bundle.
+
+Then spend appropriate leftover money on home RAM, then cores when useful. Home upgrades persist across augmentation installations; ordinary purchased servers and hacknet investments do not. Use the augmentation UI to install in fresh BN1.1; `ascend.js` assumes APIs you do not yet possess and currently has missing reset helpers (B07/B11).
 
 After installation, start the casino/bootstrap and `autopilot.js` again as needed. Without SF4, explicitly restarting automation is part of the user workflow. CashRoot and retained home RAM make this much shorter than the first cycle.
 
