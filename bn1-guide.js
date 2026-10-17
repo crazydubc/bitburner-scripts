@@ -80,7 +80,7 @@ export function getBn1Guidance(s) {
     return action('finish-node', 'Finish BN1 and select BN4', 'Run scan.js with the terminal visible; connect to w0r1d_d43m0n and backdoor it.', 'Select BN4 next, then complete BN4 three times for full Singularity automation.');
   if (s.casinoEarned < 10e9) {
     if (player.city !== 'Aevum' && player.money < 250_000)
-      return action('seed-money', 'Earn travel money', 'At the Slums, repeat a reliable short crime such as shoplifting or mugging.', `Aim for $250,000: $200,000 travel plus a betting cushion. Current cash: ${money(player.money)}.`);
+      return action('seed-money', 'Earn travel money', 'Go to city->slums->mug to earn money for travel.', `Aim for $250,000: $200,000 travel plus a betting cushion. Current cash: ${money(player.money)}.`);
     if (player.city !== 'Aevum')
       return action('travel', 'Travel to Aevum', 'Use the Travel screen, then return to the terminal.', 'Run coinflip.js once you arrive.');
     if (player.money < 10_000)
