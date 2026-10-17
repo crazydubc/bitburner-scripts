@@ -203,23 +203,8 @@ export async function main(ns) {
     {
       name: "hacknet-upgrade-manager.js",
       shouldRun: shouldUpgradeHacknet,
-      alwaysRun: false,
       args: () => ["-c", "--max-payoff-time", "4h"],
       nextRun: Date.now() + (2 * STAGGER)
-    },
-    {
-      name: "hacknet-upgrade-manager.js",
-      shouldRun: shouldUpgradeHacknet,
-      alwaysRun: true,
-      args: () => ["--max-payoff-time", "8h", "--max-spend", getPlayerMoney(ns) * 0.01],
-      nextRun: Date.now() + (3 * STAGGER)
-    },
-    {
-      name: "hacknet-upgrade-manager.js",
-      shouldRun: shouldUpgradeHacknet,
-      alwaysRun: true,
-      args: () => ["--max-payoff-time", "1E100h", "--max-spend", getPlayerMoney(ns) * 0.001],
-      nextRun: Date.now() + (4 * STAGGER)
     },
     {
       name: "/Tasks/backdoor-all-servers.js",
@@ -342,7 +327,7 @@ export async function main(ns) {
     if (player.skills.hacking > playerHackLevel || ownedCracks.length > numCracksOwned) await crackHosts(ns);
     
     have4sApi = ns.stock.has4SDataTixApi();
-    playerInGang = await gangRun(ns, 'inGang');
+    playerInGang = 2 in unlockedSFs && await gangRun(ns, 'inGang') === true;
     const servers = await getServers(ns);
     maxRam = 0;
     for (const server of servers) {
@@ -383,13 +368,19 @@ export async function main(ns) {
 
   async function checkOnRunningScripts(ns) {
     for (const script of asynchronousHelpers) {
-      const serverRunning = await isScriptRunning(ns, script.name);
-      if (script.shouldRun() && !serverRunning) {
-        if (script.name == "darknet.js")
-          // Darknet bootstraps from home. A full home must not trap the manager in an RPC launch loop.
-          ns.exec(script.name, 'home', { threads: 1, temporary: true, preventDuplicates: true }, ...script.args());
-        else
-          await runScriptSomewhere(ns, script.name, true, script.args());
+      if (Date.now() < (script.nextRun ?? 0)) continue;
+      try {
+        const serverRunning = await isScriptRunning(ns, script.name);
+        if (script.shouldRun() && !serverRunning) {
+          if (script.name == "darknet.js")
+            ns.exec(script.name, 'home', { threads: 1, temporary: true, preventDuplicates: true }, ...script.args());
+          else
+            await runScriptSomewhere(ns, script.name, true, script.args());
+        }
+      } catch (error) {
+        log(ns, `WARNING: ${script.name} launch deferred: ${getErrorInfo(error)}`);
+      } finally {
+        script.nextRun = Date.now() + PERIOD;
       }
     }
   }
@@ -398,10 +389,14 @@ export async function main(ns) {
 
     for (const script of periodicScripts) {
       if (now > script.nextRun) {
-        const serverRunning = script.alwaysRun || await isScriptRunning(ns, script.name);
-        if (script.shouldRun() && !serverRunning) {
-          log(ns, `Running ${script.name}`)
-          await runScriptSomewhere(ns, script.name, false, script.args());
+        try {
+          const serverRunning = await isScriptRunning(ns, script.name);
+          if (script.shouldRun() && !serverRunning) {
+            log(ns, `Running ${script.name}`);
+            await runScriptSomewhere(ns, script.name, false, script.args());
+          }
+        } catch (error) {
+          log(ns, `WARNING: ${script.name} launch deferred: ${getErrorInfo(error)}`);
         }
         // Schedule next run
         script.nextRun = now + PERIOD;

@@ -166,7 +166,7 @@ export async function main(ns) {
       let results = await serverRun(ns, false, target.hostname, prepWeaken1, prepGrow1, prepWeaken2, prepHack1, prepWeaken3,
         prepGrow2, prepWeaken4, batchInfo.H1, batchInfo.W1, batchInfo.G1, batchInfo.W2, batchesTotal, useHacknet);
 
-      threadsLeft -= ((batchesTotal.H1 + batchesTotal.W1 + batchesTotal.G1 + batchesTotal.W2) * results.batches);
+      threadsLeft -= ((batchInfo.H1 + batchInfo.W1 + batchInfo.G1 + batchInfo.W2) * results.batches);
       await ns.sleep(10);
       if (botnetStatus && botsRequired !== botsSent) await runbotnet(ns, threadsLeft);
       loopCount++;
@@ -236,7 +236,7 @@ export async function main(ns) {
         botsRequired = -1;
         recalcbad = false;
         recalcgood = false;
-        batchInfo = getHackP(ns, target, -1, -1, 1);
+        batchInfo = await getHackP(ns, target.hostname, -1, -1, 1);
       }
 
       if (recalcbad) {

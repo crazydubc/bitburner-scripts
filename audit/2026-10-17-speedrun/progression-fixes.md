@@ -1,6 +1,6 @@
 # Progression and route follow-up
 
-This change stays on `testing/bn1-go-audit` / PR #34. It fixes B05/B07/B08 and applies the [revised route](bitnode-route.md). The original 18 findings now have ten repaired, three partially repaired, and five still open. This is an implementation status, not proof that the suite has no other bugs.
+This change stays on `testing/bn1-go-audit` / PR #34. It fixes B05/B07/B08 and applies the [revised route](bitnode-route.md). The subsequent [final backlog pass](remaining-fixes.md) completes fixes for all 18 original findings. This is implementation status, not proof that the suite has no other bugs.
 
 ## Route behavior
 
@@ -23,7 +23,7 @@ The prerequisite phase still deliberately waits for all ten factions, as request
 
 BN6/SF6 or BN7/SF7 now qualifies throughout the launch, sleeve and player-work coordination paths. Existing busy-action/Simulacrum arbitration remains. Autopilot recognizes completion only with exact Bladeburner membership and the official `getNextBlackOp() === null` result. Undefined replies and error strings never qualify. The INT preparation gate and the BN10 sleeve purchase/memory gate still apply before either hacking or BlackOps victory. Failed sleeve reads cannot silently bypass the latter. A world daemon missing on the first scan is rescanned later.
 
-Bladeburner starts `spend-hashes.js` on home with rank/SP purchases and exact-argument duplicate detection. Insufficient home RAM for this optional helper produces a warning while Bladeburner continues. Default hash-spender eligibility no longer depends on whether buying more hacknet capacity is currently affordable. B09's periodic scheduler remains open; the huge-payback investment pass remains disabled by the existing scheduler behavior.
+Bladeburner starts `spend-hashes.js` on home with rank/SP purchases and exact-argument duplicate detection. Insufficient home RAM for this optional helper produces a warning while Bladeburner continues. Default hash-spender eligibility no longer depends on whether buying more hacknet capacity is currently affordable. B09's scheduler is now repaired in the final backlog pass; the unused duplicate investment passes are removed and the four-hour continuous manager is retained.
 
 `ascend.js` sells the initial eligible hashes in one bulk call. It no longer launches an absent or infinite reset-time hash process. Home RAM upgrades use the existing intended 80% phase allowance, fresh prices/cash, explicit success results and a finite iteration cap. Failed optional hash/RAM operations warn and continue. A missing reset callback aborts before killing scripts; the default callback is autopilot.
 
@@ -53,8 +53,8 @@ Ascend's extra RAM comes from direct finite hash liquidation. The state helper r
 
 After pulling, restart affected managers to load the new route/imports. In a backed-up game save, verify one CashRoot/company preparation → farm → completion handoff, one BN6-only Bladeburner start, a final BlackOp below daemon hacking requirements, and BN10 sleeve/memory gating. Confirm reset-time spending and the autopilot callback. No game save, augmentation installation, or BN transition was performed during these offline checks.
 
-## Still open
+## Subsequent completion and remaining measurement
 
-Five original findings remain open: B09 scheduling, B13 remote backdoor deployment, B14 failed-contract retry suppression, and B15/B16 batcher arithmetic/security calculations. B01/B02/B11 retain the low-RAM, live-stall, wrapper-result and verified-casino/shared-spending limitations documented in [helper-state-fixes.md](helper-state-fixes.md). Later corporation industry expansion and investment-threshold tuning remain in [corporation-cross-bn.md](corporation-cross-bn.md). Go strategy and batch scheduling are unchanged in this follow-up.
+The [final backlog pass](remaining-fixes.md) repairs B09/B13/B14/B15/B16, completes the B01/B02/B11 implementation, and fixes late corporation industry creation. Investment thresholds, alternative BN blocks and Go strength still need measurements before additional policy changes. Go strategy and batch scheduling remain unchanged.
 
 Primary sources are the pinned official Bladeburner and Singularity API implementations, Source-File/BN definitions, and `Prestige.ts` invitation preservation, linked in [sources.md](sources.md). Official route guidance supports the mechanics; the exact order and farming bounds are our policy choices and need measurement.

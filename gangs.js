@@ -1,6 +1,6 @@
 import {
   log, getConfiguration, findPids, getActiveSourceFiles, getBNMults, gangRun,
-  formatMoney, formatNumberShort, formatDuration, getReset, getPlayerInfo, singRun, getReserve
+  formatMoney, formatNumberShort, formatDuration, getReset, getPlayerInfo, singRun, getReserve, purchase
 } from './utils.js'
 
 // Global config
@@ -511,7 +511,8 @@ async function doUpgradePurchases(ns, purchaseOrder) {
   const getOrderSummary = (items) => items.map(o => `${o.member} ${o.type}: "${o.equipmentName}"`).join(", ");
   const succeeded = [], failed = [];
   for (const order of purchaseOrder) {
-    if (await gangRun(ns, 'purchaseEquipment', order.member, order.equipmentName))
+    if ((await purchase(ns, 'gang', 'purchaseEquipment', [order.member, order.equipmentName],
+      {budget: order.cost, ...(options.reserve == null ? {} : {reserve: options.reserve})})).result === true)
       succeeded.push(order)
     else
       failed.push(order);

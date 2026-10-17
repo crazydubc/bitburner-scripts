@@ -1,7 +1,7 @@
 // Actual transport, Singularity and reserve functions with a small Netscript host/port model.
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {runScriptLocal, runScriptSomewhere, singRun, getReserve, setReserve, isScriptRunning, whichServerIsRunning} from '../../../utils.js';
+import {runScriptLocal, runScriptSomewhere, singRun, getReserve, setReserve, isScriptRunning, whichServerIsRunning, rpcReplyBudget} from '../../../utils.js';
 import {main as reserveMain} from '../../../bin/reserve.js';
 import {main as singularityMain} from '../../../bin/singRun.js';
 import {main as configMain} from '../../../bin/sync-script-config.js';
@@ -47,6 +47,7 @@ function harness() {
       if (file === 'reply.js') { h.port(pid).write(h.reply); return pid; }
       if (file === 'dead.js') return pid;
       if (file === 'slow.js') { h.running.add(pid); return pid; }
+      if (file === 'bin/terminate-rpc.js') { h.running.delete(args[0]); h.killed = args[0]; return pid; }
       if (file === 'bin/getServerAvailRam.js') { h.port(pid).write(h.free[args[0]] ?? 0); return pid; }
       if (file === 'bin/getServersLight.js') { h.port(pid).write(h.servers); return pid; }
       if (file === 'bin/scp.js') {
@@ -129,9 +130,37 @@ try {
   await tick(1000); await rejection;
   assert(dead.port(100).empty(), 'Dead child cleanup must not leave a synthetic response');
   assert.equal(timers.size, 0);
+
+  const stalled = harness(); stalled.running.add(999);
+  const timeout = assert.rejects(runScriptLocal(stalled.ns('home'), 'slow.js', false, [], 0, 30_000), /30s reply budget/);
+  await tick(30_000); await timeout;
+  assert.equal(stalled.killed, 100);
+  assert(stalled.running.has(999), 'A stalled RPC must not kill unrelated processes');
+  assert(stalled.port(100).empty());
+  assert.equal(timers.size, 0);
+
+  const noRoom = harness();
+  const blockedTimeout = assert.rejects(runScriptLocal(noRoom.ns('home'), 'slow.js', false, ['blocked'], 0, 30_000), /Free home RAM/);
+  noRoom.failLaunch = true;
+  await tick(30_000); await blockedTimeout;
+  const attempts = noRoom.launches.length;
+  await assert.rejects(runScriptLocal(noRoom.ns('home'), 'slow.js', false, ['blocked']), /still unresponsive/);
+  assert.equal(noRoom.launches.length, attempts, 'Do not duplicate an unresponsive child when the killer cannot launch');
+  noRoom.running.delete(100); noRoom.failLaunch = false;
+  const recovered = runScriptLocal(noRoom.ns('home'), 'slow.js', false, ['blocked']);
+  noRoom.port(101).write('recovered');
+  assert.equal(await recovered, 'recovered');
+  assert.equal(timers.size, 0);
 } finally {
   Date.now = realNow; globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout;
 }
+
+assert.equal(rpcReplyBudget('custom-task.js'), 0);
+assert.equal(rpcReplyBudget('bin/getPlayer.js'), 30_000);
+assert.equal(rpcReplyBudget('bin/getHackP.js'), 120_000);
+assert.equal(rpcReplyBudget('bin/makeMove.js'), 600_000);
+assert.equal(rpcReplyBudget('bin/corpRun.js', ['nextUpdate']), 120_000);
+assert.equal(rpcReplyBudget('bin/stanekRun.js', ['chargeFragment']), 600_000);
 
 // Effective Singularity cost is preallocated at every SF4 level; API error strings never count as success.
 for (const multiplier of [16, 4, 1]) {

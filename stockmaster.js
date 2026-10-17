@@ -1,5 +1,5 @@
 import {
-  getConfiguration, getActiveSourceFiles, getBNMults, getReserve,
+  getConfiguration, getActiveSourceFiles, getBNMults, getReserve, purchase,
   formatMoney, formatNumberShort, formatDuration, hasTixApi, getPlayerInfo, getReset, findPids, stockRun
 } from './utils.js'
 
@@ -203,7 +203,7 @@ export async function main(ns) {
     // If we haven't gone above a certain liquidity threshold, don't attempt to buy more stock
     // Avoids death-by-a-thousand-commissions before we get super-rich, stocks are capped, and this is no longer an issue
     // BUT may mean we miss striking while the iron is hot while waiting to build up more funds.
-    if (playerStats.money / corpus > fracB) {
+    if (playerStats.money / corpus > fracB && ns.getMoneySources().sinceInstall?.casino >= 10e9) {
       // Compute the cash we have to spend (such that spending it all on stock would bring us down to a liquidity of fracH)
       let cash = Math.min(playerStats.money - reserve, maxHoldings - holdings);
       // If we haven't detected the market cycle (or haven't detected it reliably), assume it might be quite soon and restrict bets to those that can turn a profit in the very-near term.
@@ -461,8 +461,8 @@ let launchSummaryTail = async ns => {
 }
 
 // Ram-dodging helpers that spawn temporary scripts to buy/sell rather than pay 2.5GB ram per variant
-let buyStockWrapper = async (ns, sym, numShares) => await stockRun(ns, 'buyStock', sym, numShares);
-let buyShortWrapper = async (ns, sym, numShares) => await stockRun(ns, 'buyShort', sym, numShares);
+let buyStockWrapper = async (ns, sym, numShares) => (await purchase(ns, 'stock', 'buyStock', [sym, numShares], options.reserve == null ? {} : {reserve: options.reserve})).result;
+let buyShortWrapper = async (ns, sym, numShares) => (await purchase(ns, 'stock', 'buyShort', [sym, numShares], options.reserve == null ? {} : {reserve: options.reserve})).result;
 let sellStockWrapper = async (ns, sym, numShares) => await stockRun(ns, 'sellStock', sym, numShares);
 let sellShortWrapper = async (ns, sym, numShares) => await stockRun(ns, 'sellShort', sym, numShares);
 
@@ -579,13 +579,13 @@ async function tryGet4SApi(ns, playerStats, budget) {
     return false;
   if (playerStats.money < totalCost)
     await liquidate(ns);
-  if (!(await stockRun(ns, 'purchase4SMarketData')))
+  if (has4S || (await purchase(ns, 'stock', 'purchase4SMarketData', [], {quotedCost: cost4sData, ...(options.reserve == null ? {} : {reserve: options.reserve})})).result === true)
     log(ns, `SUCCESS: Purchased 4SMarketData for ${formatMoney(cost4sData)} ` +
       `(At ${formatDuration(getTimeInBitnode())} into BitNode)`, true, 'success');
   else
     log(ns, 'ERROR attempting to purchase 4SMarketData!', false, 'error');
 
-  if ((await stockRun(ns, 'purchase4SMarketDataTixApi'))) {
+  if ((await purchase(ns, 'stock', 'purchase4SMarketDataTixApi', [], {quotedCost: cost4sApi, ...(options.reserve == null ? {} : {reserve: options.reserve})})).result === true) {
     log(ns, `SUCCESS: Purchased 4SMarketDataTixApi for ${formatMoney(cost4sApi)} ` +
       `(At ${formatDuration(getTimeInBitnode())} into BitNode)`, true, 'success');
     return true;
@@ -607,13 +607,13 @@ async function tryGetStockMarketAccess(ns, budget) {
   const totalCost = (hasWSE ? 0 : costWseAccount) + costTixApi;
   if (totalCost > budget) return false;
   if (!hasWSE) {
-    if ((await stockRun(ns, 'purchaseWseAccount')))
+    if ((await purchase(ns, 'stock', 'purchaseWseAccount', [], {quotedCost: costWseAccount, ...(options.reserve == null ? {} : {reserve: options.reserve})})).result === true)
       log(ns, `SUCCESS: Purchased a WSE (stockmarket) account for ${formatMoney(costWseAccount)} ` +
         `(At ${formatDuration(getTimeInBitnode())} into BitNode)`, true, 'success');
     else
       log(ns, 'ERROR attempting to purchase WSE account!', false, 'error');
   }
-  if ((await stockRun(ns, 'purchaseTixApi'))) {
+  if ((await purchase(ns, 'stock', 'purchaseTixApi', [], {quotedCost: costTixApi, ...(options.reserve == null ? {} : {reserve: options.reserve})})).result === true) {
     log(ns, `SUCCESS: Purchased Tix (stockmarket) Api access for ${formatMoney(costTixApi)} ` +
       `(At ${formatDuration(getTimeInBitnode())} into BitNode)`, true, 'success');
     return true;

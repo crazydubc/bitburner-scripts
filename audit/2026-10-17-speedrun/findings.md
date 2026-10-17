@@ -4,7 +4,7 @@ Locations refer to the audited commit recorded in [sources.md](sources.md). P1 m
 
 “Execution” below means the actual function or extracted function was run with bounded mocks. “Source” and “arithmetic” checks establish narrower facts; they are not live-game reproductions.
 
-**Current testing-branch status:** B03, B04, B06, B10, B12, B17, and B18 have implemented fixes and positive checks. B01, B02 and B11 are partially repaired. The table and original evidence below describe the audited baseline; follow-up notes distinguish applied changes from remaining work. See [resource-purchase-fixes.md](resource-purchase-fixes.md), [helper-state-fixes.md](helper-state-fixes.md) and [corporation-cross-bn.md](corporation-cross-bn.md) for implementation and live-test limits.
+**Current testing-branch status:** all 18 original findings have implemented fixes and positive offline checks. The table and original evidence below describe the audited baseline; follow-up notes identify the changes. See [remaining-fixes.md](remaining-fixes.md) for the final implementation pass and live-test limits, and [README.md](README.md) for earlier follow-ups. This is not a claim of exhaustive correctness or measured speed gains.
 
 | ID | Priority | Finding | Evidence |
 | --- | --- | --- | --- |
@@ -29,7 +29,7 @@ Locations refer to the audited commit recorded in [sources.md](sources.md). P1 m
 
 ## B01 — Unbounded home RPC waits
 
-**Testing-branch follow-up:** missing helpers and ten seconds of failed launches now produce explicit errors. A watchdog detects a child that dies without replying while preserving event-driven successful replies and legitimately long live operations. Persistent launches can fall back to home within its 16 GB reserve; self-offloading cannot loop back onto home. Process lookups no longer need a home RPC. Nested home RAM requirements and recovery for live-but-stalled children remain open; see [helper-state-fixes.md](helper-state-fixes.md).
+**Testing-branch follow-up:** Missing helpers and ten seconds of failed launches produce explicit errors. Reply watchdogs detect dead children and apply operation-specific budgets to known helpers, with exact-PID termination/retry recovery. Batch/grow inputs are collected before calculator launch, removing their nested multiplier chain; the tested chain fits an otherwise available 8 GB home. Persistent launch fallback, self-relocation protection and direct process lookups remain. See [remaining-fixes.md](remaining-fixes.md) for budgets and RAM limits.
 
 **Where:** `utils.js:160–175,180–240`; nested helpers including `bin/getHackP.js` and `bin/getbnmultis.js`.
 
@@ -47,7 +47,7 @@ Separately, `runScriptSomewhere(..., persistent=true)` cannot use home: its home
 
 ## B02 — Host-local state undermines the intended casino gate
 
-**Testing-branch follow-up:** the Daedalus stop flag gates normal stockmaster launches. Manual `--liquidate` stays active without buying, while automated callers use `--liquidate-once`. Reserve readers/writers now use home, and remote launches synchronize startup configuration. Checks cover stale remote files, failures and the preserved $8b formula. Verified casino completion, cross-script spending coordination and rollout to running processes remain separate concerns; B02 is still partial.
+**Testing-branch follow-up:** Home reserve/config state, the Daedalus stop flag and both liquidation modes are preserved. Long/short share buying now requires verified $10b casino earnings since installation. Integrated automatic purchases check current cash, reserve and cost synchronously on home. Coinflip’s city comparison is fixed. Tests cover unrelated wealth, new installations, competing spending and changed reserves/prices. Restart existing managers to load the changes; [remaining-fixes.md](remaining-fixes.md) lists intentional reserve exceptions.
 
 **Where:** `autopilot.js:274,365–380,151–155,727–787`; `utils.js:52–62,415–420`; `stockmaster.js:123,159,198`; other `reserve.txt` consumers.
 
@@ -77,7 +77,7 @@ Related small cleanup: the travel condition `!player.city != "Aevum"` is always 
 
 ## B04 — Initial cloud-server buying ignores its budget
 
-**Testing-branch follow-up:** initial purchases and upgrades now share the original pass budget; actions recheck current cash/reserve and use engine prices. Tests cover the reported reserve breach, exact/partial affordability, spending during yields, and failed operations. B02's remote state transport and cross-script coordination remain separate limitations.
+**Testing-branch follow-up:** Initial purchases and upgrades share the original pass budget; actions recheck current cash/reserve and use engine prices. Tests cover the reported reserve breach, exact/partial affordability, spending during yields, and failed operations. B02’s subsequent home purchase guard also closes the stale-budget window between competing automatic buyers.
 
 **Where:** `host-manager.js:15–29,33–50`.
 
@@ -152,7 +152,7 @@ After the final BlackOp, the Bladeburner manager alerts, but autopilot's complet
 
 ## B09 — Periodic `alwaysRun` is inverted
 
-**Testing-branch status: still open.** Hash spending now has explicit SF9/BN-income eligibility independent of new hacknet investment, repairing that subissue. The `alwaysRun` scheduler and unused helper `nextRun` fields are unchanged; the effectively unlimited-payback investment pass has not been enabled.
+**Testing-branch follow-up:** Both scheduler lists honor due times, preserve startup staggering, deduplicate managers and isolate launch errors. One continuous four-hour hacknet manager remains; the ineffective eight-hour/unlimited-payback duplicate passes are removed. The separate hash-spender eligibility repair is preserved. See [remaining-fixes.md](remaining-fixes.md).
 
 **Where:** `autopilot.js:218,225,397–402,170`.
 
@@ -180,7 +180,7 @@ The generated purchase list is sliced with `.slice(1)`. A one-item batch makes n
 
 ## B11 — RPC errors are truthy; Singularity RAM is fixed
 
-**Testing-branch follow-up:** `singRun` now budgets the effective API cost before launch and throws on its legacy `ERROR:` replies. The helper validates its RAM allocation; optional reset-core purchases stop on false/errors and Daedalus joining requires true. Other API wrappers still use legacy result contracts. SF4 cost cases and failure/recovery checks pass; see [helper-state-fixes.md](helper-state-fixes.md).
+**Testing-branch follow-up:** Every namespace wrapper budgets effective API RAM and throws on ERROR: replies, while preserving legitimate false/zero/null/undefined values. Helpers reject insufficient RAM and serialization failures. Reset/sleeve/completion callers cannot treat these failures as success. Positive checks execute all eight API helpers through the real transport, including SF4 cost cases; see [remaining-fixes.md](remaining-fixes.md).
 
 **Where:** `bin/singRun.js`; similar API wrappers; `ascend.js:162`; truthy result consumers including `autopilot.js:743`.
 
@@ -210,6 +210,8 @@ The script also calls the expensive target selector every nominal 50 ms loop eve
 
 ## B13 — Remote backdoor deployment is incomplete
 
+**Testing-branch follow-up:** The remote parent launches home children with explicit routes and effective SF4 RAM. Children synchronously connect/start on their own target, restore home after completion, and verify success. Checks cover duplicate targets, the exact hacking threshold and insufficient RAM. The daemon remains under autopilot’s completion policy.
+
 **Where:** `Tasks/backdoor-all-servers.js:77–99`; `utils.js:52–62`.
 
 The backdoor task launches `Tasks/backdoor-all-servers.js.backdoor-one.js` with `ns.run` on its current host. The remote bundle omits that child. On a host without a previous copy, launching it returns PID 0. The duplicate-target scan also reads `script.scriptPath` instead of the server argument in `script.args[0]`.
@@ -219,6 +221,8 @@ The backdoor task launches `Tasks/backdoor-all-servers.js.backdoor-one.js` with 
 **Accept when:** a clean remote host can complete a backdoor using the deployed bundle and repeated sweeps do not launch duplicate work for the same server.
 
 ## B14 — Failed contract answers consume further attempts
+
+**Testing-branch follow-up:** Persistent home quarantine skips unchanged failures, journals before submission, and keys eligibility to server/file/type/input/solver version. The final attempt is reserved; explicit retry flags are documented in [remaining-fixes.md](remaining-fixes.md). Tests cover repeated failures, changed input/code, corrupt state and deliberate retry. Solver algorithms are unchanged.
 
 **Where:** `Tasks/contractor.js.solver.js:60–80`; recurring contractor task in autopilot.
 
@@ -231,6 +235,8 @@ The failure file suppresses repeated messages; it does not skip a previously fai
 **Accept when:** an unchanged failed contract is not resubmitted on subsequent sweeps; a validated solver update or explicit retry can release quarantine.
 
 ## B15 — Two narrow batcher bookkeeping defects
+
+**Testing-branch follow-up:** Leftover accounting uses the actual batch record, and target switching awaits the calculator with a hostname. Executed regression checks preserve finite leftovers and typed results; timing, placement and target policy are unchanged. Live batch recovery remains a test requirement.
 
 **Where:** `kernel.js:169,239`.
 
@@ -245,6 +251,8 @@ The target-switch branch calls `batchInfo = getHackP(ns, target, -1, -1, 1)` wit
 **Accept when:** finite nonnegative leftover accounting survives batch placement; a forced target switch resolves a numeric batch record and launches no invalid arguments. Compare with the current batcher on the same save, target, and RAM.
 
 ## B16 — Batch calculator weakens at an impossible BN1 rate
+
+**Testing-branch follow-up:** The helper uses the engine’s one-core weakening strength. Shared pure growth/chance/percent calculations avoid nested RPCs and match pinned-engine fixtures. Tests exercise all three batch types across 243 planning combinations, one/eight-core security capacity and modeled money recovery. See [remaining-fixes.md](remaining-fixes.md) for scope and live checks.
 
 **Where:** `bin/getHackP.js:9,27–48`; compare `kernel.js:17` and `bin/getOptimalServer.js`.
 

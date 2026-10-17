@@ -1,6 +1,6 @@
 import {
   log, getConfiguration, disableLogs, getActiveSourceFiles, singRun, gangRun, hnRun,
-  formatMoney, formatDuration, getPlayerInfo, getReset, findPids, sleeveRun, bbRun, getOwnedAugs, getReserve
+  formatMoney, formatDuration, getPlayerInfo, getReset, findPids, sleeveRun, bbRun, getOwnedAugs, getReserve, purchase
 } from './utils.js'
 import { hasBladeburnerAccess } from './progression.js'
 import {
@@ -275,9 +275,11 @@ async function manageSleeveAugs(ns, i, budget) {
     let spent = 0, purchased = 0;
     try {
       for (const aug of availableAugs[i].slice(0, batchCount)) {
-        if (ns.sleeve.purchaseSleeveAug(i, aug.name) !== true) break;
+        const bought = await purchase(ns, 'sleeve', 'purchaseSleeveAug', [i, aug.name],
+          {budget: Math.max(0, budget - spent), ...(options.reserve == null ? {} : {reserve: options.reserve})});
+        if (bought.result !== true) break;
         purchased++;
-        spent += aug.cost;
+        spent += bought.spent;
         availableAugs[i].shift(); // Remove only confirmed purchases; retain failed/unattempted items.
       }
     } finally {

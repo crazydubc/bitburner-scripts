@@ -283,7 +283,7 @@ const helperSource = autopilotSource.slice(autopilotSource.indexOf('async functi
   autopilotSource.indexOf('async function runPeriodicScripts(ns)'));
 const helperLaunches = [];
 const checkHelpers = Function('asynchronousHelpers', 'isScriptRunning', 'runScriptSomewhere',
-  helperSource + '; return checkOnRunningScripts;')(
+  'const PERIOD=30000; const log=()=>{}, getErrorInfo=String; ' + helperSource + '; return checkOnRunningScripts;')(
   ['darknet.js', 'next-helper.js'].map(name => ({name, shouldRun: () => true, args: () => []})),
   async () => false, async (ns, file) => helperLaunches.push(file));
 await checkHelpers({exec: (file, host, options) => {

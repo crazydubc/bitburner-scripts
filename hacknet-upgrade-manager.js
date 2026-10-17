@@ -1,4 +1,4 @@
-import { getConfiguration, disableLogs, formatDuration, formatMoney, getReserve } from './utils.js'
+import { getConfiguration, disableLogs, formatDuration, formatMoney, getReserve, purchase } from './utils.js'
 
 let haveHacknetServers = true; // Cached flag after detecting whether we do (or don't) have hacknet servers
 const argsSchema = [
@@ -142,8 +142,11 @@ export async function upgradeHacknet(ns, maxSpend, maxPayoffTimeSeconds = 3600 /
       `current available funds` + (reserve == 0 ? '.' : ` (after reserving ${formatMoney(reserve)}).`));
     return 0; //
   }
-  let success = shouldBuyNewNode ? ns.hacknet.purchaseNode() !== -1 : bestUpgrade.upgrade(nodeToUpgrade, 1);
+  const method = shouldBuyNewNode ? 'purchaseNode' : ({ram: 'upgradeRam', level: 'upgradeLevel', cores: 'upgradeCore', cache: 'upgradeCache'})[bestUpgrade.name];
+  const bought = await purchase(ns, 'hacknet', method, shouldBuyNewNode ? [] : [nodeToUpgrade, 1],
+    {budget: maxSpend, ...(options.reserve == null ? {} : {reserve: options.reserve})});
+  const success = shouldBuyNewNode ? Number.isInteger(bought.result) && bought.result >= 0 : bought.result === true;
   if (success && options.toast) ns.toast(`Purchased ${strPurchase}`, 'success');
   setStatus(ns, success ? `Purchased ${strPurchase} with ${strPayoff}` : `Insufficient funds to purchase the next best upgrade: ${strPurchase}`);
-  return success ? cost : 0;
+  return success ? bought.spent : 0;
 }

@@ -30,8 +30,14 @@ export function hasBladeburnerAccess(sourceFiles) {
 
 /** null is the official all-BlackOps-complete result; undefined/errors must never qualify. */
 export async function hasCompletedBladeburner(ns, sourceFiles) {
-  if (!hasBladeburnerAccess(sourceFiles) || await bbRun(ns, 'inBladeburner') !== true) return false;
-  return await bbRun(ns, 'getNextBlackOp') === null;
+  if (!hasBladeburnerAccess(sourceFiles)) return false;
+  try {
+    if (await bbRun(ns, 'inBladeburner') !== true) return false;
+    return await bbRun(ns, 'getNextBlackOp') === null;
+  } catch (error) {
+    ns.print(`Bladeburner completion unavailable; keeping this BN active: ${String(error)}`);
+    return false;
+  }
 }
 
 export const INTEL_FARM_FILE = '/data/intel-farm-state.json';

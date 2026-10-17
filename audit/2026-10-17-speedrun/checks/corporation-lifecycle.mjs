@@ -17,10 +17,13 @@ function harness(options = {}) {
   const ns = {
     print: text => state.logs.push(text), tprint: noop, toast: noop, format: {number: String},
     getHostname: () => 'home', read: () => String(state.reserve),
-    getServerMoneyAvailable: () => state.money, getScriptRam: () => 23.6,
+    getServerMoneyAvailable: () => state.money, getScriptRam: () => 23.6, getFunctionRamCost: () => 1.6,
     getPortHandle: id => ({empty: () => !replies.has(id), read: () => replies.get(id)}),
     exec(file, host, execOptions, method, ...args) {
-      assert.equal(file, 'bin/corpRun.js'); assert.equal(host, 'home');
+      const guarded = file === 'bin/purchase.js';
+      if (guarded) {assert.equal(method, 'corporation'); const [action, packedArgs] = args; method = action; args = JSON.parse(packedArgs);}
+      else assert.equal(file, 'bin/corpRun.js');
+      assert.equal(host, 'home');
       state.calls.push([method, ...args]);
       let reply;
       if (options.rpc) reply = options.rpc(state, method, args);
@@ -29,7 +32,7 @@ function harness(options = {}) {
         if (args[1]) { assert(state.money >= 150e9 + state.reserve); state.money -= 150e9; }
         reply = true;
       } else assert.fail(`Unexpected RPC: ${method}`);
-      replies.set(++pid, reply);
+      replies.set(++pid, guarded ? {result: reply, spent: reply === true && args[1] ? 150e9 : 0} : reply);
       return pid;
     },
     sleep: async () => {

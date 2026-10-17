@@ -1,3 +1,4 @@
+import { purchase } from './utils.js';
 import { log as log_helper, getConfiguration, disableLogs, formatMoney, formatDuration, formatNumberShort, getErrorInfo, getOptimalTarget, getReserve } from './utils.js'
 
 const sellForMoney = 'Sell for Money';
@@ -202,7 +203,10 @@ export async function main(ns) {
           playerMoney * options['ignore-reserve-if-upgrade-cost-less-than-pct']);
         // If it's cheaper to buy a new hacknet node than to upgrade the cache of an existing one, do so
         if (nextNodeCost < nextCacheUpgradeCost && nextNodeCost < spendableMoney) {
-          if (ns.hacknet.purchaseNode())
+          const bought = await purchase(ns, 'hacknet', 'purchaseNode', [], {budget: nextNodeCost,
+            ...(options.reserve == null ? {} : {reserve: options.reserve}),
+            ignoreReserveBelowFraction: options['ignore-reserve-if-upgrade-cost-less-than-pct']});
+          if (Number.isInteger(bought.result) && bought.result >= 0)
             log(ns, `SUCCESS: spend-hacknet-hashes.js spent ${formatMoney(nextNodeCost)} to purchase a new hacknet node ${nodes + 1} ` +
               `in order to increase hash capacity and afford further purchases (${toBuy.join(", ")}). (You can disable this with --no-capacity-upgrades)`, false, 'success');
           else
@@ -210,7 +214,9 @@ export async function main(ns) {
               `but the purchase failed for an unknown reason (despite appearing to have ${formatMoney(spendableMoney)} to spend after reserves.)`, false, 'warning');
         } // Otherwise, try upgrading the cache level of an existing hash node 
         else if (lowestIndex !== null && nextCacheUpgradeCost < spendableMoney) {
-          if (ns.hacknet.upgradeCache(lowestIndex, 1))
+          if ((await purchase(ns, 'hacknet', 'upgradeCache', [lowestIndex, 1], {budget: nextCacheUpgradeCost,
+            ...(options.reserve == null ? {} : {reserve: options.reserve}),
+            ignoreReserveBelowFraction: options['ignore-reserve-if-upgrade-cost-less-than-pct']})).result === true)
             log(ns, `SUCCESS: spend-hacknet-hashes.js spent ${formatMoney(nextCacheUpgradeCost)} to upgrade hacknet node ${lowestIndex} hash capacity ` +
               `in order to afford further purchases (${toBuy.join(", ")}). (You can disable this with --no-capacity-upgrades)`, false, 'success');
           else

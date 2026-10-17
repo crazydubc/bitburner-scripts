@@ -1,6 +1,6 @@
 # Helper reliability and authoritative reserve state
 
-This follow-up is on `testing/bn1-go-audit` / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34). It improves the B01/B02/B11 failure paths without changing batch timing, Go move selection, the BN order, or the $8b reserve formula. These findings remain **partially repaired** for the reasons below.
+This earlier follow-up is on `testing/bn1-go-audit` / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34). It improved the B01/B02/B11 failure paths without changing batch timing, Go move selection, the BN order, or the $8b reserve formula. The [final backlog pass](remaining-fixes.md) now completes the remaining implementation work; RAM figures below describe this earlier stage.
 
 ## Implemented
 
@@ -44,9 +44,9 @@ The new transport checks execute the repository functions with mocked hosts/port
 
 ## Remaining scope and game testing
 
-- B01: helpers still execute on home. Nested helper chains can exceed an 8 GB home; they now report launch failure rather than retrying forever. A child that remains alive but makes no progress still needs operation-specific recovery. This is not a complete low-RAM bootstrap redesign.
-- B02: the $8b spending rule is preserved, but a verified casino-completion gate is still separate work. Cash, process exit and port 40 are not sufficient proof of casino completion. There is no cross-script spending lock, and budget snapshots can still age across asynchronous operations. Existing explicit reserve exceptions are unchanged.
-- B11: Singularity failures are handled at the wrapper boundary. Other API wrappers retain their legacy result contracts and need separate review; this is not a global RPC-envelope migration.
+- B01's reported nested calculator chain and stalled-child recovery are now repaired. Helpers still need available home RAM; the entire suite is not promised to fit on 8 GB.
+- B02 now verifies casino earnings and performs synchronous home purchase checks across the integrated automatic buyers. Existing explicit reserve exceptions remain; see the final follow-up for the exact scope.
+- B11 now propagates API errors consistently across all namespace wrappers while retaining legitimate false/zero/null/undefined results.
 - Pull the same testing branch and restart affected managers to load the new helper/state code. Existing processes continue with their old imports and policies. Preserve any intentional stock liquidation hold (`run stockmaster.js --liquidate`) while testing installation preparation.
 - In game, check that the guide runs on an otherwise empty 8 GB home, offloaded autopilot is detected, purchases on remote hosts follow home's reserve, missing helpers produce actionable errors, and normal long operations continue. A live save was not accessed or modified during these checks. No guarantee of zero regressions or measured speedup is claimed.
 

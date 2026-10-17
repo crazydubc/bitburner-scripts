@@ -1,6 +1,14 @@
+import { purchaseRam } from './purchase-guard.js';
 export async function getPlayerInfo(ns) { return await runScript(ns, "bin/getPlayer.js", false, []) }
 export async function getReset(ns) { return await runScript(ns, "bin/getResetInfo.js", false, []) }
-export async function getBNMults(ns) { return await runScript(ns, "bin/getbnmultis.js", false, []) }
+export async function getBNMults(ns) {
+  const reset = await getReset(ns);
+  const hasApi = reset.currentNode === 5 || Number(reset.ownedSF instanceof Map ? reset.ownedSF.get(5) : reset.ownedSF?.[5]) > 0;
+  const result = await runScriptLocal(ns, "bin/getbnmultis.js", false, [], hasApi ? 6.6 : 2.6);
+  if (!result || typeof result !== 'object' || !Number.isFinite(result.ScriptHackMoney))
+    throw new Error(`Invalid BitNode multipliers: ${String(result)}`);
+  return result;
+}
 export async function getServersLight(ns) { return await runScriptLocal(ns, "bin/getServersLight.js", false, []) }
 export async function getServerAvailRam(ns, hostname) { return await runScriptLocal(ns, "bin/getServerAvailRam.js", false, [hostname]) }
 export async function getServerMaxRam(ns, hostname) { return await runScript(ns, "bin/getServerMaxRam.js", false, [hostname]) }
@@ -8,8 +16,19 @@ export async function getServers(ns) { return await runScriptLocal(ns, "bin/getS
 export async function doSCP(ns, script, hostname, source = "home") { return await runScriptLocal(ns, "bin/scp.js", false, [script, hostname, source]) }
 export async function getOptimalTarget(ns, first = false) { return await runScript(ns, "bin/getOptimalServer.js", false, [first]) }
 export async function getServ(ns, hostname) { return await runScript(ns, "bin/getServer.js", false, [hostname]) }
-export async function getGrowThreads(ns, hostname, moneystate, minsecurity) { return await runScript(ns, "bin/getGrowThreads.js", false, [hostname, moneystate, minsecurity]) }
-export async function getHackP(ns, target, batches, threadsavailable, starthack) { return await runScript(ns, "bin/getHackP.js", false, [target, batches, threadsavailable, starthack]) }
+export async function getGrowThreads(ns, hostname, moneystate, minsecurity) {
+  const multipliers = await getBNMults(ns);
+  const result = await runScript(ns, "bin/getGrowThreads.js", false, [hostname, moneystate, minsecurity, JSON.stringify(multipliers)]);
+  if (!Number.isInteger(result) || result < 0) throw new Error(`Invalid grow calculation: ${String(result)}`);
+  return result;
+}
+export async function getHackP(ns, target, batches, threadsavailable, starthack) {
+  const multipliers = await getBNMults(ns);
+  const result = await runScript(ns, "bin/getHackP.js", false, [target, batches, threadsavailable, starthack, JSON.stringify(multipliers)]);
+  if (!result || !['H1', 'W1', 'G1', 'W2'].every(key => Number.isInteger(result[key]) && result[key] >= 0))
+    throw new Error(`Invalid batch calculation: ${String(result)}`);
+  return result;
+}
 export async function getHackPercent(ns, hostname, minsecurity) { return await runScript(ns, "bin/getHackPercent.js", false, [hostname, minsecurity]) }
 export async function getHackChance(ns, hostname, minsecurity) { return await runScript(ns, "bin/getHackChance.js", false, [hostname, minsecurity]) }
 export async function doGetServerMinSec(ns, hostname) { return await runScript(ns, "bin/doGetServerMinSec.js", false, [hostname]) }
@@ -26,21 +45,36 @@ export async function goCheatChance(ns) { return await runScript(ns, "bin/getChe
 export async function play2Moves(ns, x1, y1, x2, y2) { return await runScript(ns, "bin/playTwoMoves.js", false, [x1, y1, x2, y2]) }
 export async function destroyND(ns, ...args) { return await runScript(ns, "bin/destroyNode.js", false, [...args]); }
 
-export async function corpRun(ns, fn, ...args) { return await runScript(ns, "bin/corpRun.js", false, [fn, ...args]); }
-export async function stockRun(ns, fn, ...args) { return await runScript(ns, "bin/stockRun.js", false, [fn, ...args]) }
-export async function sleeveRun(ns, fn, ...args) { return await runScript(ns, "bin/sleeveRun.js", false, [fn, ...args]) }
-export async function hnRun(ns, fn, ...args) { return await runScript(ns, "bin/hnRun.js", false, [fn, ...args]) }
-export async function bbRun(ns, fn, ...args) { return await runScript(ns, "bin/bbRun.js", false, [fn, ...args]) }
-export async function singRun(ns, fn, ...args) {
-  // getFunctionRamCost includes the active BN/SF4 multiplier and costs no RAM itself.
-  const ram = Math.max(6.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`singularity.${fn}`));
-  const result = await runScriptLocal(ns, "bin/singRun.js", false, [fn, ...args], ram);
+async function apiRun(ns, namespace, helper, minimumRam, fn, args) {
+  const ram = Math.max(minimumRam, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`${namespace}.${fn}`));
+  let deadline;
+  if (namespace === 'singularity' && fn === 'installBackdoor') {
+    const target = await singRun(ns, 'getCurrentServer');
+    const duration = await runScriptLocal(ns, 'bin/getBackdoorTime.js', false, [target]);
+    if (!Number.isFinite(duration) || duration < 0) throw new Error('Could not determine backdoor duration');
+    deadline = Math.max(120_000, duration * 1.5 + 60_000);
+  }
+  const result = await runScriptLocal(ns, helper, false, [fn, ...args], ram, deadline);
   if (typeof result === 'string' && result.startsWith('ERROR:'))
-    throw new Error(`singularity.${fn}: ${result.slice(6)}`);
+    throw new Error(`${namespace}.${fn}: ${result.slice(6)}`);
   return result;
 }
-export async function stanekRun(ns, fn, ...args) { return await runScript(ns, "bin/stanekRun.js", false, [fn, ...args]) }
-export async function gangRun(ns, fn, ...args) { return await runScript(ns, "bin/gangRun.js", false, [fn, ...args]) }
+export async function corpRun(ns, fn, ...args) { return apiRun(ns, 'corporation', 'bin/corpRun.js', 23.6, fn, args); }
+export async function stockRun(ns, fn, ...args) { return apiRun(ns, 'stock', 'bin/stockRun.js', 5.6, fn, args); }
+export async function sleeveRun(ns, fn, ...args) { return apiRun(ns, 'sleeve', 'bin/sleeveRun.js', 5.6, fn, args); }
+export async function hnRun(ns, fn, ...args) { return apiRun(ns, 'hacknet', 'bin/hnRun.js', 6.6, fn, args); }
+export async function bbRun(ns, fn, ...args) { return apiRun(ns, 'bladeburner', 'bin/bbRun.js', 5.6, fn, args); }
+export async function singRun(ns, fn, ...args) { return apiRun(ns, 'singularity', 'bin/singRun.js', 6.6, fn, args); }
+export async function stanekRun(ns, fn, ...args) { return apiRun(ns, 'stanek', 'bin/stanekRun.js', 6.6, fn, args); }
+export async function gangRun(ns, fn, ...args) { return apiRun(ns, 'gang', 'bin/gangRun.js', 5.6, fn, args); }
+
+export async function purchase(ns, namespace, method, args = [], policy = {}) {
+  const result = await runScriptLocal(ns, 'bin/purchase.js', false,
+    [namespace, method, JSON.stringify(args), JSON.stringify(policy)], purchaseRam(ns, namespace, method));
+  if (!result || typeof result !== 'object' || !Number.isFinite(result.spent) || result.spent < 0)
+    throw new Error(`Purchase failed: ${String(result)}`);
+  return result;
+}
 export async function destroyWD(ns, bn, script) { return await runScript(ns, "bin/destroyWD.js", false, [bn, script]) }
 export async function bitflume(ns, bn, script) { return await runScriptLocal(ns, "bin/bitflume.js", false, [bn, script]) }
 
@@ -56,6 +90,18 @@ export async function crackHosts(ns) { return await runScript(ns, "Tasks/crack-h
 const reservedRam = 16;
 const remoteLaunchTimeout = 10_000;
 const remoteLaunchWarningTimes = new Map();
+const unresponsiveReplies = new Map();
+
+export function rpcReplyBudget(script, args = []) {
+  const name = script.replace(/^\/+/, '');
+  if (!name.startsWith('bin/')) return 0; // Caller-owned scripts retain their own lifetime contract.
+  if (['bin/getHackP.js', 'bin/getOptimalServer.js'].includes(name)) return 120_000;
+  if (name === 'bin/serverRun.js') return 300_000;
+  if (['bin/makeMove.js', 'bin/passTurn.js', 'bin/playTwoMoves.js', 'bin/nextTurn.js'].includes(name)) return 600_000;
+  if (name === 'bin/corpRun.js' && args[0] === 'nextUpdate') return 120_000;
+  if (name === 'bin/stanekRun.js' && args[0] === 'chargeFragment') return 600_000;
+  return 30_000;
+}
 
 /** Read current spending state on home, including when the caller has been offloaded. */
 export async function getReserve(ns) {
@@ -82,6 +128,8 @@ export const remoteScriptDependencies = [
   "logger.js",
   "donation-favor.js",
   "progression.js",
+  "hacking-formulas.js",
+  "purchase-guard.js",
 ];
 
 /** Return the complete shared runtime bundle copied before launching a script away from home. */
@@ -192,8 +240,12 @@ export async function runScript(ns, scriptName, persistent, args = []) {
 
 /** @param {NS} ns */
 // Launch on home. Persistent callers receive a PID; request/reply callers receive the PID-port result.
-export async function runScriptLocal(ns, scriptName, persistent = false, args = [], ramOverride = 0) {
+export async function runScriptLocal(ns, scriptName, persistent = false, args = [], ramOverride = 0, replyBudget = rpcReplyBudget(scriptName, args)) {
   checkNsInstance(ns, '"runScriptLocal"');
+  const requestKey = JSON.stringify([scriptName, args]);
+  const stalled = unresponsiveReplies.get(requestKey);
+  if (stalled && ns.isRunning(stalled)) throw new Error(`${scriptName} child ${stalled} is still unresponsive; stop that PID before retrying.`);
+  unresponsiveReplies.delete(requestKey);
   const scriptRam = ns.getScriptRam(scriptName, 'home');
   if (!(scriptRam > 0)) throw new Error(`Cannot launch ${scriptName}: missing or invalid script on home.`);
   const options = { threads: 1, temporary: true };
@@ -207,16 +259,18 @@ export async function runScriptLocal(ns, scriptName, persistent = false, args = 
     await ns.sleep(10);
   }
   if (persistent) return pidof;
-  return await waitForRpcReply(ns, scriptName, pidof);
+  return await waitForRpcReply(ns, scriptName, pidof, replyBudget, requestKey);
 }
 
 /** Preserve event-driven replies without adding a sleep to successful calls. */
-async function waitForRpcReply(ns, scriptName, pid) {
+async function waitForRpcReply(ns, scriptName, pid, replyBudget, requestKey) {
   const port = ns.getPortHandle(pid);
   if (!port.empty()) return port.read(); // A fast child may already have replied.
   if (!ns.isRunning(pid)) throw new Error(`${scriptName} (pid ${pid}) exited without a reply.`);
   let timer;
   let deadChild = false;
+  let timedOut = false;
+  const started = Date.now();
   const reply = port.nextWrite();
   try {
     await Promise.race([reply, new Promise((resolve, reject) => {
@@ -227,6 +281,14 @@ async function waitForRpcReply(ns, scriptName, pid) {
             deadChild = true;
             return reject(new Error(`${scriptName} (pid ${pid}) exited without a reply.`));
           }
+          if (replyBudget > 0 && Date.now() - started >= replyBudget) {
+            timedOut = true;
+            unresponsiveReplies.set(requestKey, pid);
+            // Keep kill's RAM charge in its own tiny helper; never kill an unrelated process or a whole filename.
+            const killer = ns.exec('bin/terminate-rpc.js', 'home', {threads: 1, temporary: true}, pid);
+            return reject(new Error(`${scriptName} child ${pid} exceeded its ${replyBudget / 1000}s reply budget. ` +
+              (killer ? 'Requested termination; the caller can recover.' : 'Free home RAM or stop this PID before retrying.')));
+          }
           // A live backdoor, Go turn, or calculator may legitimately take a long time.
           timer = setTimeout(check, 1000);
         } catch (error) { reject(error); }
@@ -236,8 +298,8 @@ async function waitForRpcReply(ns, scriptName, pid) {
     return port.read();
   } finally {
     clearTimeout(timer);
-    // Resolve/release our pending port listener only after its sole writer has died.
-    if (deadChild && port.empty()) { port.write(undefined); port.read(); }
+    // Release our pending listener when the child has died or this request has been abandoned.
+    if ((deadChild || timedOut) && port.empty()) { port.write(undefined); port.read(); }
   }
 }
 

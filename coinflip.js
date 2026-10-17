@@ -28,7 +28,7 @@ export async function main(ns) {
       await click(await findRequiredElement("//span[contains(@class,'travel') and ./text()='A']"));
       player = await getPlayerInfo(ns);
       // If this didn't put us in Aevum, there's likely a travel confirmation dialog we need to click through
-      if (!player.city != "Aevum")
+      if (player.city !== "Aevum")
         await click(await findRequiredElement("//button[p/text()='Travel']"));
       player = await getPlayerInfo(ns);
     }

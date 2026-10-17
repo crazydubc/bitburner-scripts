@@ -1,4 +1,4 @@
-import { getReset, log, corpRun, getBNMults, getReserve } from './utils.js'
+import { getReset, log, corpRun, getBNMults, getReserve, purchase as guardedPurchase } from './utils.js'
 
 //Can we get rid of these?
 const corpName = "Shady-Ent"
@@ -58,7 +58,8 @@ export async function waitForCorporation(ns, currentNode) {
     const reserve = selfFund ? await getReserve(ns) : 0
     const requiredMoney = selfFund ? 150e9 + reserve : 0
     if (!selfFund || ns.getServerMoneyAvailable('home') >= requiredMoney) {
-      await corpRun(ns, 'createCorporation', corpName, selfFund)
+      try { await guardedPurchase(ns, 'corporation', 'createCorporation', [corpName, selfFund], selfFund ? {} : {reserve: 0}) }
+      catch (error) { log(ns, `Corporation creation failed; rechecking funds/access: ${String(error)}`, false, 'warning') }
       // A reply, including a truthy error, is not proof that creation succeeded.
       if (ns.corporation.hasCorporation()) return true
     }
@@ -123,6 +124,13 @@ const BOOST_MATERIALS = ["Hardware", "Robots", "AI Cores", "Real Estate"]
 //I want to impliment helper functions for ram dodge across all corp functions.
 async function getCorp(ns) {
   return (await corpRun(ns, 'getCorporation'));
+}
+
+/** Missing divisions are an expected state; other RPC failures must remain errors. */
+async function getOptionalDivision(ns, name) {
+  const corporation = await getCorp(ns);
+  if (!Array.isArray(corporation?.divisions)) throw new Error('Invalid corporation division list');
+  return corporation.divisions.includes(name) ? await corpRun(ns, 'getDivision', name) : undefined;
 }
 
 /** Keep a corporation purchase from consuming working capital needed to reach the next market cycle. */
@@ -408,7 +416,7 @@ async function ensureCorporationApis(ns) {
 }
 
 async function hireAdVertsUpTo(ns, divisionName, target) {
-  let division = await corpRun(ns, 'getDivision', divisionName)
+  let division = await getOptionalDivision(ns, divisionName)
   if (!division) return false
 
   while (division.numAdVerts < target) {
@@ -477,7 +485,7 @@ export async function main(ns) {
       }
       if (round !== 1) continue
       await updateHud(ns)
-      const agriculture = await corpRun(ns, 'getDivision', div1)
+      const agriculture = await getOptionalDivision(ns, div1)
       const advertTarget = getRoundOneAdvertTarget(agriculture?.cities?.length, cities.length)
       if (advertTarget > 0)
         await hireAdVertsUpTo(ns, div1, advertTarget)
@@ -776,9 +784,12 @@ async function corpFunds(ns) {
 async function expandCities(ns, division, options = {}) {
   const allowExpansion = options.allowExpansion !== false
   const reserve = Number(options.reserve) || 0
-  let divisionInfo = await corpRun(ns, 'getDivision', division)
+  let divisionInfo = await getOptionalDivision(ns, division)
 
   if (!divisionInfo) {
+    const corporation = await getCorp(ns)
+    const limit = Math.ceil(20 * (bnMults?.CorporationDivisions ?? 1))
+    if (!Number.isFinite(limit) || corporation.divisions.length >= limit) return false
     const industryData = await corpRun(ns, 'getIndustryData', division)
     const startingCost = Number(industryData?.startingCost)
     const funds = await corpFunds(ns)
@@ -886,7 +897,7 @@ async function prep(ns) {
   if (round >= 5) await manageCorporationPayout(ns, round, dividendRate)
 
   if (round >= 1) {
-  const agriculture = await corpRun(ns, 'getDivision', div1)
+  const agriculture = await getOptionalDivision(ns, div1)
   const cityCount = Array.isArray(agriculture?.cities) ? agriculture.cities.length : 0
   const reserve = round === 1
     ? getRoundOneExpansionReserve(cityCount, cities.length, capitalConstrainedBootstrap)
@@ -953,73 +964,10 @@ async function prep(ns) {
     if ((await getCorp(ns)).revenue >= 1e70) {
       await tryPurchaseUnlock(ns, "Government Partnership")
       await tryPurchaseUnlock(ns, "Shady Accounting")
-      try {
-        const div = (await corpRun(ns, 'getDivision', div5))
-        hasDivDB[div5] = div
-      }
-      catch {
-        try { (await corpRun(ns, 'expandIndustry', div5, div5)) } catch { }
-        try {
-          const div = (await corpRun(ns, 'getDivision', div5))
-          hasDivDB[div5] = div
-        }
-        catch { }
-      }
-      try {
-        const div = (await corpRun(ns, 'getDivision', div6))
-        hasDivDB[div6] = div
-      }
-      catch {
-        try { (await corpRun(ns, 'expandIndustry', div6, div6)) } catch { }
-        try {
-          const div = (await corpRun(ns, 'getDivision', div6))
-          hasDivDB[div6] = div
-        }
-        catch { }
-      }
-      try {
-        const div = (await corpRun(ns, 'getDivision', div7))
-        hasDivDB[div7] = div
-      }
-      catch {
-        try { (await corpRun(ns, 'expandIndustry', div7, div7)) } catch { }
-        try {
-          const div = (await corpRun(ns, 'getDivision', div7))
-          hasDivDB[div7] = div
-        }
-        catch { }
-      }
-      try {
-        const div = (await corpRun(ns, 'getDivision', div8))
-        hasDivDB[div8] = div
-      }
-      catch {
-        try { (await corpRun(ns, 'expandIndustry', div8, div8)) } catch { }
-        try {
-          const div = (await corpRun(ns, 'getDivision', div8))
-          hasDivDB[div8] = div
-        }
-        catch { }
-      }
-      for (const city of cities) {
-        //Set up divs
-        const divs = [div5, div6, div7, div8]
-        for (const div of divs) {
-          if (!hasOfficeDB[div + city]) {
-            try { (await corpRun(ns, 'expandCity', div, city)) } catch { }
-            try {
-              (await corpRun(ns, 'getOffice', div, city))
-              hasOfficeDB[div + city] = true
-            }
-            catch { }
-          }
-          if (!hasWarehouseDB[div + city]) {
-            try { (await corpRun(ns, 'purchaseWarehouse', div, city)) } catch { }
-            if ((await corpRun(ns, 'hasWarehouse', div, city)))
-              hasWarehouseDB[div + city] = true
-          }
-        }
-      }
+      // Reuse the normal creation/expansion path: verify division existence and actual funds explicitly.
+      // Keep the existing late-expansion revenue gate and reserve the same eight real industries.
+      for (const division of [div5, div6, div7, div8]) await expandCities(ns, division);
+
     }
   }
   return true

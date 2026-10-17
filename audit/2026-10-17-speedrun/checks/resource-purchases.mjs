@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {maxRun} from '../../../utils.js';
+import {executePurchase} from '../../../purchase-guard.js';
 import {main as purchaseSleeves} from '../../../purchaseSleeves.js';
 
 const source = file => readFile(new URL('../../../' + file, import.meta.url), 'utf8');
@@ -21,7 +22,7 @@ function rpcMock(responder, additions = {}) {
   const replies = new Map();
   return {
     print: noop, tprint: noop, toast: noop, sleep: async () => {},
-    getScriptRam: () => 1.6,
+    getScriptRam: () => 1.6, getFunctionRamCost: () => 1.6,
     exec(file, host, options, ...args) {
       const pid = nextPid++;
       replies.set(pid, responder(file, args, host));
@@ -43,7 +44,7 @@ async function hostPass(settings = {}) {
     state.money -= cost; state.spent += cost;
   };
   const ns = {
-    read: () => String(state.reserve), getServerMoneyAvailable: () => state.money,
+    getHostname: () => 'home', read: () => String(state.reserve), getServerMoneyAvailable: () => state.money,
     getServerMaxRam: host => host === 'home' ? 64 : ram.get(host),
     sleep: async () => { state.sleeps++; settings.onSleep?.(state); },
     cloud: {
@@ -66,6 +67,13 @@ async function hostPass(settings = {}) {
   const run = await functionFrom('host-manager.js', 'async function tryUpgradeRam(ns)', null, {
     purchasedServerName: 'daemon', getActiveSourceFiles: async () => settings.homeCost === undefined ? {} : {4: 3},
     getReserve: async () => state.reserve,
+    purchase: async (ns, space, method, args, policy) => {
+      ns.singularity = {
+        getUpgradeHomeRamCost: () => settings.homeCost,
+        upgradeHomeRam: () => {state.homeAttempts++; if (settings.homeResult !== undefined) return settings.homeResult; debit(settings.homeCost); return true;},
+      };
+      return executePurchase(ns, space, method, args, policy);
+    },
     singRun: async (ns, method) => {
       if (method === 'getUpgradeHomeRamCost') { settings.onHomeCost?.(state); return settings.homeCost; }
       assert.equal(method, 'upgradeHomeRam'); state.homeAttempts++;
@@ -160,12 +168,13 @@ async function sleeveBatch(augs, settings = {}) {
   let inventory = augs.map(aug => ({...aug})), calls = [], refreshes = 0;
   const run = await functionFrom('sleeve.js', 'async function manageSleeveAugs(ns, i, budget)',
     '\n/** @param {NS} ns\n * @returns {Promise<Task>}', {
-      ...state, sleeveRun: async (ns, method) => {
+      ...state, purchase: async (ns, space, method, args, policy) => executePurchase(ns, space, method, args, policy), sleeveRun: async (ns, method) => {
         assert.equal(method, 'getSleevePurchasableAugs'); refreshes++;
         return inventory.map(aug => ({...aug}));
       }, log: noop, formatMoney: String, formatDuration: String,
     });
-  const ns = {sleeve: {purchaseSleeveAug: (i, name) => {
+  const ns = {getHostname: () => 'home', read: () => '0', getServerMoneyAvailable: () => 1e9,
+    sleeve: {getSleevePurchasableAugs: () => inventory, purchaseSleeveAug: (i, name) => {
     assert.equal(i, 0); calls.push(name);
     if (settings.throwOn === name) throw Error('purchase failed');
     if (settings.failOn === name) return false;

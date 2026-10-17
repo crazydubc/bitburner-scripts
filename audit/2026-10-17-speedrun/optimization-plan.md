@@ -1,6 +1,6 @@
 # Implementation and measurement plan
 
-Optimize wall-clock time to useful installed augmentations and completed BNs. Keep the existing batcher as the baseline and land small independently reviewable changes in the single testing PR. This document records the original proposed work order; current status is in [README.md](README.md) and the linked follow-ups. B05/B07/B08 and the proposed route are now implemented with focused checks; see [progression-fixes.md](progression-fixes.md). Remaining infrastructure work includes low-RAM helper chains, live-but-stalled operations, other wrapper contracts and verified casino completion. The revised route requires live timing before claiming a speedup.
+Optimize wall-clock time to useful installed augmentations and completed BNs. Keep the existing batcher as the baseline and land bounded changes in the single testing PR. This document records the original proposed work order. All 18 finding fixes and the proposed route are now implemented with focused checks; see [remaining-fixes.md](remaining-fixes.md) and [progression-fixes.md](progression-fixes.md). The candidates below are experiments requiring live timing, not outstanding confirmed defect fixes.
 
 ## Repair order
 
@@ -33,7 +33,7 @@ B12 is the simplest direct win: the hash spender should not rerank hacking targe
 
 ### Invest against the next reset horizon
 
-Hacknet's 4h/8h payback thresholds and the enormous fallback threshold can buy assets whose return arrives after the next augmentation installation. Those investments reset. Bound payback by a conservative estimate of remaining time in the current cycle, with explicit exceptions for a valuable unlock or hash-funded objective.
+The scheduler now retains one four-hour-payback hacknet manager and removes the ineffective eight-hour/unlimited-payback passes. Even four-hour investments can repay after the next augmentation reset. Compare that policy against a conservative estimate of remaining cycle time, with explicit exceptions for a valuable unlock or hash-funded objective.
 
 Home RAM persists across augmentation installations and also supports the RPC architecture. First fund enough to operate reliably; then compare marginal income/progression benefit per dollar. Purchased-server slots need not all begin at 2 GB. Once B04 is fixed, compare direct useful-sized purchases and upgrades with the current incremental policy.
 

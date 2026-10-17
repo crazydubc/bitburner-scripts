@@ -2,7 +2,7 @@
 
 The highest-value work is fixing progression stalls and making the early-game launch/spending rules reliable. Keep the current hacking batcher as the performance baseline. Two confined batcher defects are documented separately; neither calls for replacing its scheduling design.
 
-**The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) combines the audit, BN1.1 on-screen prompts, focused Go fixes, resource/purchase repairs, corporation lifecycle fixes, and the revised BN route for in-game testing.** Ten findings have fixes with positive checks: B03/B04/B05/B06/B07/B08/B10/B12/B17/B18. B01/B02/B11 remain partially repaired; B09/B13/B14/B15/B16 remain open. B09's hash-spender eligibility subissue is repaired, but its scheduler policy is still open. The latest [progression follow-up](progression-fixes.md) covers intelligence, reset, and Bladeburner fixes. Batch scheduling and the $8b reserve policy are unchanged.
+**The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) now contains implemented fixes and positive offline checks for all 18 original findings.** It combines BN1.1 prompts, focused Go fixes, resource/purchase repairs, corporation lifecycle/expansion fixes, the revised BN route, and the remaining infrastructure/batcher corrections. See [remaining-fixes.md](remaining-fixes.md) for the final backlog pass and its limits. Batch timing/scheduling and the $8b reserve formula are unchanged. Live validation and route/performance measurements remain necessary.
 
 ## Pull the combined testing branch
 
@@ -32,9 +32,12 @@ node audit/2026-10-17-speedrun/checks/go-lifecycle.mjs
 node audit/2026-10-17-speedrun/checks/corporation-lifecycle.mjs
 node audit/2026-10-17-speedrun/checks/hash-spending.mjs
 node audit/2026-10-17-speedrun/checks/progression.mjs
+node audit/2026-10-17-speedrun/checks/api-errors.mjs
+node audit/2026-10-17-speedrun/checks/remaining-paths.mjs
+node audit/2026-10-17-speedrun/checks/batch-correctness.mjs /path/to/bitburner-src
 ```
 
-The focused checks pass, and changed gameplay files parse; the previously removed test directory stays removed. Live BN1 progression, tail layout, and Go win-rate changes still require in-game testing.
+All eleven focused checks pass, and gameplay files parse; the previously removed test directory stays removed. The final command additionally compares calculations with the pinned engine checkout. The official RAM check and restart/live-test notes are in [remaining-fixes.md](remaining-fixes.md). Live BN1 progression, tail layout, batch recovery, corporation behavior and Go win rates still require in-game testing.
 
 ## Implementation follow-ups
 
@@ -47,7 +50,7 @@ The user clarified that BN1.1 guidance should appear on screen. The written runb
 
 PRs #31 and #32 are combined with the audit from [#33](https://github.com/crazydubc/bitburner-scripts/pull/33) on `testing/bn1-go-audit`; `main` is unchanged by this integration. The baseline reproductions below intentionally describe the original audited revision. Defect assertions for repaired paths now fail as expected; use the positive checks above to verify the combined implementation.
 
-The latest [resource/purchase follow-up](resource-purchase-fixes.md) fixes cloud purchase budgets, stale sleeve cash/result handling, skipped sleeve augmentations, rooted-RAM eligibility, and darknet stasis worker/helper capacity. Restart the affected managers/workers after pulling. The follow-up records focused evidence, live-game checks, and the remaining reserve/RPC limitations.
+The earlier [resource/purchase follow-up](resource-purchase-fixes.md) fixes cloud purchase budgets, stale sleeve cash/result handling, skipped sleeve augmentations, rooted-RAM eligibility, and darknet stasis worker/helper capacity. Its reserve/RPC limitations are addressed in the [final backlog pass](remaining-fixes.md). Restart the affected managers/workers after pulling.
 
 The subsequent [helper/state follow-up](helper-state-fixes.md) adds bounded failed launches, dead-child recovery, effective Singularity RAM budgets, authoritative home reserve state, configuration deployment and persistent home fallback. An official-source RAM check preserves the guide's 8 GB cold-start fit and accounts for the added manager costs. The [reported Go baseline](go-assessment.md#user-reported-game-baseline--2026-10-17) is 26 wins from 30 games; Illuminati accounts for three of four losses. No Go strategy change accompanies this follow-up.
 
@@ -63,7 +66,8 @@ The [corporation follow-up](corporation-cross-bn.md) fixes creation eligibility/
 | [progression-fixes.md](progression-fixes.md) | B05/B07/B08 fixes, integer route selection, finite intel farming, reset checks and live-test notes |
 | [optimization-plan.md](optimization-plan.md) | Implementation order and measurements that can establish real speed gains |
 | [resource-purchase-fixes.md](resource-purchase-fixes.md) | B04/B06/B10/B17/B18 changes, verification, and live-test notes |
-| [helper-state-fixes.md](helper-state-fixes.md) | B01/B02/B11 partial repairs, RAM checks, and remaining scope |
+| [helper-state-fixes.md](helper-state-fixes.md) | Earlier B01/B02/B11 repairs and RAM checks; superseded limits are marked |
+| [remaining-fixes.md](remaining-fixes.md) | Final B01/B02/B09/B11/B13/B14/B15/B16 repairs, corporation expansion, checks and live-test limits |
 | [corporation-cross-bn.md](corporation-cross-bn.md) | Corporation lifecycle/payout repairs, B12, funding options, BN suitability and remaining experiments |
 | [sources.md](sources.md) | Pinned repository/game references and scope limitations |
 | [reproduce.mjs](reproduce.mjs) / [evidence.json](evidence.json) | Bounded offline reproductions and source/arithmetic checks |
@@ -77,8 +81,8 @@ The [corporation follow-up](corporation-cross-bn.md) fixes creation eligibility/
 
 ## Requirements preserved
 
-- The **$8 billion reserve is intentional**: it is intended to prevent stock buying while `coinflip.js` finishes. Keep the rule. The testing branch now reads/writes the reserve on home and enforces the Daedalus launch flag. A separate verified casino-completion gate is still open under B02.
-- Preserve the successful batcher as the comparison baseline. Apply B15/B16 independently and verify completion order/security before changing allocation or target selection.
+- The **$8 billion reserve is intentional**: it is intended to prevent stock buying while `coinflip.js` finishes. The branch reads/writes the reserve on home, enforces the Daedalus launch flag, and requires verified $10b casino earnings before buying long or short positions.
+- Preserve the successful batcher's timing/scheduling as the comparison baseline. B15/B16 correct arithmetic, argument/result types and security calculations; verify live completion order/money/security before considering allocation or target-policy experiments.
 - Preserve the corporation sequence: six-city Agriculture bootstrap → Tobacco in investment round 2 → Chemical. This audit proposes no replacement corporation strategy.
 - After SF5, preserve CashRoot + all ten corporate faction invitations → intelligence farming → resume the **same BN**. No BitFlume transition is proposed.
 - BN8 remains part of normal progression.

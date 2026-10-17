@@ -1,6 +1,6 @@
 # Resource and purchase fixes on the combined testing branch
 
-These changes address B04, B06, B10, B17, and B18 on `testing/bn1-go-audit` / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34). The hacking batcher, $8b reserve policy, BitNode order, and corporation strategy are unchanged.
+These earlier changes address B04, B06, B10, B17, and B18 on `testing/bn1-go-audit` / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34). The hacking batcher, $8b reserve policy, BitNode order, and corporation strategy are unchanged.
 
 | Finding | Change | Focused evidence |
 | --- | --- | --- |
@@ -32,5 +32,5 @@ These checks pass with mocked Netscript transport. Changed gameplay scripts also
 - After pulling, restart the affected running managers/workers to load their new code. Watch host purchases against the reserve and the per-pass allowance.
 - For darknet, check that stasis transitions can launch their helper and return to ordinary workers. If another script shares the host, the transition reports that it is waiting rather than sizing a replacement as though it owned all RAM.
 - In a later BN10 run, let income cross a sleeve price without restarting `purchaseSleeves.js`; confirm the purchase and subsequent memory upgrades. Watch an eligible one-augmentation sleeve batch complete.
-- The later [helper/state follow-up](helper-state-fixes.md) makes home the authoritative reserve/configuration source. Cloud purchases/upgrades check current cash immediately before their synchronous API calls, but the home upgrade still goes through asynchronous Singularity RPC. Cross-script spending locks and verified casino completion remain open.
-- The same follow-up bounds failed launches, detects dead children and budgets Singularity RAM. Other wrapper contracts, live-but-stalled children and nested low-RAM chains remain open. These checks do not establish full low-RAM bootstrap reliability or measured speed improvements.
+- The subsequent [final backlog pass](remaining-fixes.md) completes B01/B02/B11: home purchase guards, verified casino completion, consistent wrapper errors, bounded stalled-child recovery and sequential calculator inputs. Explicit reserve exceptions are documented there. Earlier RAM figures in this note are historical.
+- These checks do not establish full low-RAM bootstrap reliability or measured speed improvements.

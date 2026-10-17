@@ -71,7 +71,7 @@ const current=scripts(), baseline=process.argv[3]?scripts(process.argv[3]):null;
 function cost(files,name,ignoreOverride=false) {
   const code=files.get(name)?.code;
   if(code===undefined) return null;
-  const input=ignoreOverride?code.replace(/ns\.ramOverride\([\d.]+\)\s*;?/g,''):code;
+  const input=ignoreOverride?code.replace(/ns\.ramOverride\(([\d.]+)\)/g,'$1'):code;
   const result=calculateRamUsage(acorn.parse(input,{ecmaVersion:'latest',sourceType:'module'}),name,'home',files);
   assert.equal(result.errorCode,undefined,`${name}: ${result.errorMessage}`);
   return result.cost;
@@ -79,7 +79,9 @@ function cost(files,name,ignoreOverride=false) {
 const targets=['autopilot.js','kernel.js','bn1-guide.js','go.js','host-manager.js','stockmaster.js','sleeve.js',
   'hacknet-upgrade-manager.js','spend-hashes.js','gangs.js','ascend.js','corporation.js','faction-manager.js',
   'bladeburner.js','work-for-faction2.js','farm-intel.js','bin/intel-farm-state.js',
-  'bin/getHackP.js','bin/singRun.js','bin/reserve.js','bin/sync-script-config.js'];
+  'bin/getHackP.js','bin/getGrowThreads.js','bin/getbnmultis.js','bin/singRun.js','bin/reserve.js',
+  'bin/sync-script-config.js','bin/purchase.js','bin/terminate-rpc.js','bin/getBackdoorTime.js',
+  'Tasks/backdoor-all-servers.js','Tasks/backdoor-all-servers.js.backdoor-one.js','Tasks/contractor.js.solver.js'];
 for(const file of targets) {
   const before=baseline?cost(baseline,file):null, after=cost(current,file);
   const declared=current.get(file).code.match(/ns\.ramOverride\(([\d.]+)\)/)?.[1];

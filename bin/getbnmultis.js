@@ -1,12 +1,19 @@
 /** @param {NS} ns */
 export async function main(ns) {
-  const port = ns.getPortHandle(ns.pid)
-  let mults;
+  ns.ramOverride(2.6);
+  const port = ns.getPortHandle(ns.pid);
+  let mults = 'ERROR:BitNode multiplier read exited without a result';
+  ns.atExit(() => port.write(mults));
+  const resetInfo = ns.getResetInfo();
+  const earned = resetInfo.ownedSF instanceof Map ? resetInfo.ownedSF.get(5) : resetInfo.ownedSF?.[5];
+  const hasApi = resetInfo.currentNode === 5 || earned > 0;
   try {
+    if (!hasApi) throw new Error('Use ordinary-BN fallback before SF5');
+    if (ns.ramOverride(6.6) < 6.6) throw new Error('Insufficient RAM for the BitNode API');
     mults = ns.getBitNodeMultipliers()
   }
-  catch {
-    const resetInfo = ns.getResetInfo()
+  catch (error) {
+    if (hasApi) throw error;
     mults = Object.fromEntries(Object.entries({
       AgilityLevelMultiplier: /*     */[1, 1, 1, 1, 1, 1, 1, 1, 0.45, 0.4, 1, 1, 0.7, 0.5, 0.7],
       AugmentationMoneyCost: /*      */[1, 1, 3, 1, 2, 1, 3, 1, 1, 5, 2, 1, 1, 1.5, 3],
@@ -62,5 +69,4 @@ export async function main(ns) {
       WorldDaemonDifficulty: /*      */[1, 5, 2, 3, 1.5, 2, 2, 1, 2, 2, 1.5, 1, 3, 5, 2]
     }).map(([mult, values]) => [mult, values[resetInfo.currentNode - 1]]));
   }
-  ns.atExit(() => port.write(mults))
 }

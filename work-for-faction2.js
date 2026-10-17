@@ -303,7 +303,7 @@ export async function main(ns) {
   async function loadData() {
     pendingInvites = requireArray(await singRun(ns, "checkFactionInvitations"), "checkFactionInvitations");
     playerInfo = requireObject(await getPlayerInfo(ns), "getPlayerInfo");
-    const gangStatus = await gangRun(ns, "inGang");
+    const gangStatus = 2 in sourceFiles ? await gangRun(ns, "inGang") : false;
     if (isApiError(gangStatus)) throw new Error(gangStatus);
     playerInGang = isTrue(gangStatus);
     const gangInfo = playerInGang ? requireObject(await gangRun(ns, "getGangInformation"), "getGangInformation") : null;
