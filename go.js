@@ -40,7 +40,7 @@ export async function main(ns) {
   let logtime = false;
   let runOnce = true;
   let silent = false;
-  let currentValidMovesTurn = 0; //The turn count that the currentValidMoves is valid for
+  let currentValidMovesTurn = -1; //The turn count that the currentValidMoves is valid for
   let turn = 0;
   let START = performance.now();
   // Global variables initialized in this way get strong typing throughout
@@ -100,7 +100,7 @@ export async function main(ns) {
     runOnce = runOptions.runOnce;
 
     // Enable cheats if we have SF14.2 or higher (unless the user disabled cheats).
-    cheats = !runOptions['disable-cheats'] && (sourceFiles[14] ?? 0) >= 2;
+    cheats = runOptions.cheats && !runOptions['disable-cheats'] && (sourceFiles[14] ?? 0) >= 2;
     cheatChanceThreshold = runOptions['cheat-chance-threshold'];
 
     ns.disableLog("go.makeMove")
@@ -136,16 +136,26 @@ export async function main(ns) {
       }
       if (inProgress) break
     }
-    const currentGame = await ns.go.opponentNextTurn(false)
+    let currentGame = await ns.go.opponentNextTurn(false)
     checkNewGame(ns, currentGame)
-    const playStyle = getStyle(ns);
     while (true) {
       turn++
+      // Two passes end the game at this score. Do not risk an already secured win.
+      if (currentGame?.type === 'pass') {
+        const score = ns.go.getGameState();
+        if (score.blackScore > score.whiteScore) {
+          currentGame = await ns.go.passTurn();
+          checkNewGame(ns, currentGame);
+          continue;
+        }
+      }
+      const playStyle = getStyle(ns); // resetBoardState may have selected a different opponent.
       board = await getBoard(ns);
       contested = await getControlledENodes(ns);
       validMove = await goValidMoves(ns);
       validLibMoves = await goLiberties(ns);
       chains = await goChains(ns);
+      currentValidMovesTurn = -1; // Invalidate on each snapshot, including retry/new-game turn-number reuse.
       const size = board[0].length
       //Build a test board with walls
       let testWall = "W".repeat(size + 2);
@@ -318,6 +328,7 @@ export async function main(ns) {
             break
         } //End of style switch
       } // end of turn >= 3
+      currentGame = results;
       checkNewGame(ns, results)
     }
   }
@@ -339,11 +350,12 @@ export async function main(ns) {
    * @param {{ type:"move"|"pass"|"gameOver"; x:number; y:number;}} gameInfo
    */
   function checkNewGame(ns, gameInfo) {
-    if (gameInfo.type === "gameOver") {
+    if (gameInfo?.type === "gameOver") {
       if (runOnce) ns.exit()
       try { ns.go.resetBoardState(opponent2[Math.floor(Math.random() * opponent2.length)], 13) }
       catch { ns.go.resetBoardState(opponent[Math.floor(Math.random() * opponent.length)], 13) }
       turn = 0
+      currentValidMovesTurn = -1;
       ns.clearLog()
     }
   }
@@ -497,8 +509,8 @@ export async function main(ns) {
 
     const checked = new Set
 
-    for (let x = 0; x < size - 1; x++)
-      for (let y = 0; y < size - 1; y++) {
+    for (let x = 0; x < size; x++)
+      for (let y = 0; y < size; y++) {
         if (contested[x][y] === "X" || board[x][y] !== "O" || validLibMoves[x][y] !== 2 || checked.has(JSON.stringify([x, y]))) continue
         //Is it the enemy, with 2 libs (we can kill) and we have not checked this spot and the chain is large enough
         const chain = getChainValue(x, y, "O")
@@ -1251,7 +1263,7 @@ export async function main(ns) {
     for (const [x, y] of moves) {
       for (const pattern of def)
         if (isPattern(x, y, pattern)) {
-          const msg = sprintf("Def Pattern: %s\n%s\n%s", pattern.length, pattern.join("\n"), "---------------")
+          const msg = `Def Pattern: ${pattern.length}\n${pattern.join("\n")}\n---------------`
           return {
             coords: [x, y],
             msg: msg
@@ -1271,7 +1283,7 @@ export async function main(ns) {
     for (const [x, y] of moves) {
       for (const pattern of disrupt)
         if (isPattern(x, y, pattern)) {
-          const msg = sprintf("Eye Disruption: %s\n%s\n%s", pattern.length, pattern.join("\n"), "---------------")
+          const msg = `Eye Disruption: ${pattern.length}\n${pattern.join("\n")}\n---------------`
           return {
             coords: [x, y],
             msg: msg
@@ -1285,7 +1297,7 @@ export async function main(ns) {
   async function movePiece(ns, attack) {
     if (attack.coords === undefined) return false
     const [x, y] = attack.coords
-    if (x === undefined) return false
+    if (x === undefined || !validMove[x]?.[y]) return false
     let mid = performance.now()
     ns.printf("%s moving..", attack.msg)
     const results = await goMove(ns, x, y);
@@ -1296,11 +1308,11 @@ export async function main(ns) {
   }
   /** @param {NS} ns */
   async function moveWallBreaker(ns, attack) {
-    if (attack.coords === undefined || !cheats || !(4 in sourceFiles)) return false
+    if (attack.coords === undefined || !cheats) return false
     const [s1x, s1y] = attack.coords
     if (s1x === undefined) return false
     const chance = await goCheatChance(ns);
-    if (chance < .7) return false
+    if (chance < cheatChanceThreshold) return false
     let mid = performance.now()
     ns.printf("%s", attack.msg)
     const results = await destroyND(ns, s1x, s1y)
@@ -1312,7 +1324,7 @@ export async function main(ns) {
   }
   /** @param {NS} ns */
   function getWallBreaker(eyesToBreak = 3) {
-    if (!cheats || !(4 in sourceFiles)) return []
+    if (!cheats) return []
     const moveOptions = []
     const size = board[0].length
     let highValue = 1;
@@ -1320,8 +1332,8 @@ export async function main(ns) {
     const you = "O";
     const checked = new Set
 
-    for (let x = 0; x < size - 1; x++)
-      for (let y = 0; y < size - 1; y++) {
+    for (let x = 0; x < size; x++)
+      for (let y = 0; y < size; y++) {
         if (contested[x][y] === me || board[x][y] !== you || (validLibMoves[x][y] !== eyesToBreak && eyesToBreak > 0) || checked.has(JSON.stringify([x, y]))) continue
         //Is it the enemy, with 2 libs (we can kill) and we have not checked this spot and the chain is large enough
         const chain = getChainValue(x, y, you, true)
