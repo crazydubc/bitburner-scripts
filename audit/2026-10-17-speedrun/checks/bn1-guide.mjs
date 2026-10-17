@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {getBn1Guidance, readBn1Snapshot, main, BN1_CRACKERS, BN1_FACTION_SERVERS} from '../../../bn1-guide.js';
+import {getBn1Guidance, getBn1InstallGuidance, getBn1FactionRoadmap, readBn1Snapshot, main, BN1_CRACKERS, BN1_FACTION_SERVERS} from '../../../bn1-guide.js';
 import {filesExist, getPortCrackers} from '../../../utils.js';
 
 function snapshot() {
@@ -51,6 +51,63 @@ s.casinoEarned = 0;
 assert.equal(getBn1Guidance(s).id, 'finish-node', 'Do not force another casino cycle when the BN can already finish');
 s.reset.ownedSF.set(1, 1);
 assert.equal(getBn1Guidance(s).id, 'finished');
+
+// Work suggestions advance past installed targets without requiring Singularity.
+const progress = snapshot();
+progress.player.factions = ['CyberSec', 'Sector-12', 'NiteSec'];
+assert(getBn1Guidance(progress).steps.some(step => step.includes('Factions > CyberSec > Hacking Contracts')));
+progress.reset.ownedAugs.set('Neurotrainer I', 1);
+progress.reset.ownedAugs.set('BitWire', 1);
+assert(getBn1Guidance(progress).steps.some(step => step.includes('Factions > Sector-12 > Hacking Contracts')));
+progress.reset.ownedAugs.set('CashRoot Starter Kit', 1);
+assert(getBn1Guidance(progress).steps.some(step => step.includes('Factions > NiteSec > Hacking Contracts')));
+const roadmap = getBn1FactionRoadmap(snapshot()).steps.join('\n');
+assert(roadmap.includes('backdoor CSEC: hacking 55, 1 port'), 'Use actual server hacking requirements');
+assert(roadmap.includes('backdoor avmnite-02h: hacking 210, 2 ports'));
+assert(roadmap.includes('Hacking Contracts'));
+assert(roadmap.includes('do not join Chongqing, New Tokyo, Ishima, or Volhaven'));
+assert(roadmap.includes('Optional for unattended work: Tian Di Hui'));
+assert(getBn1FactionRoadmap(progress).steps.some(step => step.includes('CashRoot Starter Kit (installed)')));
+
+// Every install path must remind the user to stop the launcher and liquidate;
+// the expanded checklist must verify positions before purchases/installation.
+for (const factions of [['CyberSec'], ['Daedalus']]) {
+  const ready = snapshot(); ready.player.factions = factions;
+  const text = getBn1Guidance(ready).steps.join('\n');
+  assert(text.includes('stop every autopilot.js instance'));
+  assert(text.includes('run stockmaster.js --liquidate'));
+  assert(text.includes('Verify all stock positions are zero'));
+}
+const installSteps = getBn1InstallGuidance().steps;
+const stopAt = installSteps.findIndex(step => step.startsWith('Stop every autopilot.js'));
+const sellAt = installSteps.findIndex(step => step.includes('run stockmaster.js --liquidate'));
+const verifyAt = installSteps.findIndex(step => step.includes('verify zero positions'));
+const buyAt = installSteps.findIndex(step => step.includes('Buy desired expensive augmentations'));
+assert(stopAt >= 0 && stopAt < sellAt && sellAt < verifyAt && verifyAt < buyAt);
+assert(installSteps.some(step => step.includes('Without TIX API access, sell manually')));
+
+// One-shot reference panels can open while the normal guide is running. They
+// neither launch helpers nor trade/stop scripts; the install view reads no state.
+for (const mode of ['install', 'roadmap']) {
+  const live = snapshot(), rendered = [];
+  await main({
+    pid: 1, flags: () => ({'no-tail': true, [mode]: true}), getHostname: () => 'home',
+    getScriptName: () => 'bn1-guide.js', ps: () => [{pid: 2, filename: 'bn1-guide.js'}],
+    getResetInfo: () => {
+      assert.notEqual(mode, 'install', 'Install checklist must not need a live snapshot');
+      return live.reset;
+    },
+    getPlayer: () => live.player, getServerMaxRam: () => live.homeRam,
+    hasTorRouter: () => live.hasTor, getMoneySources: () => ({sinceInstall: {casino: live.casinoEarned}}),
+    fileExists: file => live.crackers.includes(file), getServer: host => live.servers[host],
+    exec: () => {throw Error('Reference panels must not launch helpers or automate actions');},
+    sleep: () => {throw Error('Reference panels should exit after rendering');},
+    disableLog() {}, clearLog() {}, ui: {setTailTitle() {}}, print: message => rendered.push(message),
+  });
+  assert(rendered.some(message => message.includes(mode === 'install'
+    ? 'run stockmaster.js --liquidate' : 'Faction roadmap')));
+  assert(rendered.some(message => message.includes('Reference view exits now')));
+}
 
 // Use the real shared lookup with a mocked helper transport. An offloaded
 // autopilot must advance the panel just like one running on home.
@@ -106,4 +163,4 @@ for (const owned of [[], ...names.map(file => [file]), names]) {
   assert.deepEqual(await filesExist(ns, names), names.map(name => owned.includes(name)));
   assert.deepEqual(await getPortCrackers(ns), owned);
 }
-console.log('BN1 guidance transitions, offloaded autopilot detection, low-RAM exit, and cracker detection checks passed');
+console.log('BN1 progression, faction roadmap, manual-install checklist, reference panels, remote autopilot, low-RAM exit, and cracker detection checks passed');
