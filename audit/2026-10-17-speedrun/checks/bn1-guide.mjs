@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {getBn1Guidance, getBn1InstallGuidance, getBn1FactionRoadmap, readBn1Snapshot, maybeStartBn1Autopilot, main, BN1_CRACKERS, BN1_FACTION_SERVERS, BN1_GUIDE_STATE} from '../../../bn1-guide.js';
+import {getBn1Guidance, getBn1InstallGuidance, getBn1FactionRoadmap, readBn1Snapshot, maybeStartBn1Autopilot, main, BN1_CRACKERS, BN1_FACTION_SERVERS} from '../../../bn1-guide.js';
 import {filesExist, getPortCrackers} from '../../../utils.js';
 
 function snapshot() {
@@ -168,8 +168,8 @@ await main({
 assert(messages.some(message => message.includes('guide exits now')));
 assert(messages.some(message => message.includes('$8b reserve')));
 
-// Automatic startup is bounded, recognizes existing remote instances, and is
-// re-armed by an augmentation reset rather than by restarting the guide.
+// Automatic startup is bounded and keeps supervising throughout the cycle.
+// Old persistent markers must not prevent an absent autopilot from restarting.
 function handoffHarness() {
   const files = new Map(), launches = [];
   const ns = {
@@ -179,25 +179,36 @@ function handoffHarness() {
   return {ns, files, launches};
 }
 const handoff = handoffHarness(), ready = snapshot(); ready.autopilotRunning = false;
+handoff.files.set('bn1-guide-state.txt', JSON.stringify({cycle: JSON.stringify([1, 1, 100]), reason: 'started'}));
 await maybeStartBn1Autopilot(handoff.ns, ready);
 assert.equal(ready.autopilotRunning, true);
 assert.deepEqual(handoff.launches, [['autopilot.js', 'home', {threads: 1, temporary: true, preventDuplicates: true}]]);
-assert.equal(JSON.parse(handoff.files.get(BN1_GUIDE_STATE)).reason, 'started');
+await maybeStartBn1Autopilot(handoff.ns, ready);
+assert.equal(handoff.launches.length, 1, 'Do not duplicate the running autopilot');
 ready.autopilotRunning = false;
 await maybeStartBn1Autopilot({...handoff.ns}, ready);
-assert.equal(handoff.launches.length, 1, 'Restarting the guide must not undo a manual stop');
+assert.equal(handoff.launches.length, 2, 'Restart a stopped autopilot in the same cycle, even with an old state file');
 ready.reset.lastAugReset++;
+ready.autopilotRunning = false;
 await maybeStartBn1Autopilot(handoff.ns, ready);
-assert.equal(handoff.launches.length, 2, 'A new augmentation cycle must allow another handoff');
+assert.equal(handoff.launches.length, 3, 'Keep supervising after an augmentation reset');
 const observed = handoffHarness(), remote = snapshot();
 await maybeStartBn1Autopilot(observed.ns, remote);
+assert.equal(observed.launches.length, 0, 'Do not duplicate a running remote autopilot');
 remote.autopilotRunning = false;
 await maybeStartBn1Autopilot(observed.ns, remote);
-assert.equal(observed.launches.length, 0, 'Do not duplicate an existing autopilot, including after it later stops');
+assert.equal(observed.launches.length, 1, 'Replace an offloaded autopilot after it exits');
 for (const change of [
   live => { live.homeRam = 8; }, live => { live.homeFreeRam = 47; },
   live => { live.autopilotRunning = null; }, live => { live.reset.currentNode = 4; },
   live => { live.reset.ownedSF.set(1, 1); }, live => { live.reset.ownedSF.set(4, 1); },
+]) {
+  const harness = handoffHarness(), live = snapshot(); live.autopilotRunning = false; change(live);
+  await maybeStartBn1Autopilot(harness.ns, live);
+  assert.equal(harness.launches.length, 0);
+  assert.equal(harness.files.size, 0);
+}
+for (const change of [
   live => { live.casinoEarned = 0; live.player.city = 'Sector-12'; },
   live => { live.casinoEarned = 0; live.player.money = 0; },
   live => { live.casinoEarned = 0; live.coinflipRunning = true; },
@@ -205,17 +216,13 @@ for (const change of [
 ]) {
   const harness = handoffHarness(), live = snapshot(); live.autopilotRunning = false; change(live);
   await maybeStartBn1Autopilot(harness.ns, live);
-  assert.equal(harness.launches.length, 0);
+  assert.equal(harness.launches.length, 1, 'Progression phase must not block autopilot when RAM is available');
   assert.equal(harness.files.size, 0);
 }
-const bootstrap = handoffHarness(), cycle = snapshot();
-cycle.autopilotRunning = false; cycle.casinoEarned = 0; cycle.player.money = 10_000;
-await maybeStartBn1Autopilot(bootstrap.ns, cycle);
-assert.equal(bootstrap.launches.length, 1, 'After a reset, a ready Aevum start can hand coinflip to autopilot');
 for (const failedExec of [() => 0, () => { throw Error('missing dependency'); }]) {
   const retry = handoffHarness(), live = snapshot(); live.autopilotRunning = false;
   await maybeStartBn1Autopilot({...retry.ns, exec: failedExec}, live);
-  assert.equal(retry.files.size, 0, 'Failed launches must not consume the cycle handoff');
+  assert.equal(retry.files.size, 0, 'Startup must not persist a launch latch');
   await maybeStartBn1Autopilot(retry.ns, live);
   assert.equal(retry.launches.length, 1);
 }
@@ -223,25 +230,51 @@ for (const failedExec of [() => 0, () => { throw Error('missing dependency'); }]
 // Exercise the real panel loop and shared lookup with a bounded mock scheduler.
 for (const mode of ['automatic', 'manual', 'once']) {
   const live = snapshot(), harness = handoffHarness(), stop = Error('end panel check');
+  const launchCounts = [];
+  let runningOn = null;
   const ns = {
     ...harness.ns, pid: 1, flags: () => ({'no-tail': true, [mode]: true}),
-    getHostname: () => 'home', getScriptName: () => 'bn1-guide.js', ps: () => [],
+    getHostname: () => 'home', getScriptName: () => 'bn1-guide.js',
+    ps: host => host === runningOn ? [{pid: 7, filename: 'autopilot.js'}] : [],
     getResetInfo: () => live.reset, getPlayer: () => live.player,
     getServerMaxRam: () => live.homeRam, getServer: host => host === 'home' ? {ramUsed: 8} : live.servers[host],
     hasTorRouter: () => true, getMoneySources: () => ({sinceInstall: {casino: live.casinoEarned}}),
-    exec: (...args) => args[0] === 'bin/getServers.js' ? 42 : harness.ns.exec(...args),
+    exec: (...args) => {
+      if (args[0] === 'bin/getServers.js') return 42;
+      runningOn = 'home';
+      return harness.ns.exec(...args);
+    },
     nextPortWrite: async () => {}, readPort: () => [{hostname: 'home'}, {hostname: 'n00dles'}],
     disableLog() {}, clearLog() {}, ui: {setTailTitle() {}}, print() {}, toast() {},
-    sleep: async () => { throw stop; },
+    sleep: async ms => {
+      assert.equal(ms, 5000);
+      launchCounts.push(harness.launches.length);
+      if (mode !== 'automatic' || launchCounts.length === 4) throw stop;
+      if (launchCounts.length === 2) runningOn = 'n00dles';
+      if (launchCounts.length === 3) runningOn = null;
+    },
   };
   if (mode === 'once') await main(ns);
   else await assert.rejects(main(ns), error => error === stop);
-  assert.equal(harness.launches.length, mode === 'automatic' ? 1 : 0);
-  assert.equal(harness.files.size, mode === 'automatic' ? 1 : 0);
+  assert.equal(harness.launches.length, mode === 'automatic' ? 2 : 0);
+  if (mode === 'automatic') assert.deepEqual(launchCounts, [1, 1, 1, 2], 'Keep home/remote autopilot alive, then restart after exit');
+  assert.equal(harness.files.size, 0);
 }
 
 // A rejected darknet launch must not prevent the next helper from being checked.
 const autopilotSource = await readFile(new URL('../../../autopilot.js', import.meta.url), 'utf8');
+// Restarting autopilot must reuse any existing coinflipper rather than duplicate it.
+const coinflipStartup = autopilotSource.slice(autopilotSource.indexOf('await doSCP(ns, RUNLOG_FILE'),
+  autopilotSource.indexOf('let startUpRan = false'));
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+for (const running of [true, false]) {
+  const launches = [];
+  await AsyncFunction('ns', 'doSCP', 'RUNLOG_FILE', 'isScriptRunning', 'launchScriptHelper', coinflipStartup)(
+    {getHostname: () => 'home'}, async () => {}, 'runlog.txt',
+    async (ns, name) => { assert.equal(name, 'coinflip.js'); return running; },
+    async (ns, name) => { launches.push(name); return 7; });
+  assert.deepEqual(launches, running ? [] : ['coinflip.js']);
+}
 const helperSource = autopilotSource.slice(autopilotSource.indexOf('async function checkOnRunningScripts(ns)'),
   autopilotSource.indexOf('async function runPeriodicScripts(ns)'));
 const helperLaunches = [];
@@ -262,4 +295,4 @@ for (const owned of [[], ...names.map(file => [file]), names]) {
   assert.deepEqual(await filesExist(ns, names), names.map(name => owned.includes(name)));
   assert.deepEqual(await getPortCrackers(ns), owned);
 }
-console.log('BN1 progression, darknet guidance, install checklist, reference panels, remote detection, bounded startup across resets, low-RAM exit, and cracker checks passed');
+console.log('BN1 progression, darknet guidance, install checklist, reference panels, continuous autopilot restart, remote detection, coinflip reuse, low-RAM exit, and cracker checks passed');

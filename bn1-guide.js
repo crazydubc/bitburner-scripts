@@ -1,4 +1,4 @@
-// Non-modal BN1.1 guidance with one autopilot handoff per install. No Singularity calls.
+// Non-modal BN1.1 guidance that keeps autopilot running when RAM permits. No Singularity calls.
 import { isScriptRunning } from './utils.js';
 
 export const BN1_CRACKERS = [
@@ -12,9 +12,7 @@ export const BN1_FACTION_SERVERS = [
 
 const action = (id, title, ...steps) => ({ id, title, steps });
 const money = value => '$' + Math.floor(value).toLocaleString('en-US');
-export const BN1_GUIDE_STATE = 'bn1-guide-state.txt';
 const autopilotFreeRam = 48; // Autopilot, coinflip, and home RPC helpers need room together.
-const cycleKey = reset => JSON.stringify([reset.currentNode, reset.lastNodeReset, reset.lastAugReset]);
 const darknetWorkTip = 'Darknet trains Charisma. Compare Field Work with Hacking Contracts where offered (Sector-12, The Black Hand, Daedalus) and use the higher displayed rep/sec. CyberSec, NiteSec, and BitRunners offer hacking work only.';
 const factionTargets = {
   CyberSec: [['Neurotrainer I', '1k'], ['BitWire', '3.75k']],
@@ -26,26 +24,10 @@ const factionTargets = {
 };
 const installReminder = 'Before final purchases/install: leave autopilot running and run stockmaster.js --liquidate on home. Stockmaster sells your positions and stays running without buying. Verify all stock positions are zero; leave the liquidator running until installation.';
 
-/** A durable cycle marker also prevents a restarted guide from undoing a manual stop. */
-async function recordAutopilotHandoff(ns, reset, reason) {
-  await ns.write(BN1_GUIDE_STATE, JSON.stringify({cycle: cycleKey(reset), reason}), 'w');
-}
-
 /** Returns a status for the panel. Launch attempts never wait for RAM. */
 export async function maybeStartBn1Autopilot(ns, s) {
   if (s.reset.currentNode !== 1 || s.reset.ownedSF.has(1) || s.reset.ownedSF.has(4) || s.homeRam < 64) return '';
-  let state;
-  try { state = JSON.parse(ns.read(BN1_GUIDE_STATE) || 'null'); } catch { state = null; }
-  if (state?.cycle === cycleKey(s.reset)) {
-    return s.autopilotRunning === false ? 'Autopilot already ran this cycle. It will stay stopped; run autopilot.js manually if you want to resume.' : '';
-  }
-  if (s.autopilotRunning) {
-    await recordAutopilotHandoff(ns, s.reset, 'observed');
-    return '';
-  }
-  if (s.reset.ownedAugs.has('The Red Pill') && s.daemon?.hasAdminRights && s.player.skills.hacking >= s.daemon.requiredHackingSkill) return '';
-  // Let manual travel finish before coinflip takes over the UI. Do not duplicate a manually started coinflip.
-  if (s.casinoEarned < 10e9 && (s.player.city !== 'Aevum' || s.player.money < 10_000 || s.coinflipRunning)) return '';
+  if (s.autopilotRunning) return '';
   if (!(s.homeFreeRam >= autopilotFreeRam) || s.autopilotRunning === null)
     return `Automatic startup waiting for ${autopilotFreeRam} GB free on home (currently ${(s.homeFreeRam ?? 0).toFixed(1)} GB).`;
   if (!ns.fileExists('autopilot.js', 'home')) return 'Cannot start autopilot.js: pull the complete script bundle onto home.';
@@ -53,7 +35,6 @@ export async function maybeStartBn1Autopilot(ns, s) {
   try { pid = ns.exec('autopilot.js', 'home', {threads: 1, temporary: true, preventDuplicates: true}); }
   catch (error) { return `Autopilot launch failed: ${String(error)}. Check its files and RAM.`; }
   if (!pid) return 'Autopilot could not start. Check home RAM/files; the guide will retry on its next refresh.';
-  await recordAutopilotHandoff(ns, s.reset, 'started');
   s.autopilotRunning = true;
   ns.tprint(`BN1.1: Started autopilot.js (PID ${pid}). It handles hacking and coinflip; keep the $8b reserve.`);
   return 'Started autopilot.js. It handles hacking and coinflip; watch its log for progress.';
@@ -77,7 +58,7 @@ export function getBn1InstallGuidance() {
     'Wait for the sale summary and verify zero positions on the Stock Market screen. Without TIX API access, sell manually there; the liquidator still holds trading paused. Leave it running until installation.',
     'Pause other spending scripts if they compete for cash. Buy desired expensive augmentations first where prerequisites allow, then NeuroFlux with suitable leftovers.',
     'Spend suitable remaining cash on home RAM/cores, then use the Augmentations screen to install. Do not install while stocks remain held.',
-    'After installation, run bn1-guide.js again. At 64+ GB home RAM it starts autopilot once travel/betting cash and 48 GB free RAM are ready. Use --manual for prompts only.',
+    'After installation, run bn1-guide.js again. At 64+ GB home RAM it keeps autopilot running whenever 48 GB free RAM is available to start it. Use --manual for prompts only.',
     'If you cancel the installation, stop only stockmaster.js --liquidate in Active Scripts, then let autopilot restart normal trading when eligible (or run stockmaster.js yourself).',
     'This checklist stays in its log after exiting. Opening it does not change automation or trade stocks.');
 }
@@ -137,7 +118,7 @@ export function getBn1Guidance(s) {
   if (s.autopilotRunning === null)
     return action('home-headroom', 'Free home RAM for status checks', 'The guide could not check other servers because its home helper needs about 4 GB free.', 'Check Active Scripts for autopilot before starting another copy. Keep extra home headroom for automation helpers.');
   if (!s.autopilotRunning)
-    return action('autopilot', 'Start your hacking automation', 'The guide can start autopilot once per install when home has 64+ GB RAM and 48 GB free. In --manual mode, run autopilot.js yourself.', 'Watch its log and Active Scripts for a running kernel and advancing preparation.', 'If you deliberately stopped autopilot this cycle, restart it manually when ready. Stock liquidation does not require stopping autopilot.');
+    return action('autopilot', 'Start your hacking automation', 'The guide restarts autopilot whenever it is missing and home has 64+ GB RAM with 48 GB free. In --manual mode, run autopilot.js yourself.', 'Watch its log and Active Scripts for a running kernel and advancing preparation.', 'Stock liquidation does not require stopping autopilot. To keep autopilot stopped, stop the normal guide or use --manual.');
   if (!s.hasDarknet && player.money >= 50_000_000 && !reset.ownedAugs.has('The Red Pill'))
     return action('darknet', 'Unlock darknet for Charisma training', 'In the terminal: buy DarkscapeNavigator.exe ($50m through TOR).', 'Cheaper option: travel to Chongqing, visit Shadowed Walkway, and buy it for $30m; that purchase also includes TOR. Visiting Chongqing does not join its city faction.', 'Autopilot detects the program and starts darknet.js when RAM is available. Check Active Scripts/logs for darknet workers.', darknetWorkTip);
   if (reset.ownedAugs.has('The Red Pill'))
@@ -178,7 +159,6 @@ export async function readBn1Snapshot(ns, checkAutopilot = true) {
   return {
     reset, player: ns.getPlayer(), homeRam, homeFreeRam, hasTor: ns.hasTorRouter(),
     hasDarknet: ns.fileExists('DarkscapeNavigator.exe', 'home'),
-    coinflipRunning: ns.ps('home').some(p => p.filename === 'coinflip.js'),
     casinoEarned: ns.getMoneySources().sinceInstall.casino ?? 0,
     crackers: BN1_CRACKERS.map(([file]) => file).filter(file => ns.fileExists(file, 'home')),
     // Autopilot can be offloaded. The lookup uses a home helper, so skip it in
@@ -218,7 +198,7 @@ export async function main(ns) {
       return;
     }
     ns.print(options.manual || options.once ? '\nPrompts only for this run; start autopilot yourself or rerun without --manual/--once.'
-      : '\nAutopilot starts at most once per install when ready. Use --manual for prompts only.');
+      : '\nThe guide checks every 5 seconds and restarts missing autopilot when RAM permits. Use --manual for prompts only.');
     ns.print('\nMore help: run bn1-guide.js --roadmap | run bn1-guide.js --install');
     if (snapshot.homeRam < 64) {
       ns.print('\nLow-RAM mode: this guide exits now to free room for coinflip and its helpers.');

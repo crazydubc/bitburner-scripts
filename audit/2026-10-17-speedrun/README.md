@@ -15,7 +15,7 @@ run git-pull.js --branch testing/bn1-go-audit
 
 Wait for `Pull complete` and check for download warnings. Keep `--branch testing/bn1-go-audit` on later pulls; the downloader's default remains `main`. If your older downloader falls back to a local file listing and misses the new guide, rerun the same command after it has updated itself.
 
-On a fresh BN1.1, run `bn1-guide.js` first. Below 64 GB home RAM, the panel prints the next step and exits so coinflip has room; rerun it after each step. At 64 GB or more it refreshes automatically and can start autopilot once per augmentation cycle when 48 GB is free and travel/betting cash are ready. Rerun it after each installation, or use `--manual` for prompts only. Existing autopilot/Go processes need restarting to use their updated code.
+On a fresh BN1.1, run `bn1-guide.js` first. Below 64 GB home RAM, the panel prints the next step and exits so coinflip has room; rerun it after each step. At 64 GB or more it checks every five seconds and restarts a missing autopilot whenever 48 GB is free. It recognizes offloaded instances and has no once-per-cycle restriction. Rerun it after each installation, or use `--manual` for prompts only. Existing autopilot/Go processes need restarting to use their updated code.
 
 The guide includes early darknet purchase/Charisma advice, `--roadmap` faction guidance, and an `--install` checklist. Leave autopilot running when using `run stockmaster.js --liquidate`: the liquidator sells, stays active without buying, and blocks normal trading until stopped or reset. Automated reset/Daedalus callers use the separate `--liquidate-once` mode. See [bn1-screen-guide.md](bn1-screen-guide.md).
 

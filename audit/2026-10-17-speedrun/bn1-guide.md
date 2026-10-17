@@ -58,7 +58,7 @@ The five programs total $287m at the reference prices. `buy -a` also purchases e
 
 The testing branch fixes B03's cracker detection. You can also run `Tasks/crack-host.js` after each new cracker purchase. Root access provides worker RAM even on servers whose hacking requirement is still too high to earn from.
 
-Rerun the guide; it starts the manager once per installation when at least 48 GB is free on a 64+ GB home:
+Rerun the guide; it keeps the manager running and restarts it whenever at least 48 GB is free on a 64+ GB home:
 
 ```text
 run bn1-guide.js
@@ -115,7 +115,7 @@ Before final purchases or a manual installation, enter `run bn1-guide.js --insta
 
 Then spend appropriate leftover money on home RAM, then cores when useful. Home upgrades persist across augmentation installations; ordinary purchased servers and hacknet investments do not. Use the augmentation UI to install in fresh BN1.1; `ascend.js` assumes APIs you do not yet possess and currently has missing reset helpers (B07/B11).
 
-After installation, run `bn1-guide.js` again. On a 64+ GB home with 48 GB free, it starts autopilot once the casino is complete or you are in Aevum with $10k betting cash; autopilot handles coinflip from there. CashRoot and retained home RAM make this much shorter than the first cycle. `--manual` keeps startup under your control, and the guide respects a deliberate autopilot stop for the rest of that augmentation cycle.
+After installation, run `bn1-guide.js` again. On a 64+ GB home with 48 GB free, it starts autopilot and checks every five seconds to restart it if it exits. Autopilot reuses an existing coinflipper or starts one when missing. CashRoot and retained home RAM make this much shorter than the first cycle. Use `--manual` or stop the normal guide if you want to keep autopilot stopped; old cycle markers no longer affect startup.
 
 ## 6. Finish BN1
 

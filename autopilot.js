@@ -282,7 +282,9 @@ export async function main(ns) {
     }
     log(ns, "INFO: Auto-pilot engaged...", true, 'info');
     await doSCP(ns, RUNLOG_FILE, ns.getHostname(), "home");
-    await launchScriptHelper(ns, 'coinflip.js'); //lets try to get some cash!
+    // A restarted autopilot must not duplicate a coinflipper that is still earning.
+    if (!await isScriptRunning(ns, 'coinflip.js'))
+      await launchScriptHelper(ns, 'coinflip.js'); //lets try to get some cash!
     let startUpRan = false, keepRunning = true;
     while (keepRunning) {
       try {
