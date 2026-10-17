@@ -12,6 +12,8 @@ Below 64 GB home RAM, the panel prints the next step and exits to free capacity 
 
 Autopilot also opens the guide during first-BN1 startup when possible. Starting `autopilot.js` directly on an 8 GB home is still subject to the audited RPC bootstrap problem; use the guide first. The optional guide launch never waits for RAM. On augmentation installation, start `bn1-guide.js` again; autopilot restarts also reopen it when appropriate.
 
+The guide uses `isScriptRunning` from `utils.js` to recognize autopilot on any server, including offloaded instances. Below 64 GB, it skips that helper lookup because casino and home-RAM prompts take priority; this preserves the low-RAM exit without waiting for an extra process on home.
+
 Your $8b reserve remains intact. The panel checks casino earnings this installation, not total cash, sampling completion, or whether coinflip exited. It uses a read-only view of installed augmentations; without Singularity it cannot inspect queued purchases or faction reputation, so those prompts explicitly direct you to the relevant game screens. The guide is advisory and does not change the existing money-management implementation.
 
 Use `--no-tail` for log-only operation or `--once` for a single snapshot. Stop the guide process to silence it for the current session. It exits outside BN1 or once SF1/SF4 is active.
