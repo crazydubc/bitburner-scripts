@@ -9,6 +9,15 @@ import {
 
 //ram to reserve on home.
 const reservedRam = 32;
+
+/** Stop a failed/stale helper reply before its fields can become dispatcher NaNs. */
+export function validateBatchPlan(batch, hostname) {
+  const fields = ['H1', 'W1', 'G1', 'W2'];
+  if (!batch || !fields.every(key => Number.isInteger(batch[key]) && batch[key] >= 0) ||
+    fields.reduce((sum, key) => sum + batch[key], 0) <= 0)
+    throw new Error(`Invalid batch plan for ${hostname}: ${JSON.stringify(batch)}. ` +
+      'Check the calculator error; pull updated files on home and restart kernel.js to reload its dependencies.');
+}
 /** @param {NS} ns */
 export async function main(ns) {
   let resetInfo = await getReset(ns);
@@ -61,6 +70,7 @@ export async function main(ns) {
     let targetUpdate = true;
     let loopCount = 0;
     do {
+      validateBatchPlan(batchInfo, target.hostname);
       await ns.sleep(500);
       player = await getPlayerInfo(ns);
       target = await getServ(ns, target.hostname);
@@ -84,6 +94,8 @@ export async function main(ns) {
 
       const waveweaken1 = Math.ceil((target.hackDifficulty - target.minDifficulty) / weakenStrength);
       const wavegrow1 = Math.ceil(await getGrowThreads(ns, target.hostname, target.moneyAvailable, target.minDifficulty));
+      if (!Number.isInteger(wavegrow1) || wavegrow1 < 0)
+        throw new Error(`Invalid grow calculation for ${target.hostname}; check the home helper and restart kernel.js after pulling.`);
 
       //weaken
       if (waveweaken1 > threadsLeft) {
@@ -294,9 +306,9 @@ export async function main(ns) {
         await startup(ns);
       } catch (err) {
         if (startupAttempts == 5)
-          log(ns, `ERROR: daemon.js Keeps catching a fatal error during startup: ${getErrorInfo(err)}`, true, 'error');
+          log(ns, `ERROR: kernel.js Keeps catching a fatal error during startup: ${getErrorInfo(err)}`, true, 'error');
         else {
-          log(ns, `WARN: daemon.js Caught an error during startup: ${getErrorInfo(err)}` +
+          log(ns, `WARN: kernel.js Caught an error during startup: ${getErrorInfo(err)}` +
             `\nWill try again (attempt ${startupAttempts} of 5)`, false, 'warning');
           await ns.sleep(5000);
         }
@@ -304,6 +316,6 @@ export async function main(ns) {
     }
   }
 
-  // Start daemon.js
+  // Start the kernel.
   await startup_withRetries(ns);
 }

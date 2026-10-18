@@ -2,6 +2,8 @@
 
 All 18 original findings now have implemented fixes and positive offline checks on `testing/bn1-go-audit` / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34). This closes the known implementation backlog, not the need for live testing or proof that every script is bug-free. The earlier follow-ups describe intermediate states.
 
+The subsequent [batch startup hotfix](batch-upgrade-hotfix.md) corrects a mixed-version regression introduced here: older offloaded utility callers omitted the new calculator argument. It restores compatibility and adds the previously missing upgrade-path check.
+
 | Findings | Completed behavior |
 | --- | --- |
 | B01, B11 | Bounded helper launches/replies, low-RAM calculator inputs, effective API RAM and error propagation |

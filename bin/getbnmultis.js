@@ -4,17 +4,22 @@ export async function main(ns) {
   const port = ns.getPortHandle(ns.pid);
   let mults = 'ERROR:BitNode multiplier read exited without a result';
   ns.atExit(() => port.write(mults));
+  mults = readBitNodeMultipliers(ns);
+}
+
+/** Read in the current process, including legacy calculator calls without prefetched inputs. */
+export function readBitNodeMultipliers(ns, existingRam = 1.6) {
+  const resetRam = existingRam + ns.getFunctionRamCost('getResetInfo');
+  if (ns.ramOverride(resetRam) < resetRam) throw new Error(`BitNode reset data requires ${resetRam} GB`);
   const resetInfo = ns.getResetInfo();
   const earned = resetInfo.ownedSF instanceof Map ? resetInfo.ownedSF.get(5) : resetInfo.ownedSF?.[5];
   const hasApi = resetInfo.currentNode === 5 || earned > 0;
-  try {
-    if (!hasApi) throw new Error('Use ordinary-BN fallback before SF5');
-    if (ns.ramOverride(6.6) < 6.6) throw new Error('Insufficient RAM for the BitNode API');
-    mults = ns.getBitNodeMultipliers()
+  if (hasApi) {
+    const required = resetRam + ns.getFunctionRamCost('getBitNodeMultipliers');
+    if (ns.ramOverride(required) < required) throw new Error(`BitNode API requires ${required} GB`);
+    return ns.getBitNodeMultipliers();
   }
-  catch (error) {
-    if (hasApi) throw error;
-    mults = Object.fromEntries(Object.entries({
+  return Object.fromEntries(Object.entries({
       AgilityLevelMultiplier: /*     */[1, 1, 1, 1, 1, 1, 1, 1, 0.45, 0.4, 1, 1, 0.7, 0.5, 0.7],
       AugmentationMoneyCost: /*      */[1, 1, 3, 1, 2, 1, 3, 1, 1, 5, 2, 1, 1, 1.5, 3],
       AugmentationRepCost: /*        */[1, 1, 3, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1],
@@ -67,6 +72,14 @@ export async function main(ns) {
       StaneksGiftPowerMultiplier: /* */[1, 2, 0.75, 1.5, 1.3, 0.5, 0.9, 1, 0.5, 0.75, 1, 1, 2, 0.5, 0.7],
       StaneksGiftExtraSize: /*       */[0, -6, -2, 0, 0, 2, -1, -99, 2, -3, 0, 1, 1, -1, -2],
       WorldDaemonDifficulty: /*      */[1, 5, 2, 3, 1.5, 2, 2, 1, 2, 2, 1.5, 1, 3, 5, 2]
-    }).map(([mult, values]) => [mult, values[resetInfo.currentNode - 1]]));
-  }
+  }).map(([mult, values]) => [mult, values[resetInfo.currentNode - 1]]));
+}
+
+/** The JSON argument is an optional optimization; callers loaded before a pull omit it. */
+export function calculatorMultipliers(ns, packed, existingRam) {
+  const mults = packed === undefined ? readBitNodeMultipliers(ns, existingRam) : JSON.parse(packed);
+  if (!mults || !['ScriptHackMoney', 'ScriptHackMoneyGain', 'ServerGrowthRate']
+    .every(key => Number.isFinite(mults[key]) && mults[key] >= 0))
+    throw new Error('Invalid calculator BitNode multipliers');
+  return mults;
 }

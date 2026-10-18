@@ -4,6 +4,8 @@ The highest-value work is fixing progression stalls and making the early-game la
 
 **The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) now contains implemented fixes and positive offline checks for all 18 original findings.** It combines BN1.1 prompts, focused Go fixes, resource/purchase repairs, corporation lifecycle/expansion fixes, the revised BN route, and the remaining infrastructure/batcher corrections. See [remaining-fixes.md](remaining-fixes.md) for the final backlog pass and its limits. Batch timing/scheduling and the $8b reserve formula are unchanged. Live validation and route/performance measurements remain necessary.
 
+**Upgrade hotfix:** `c6a62fd` broke old offloaded calculator callers after a pull. The [batch startup hotfix](batch-upgrade-hotfix.md) restores the old argument contracts and tests the actual old-utility/new-helper combination. Pull again and restart kernel/autopilot from updated home files as described there.
+
 ## Pull the combined testing branch
 
 In the game terminal:
@@ -35,9 +37,10 @@ node audit/2026-10-17-speedrun/checks/progression.mjs
 node audit/2026-10-17-speedrun/checks/api-errors.mjs
 node audit/2026-10-17-speedrun/checks/remaining-paths.mjs
 node audit/2026-10-17-speedrun/checks/batch-correctness.mjs /path/to/bitburner-src
+node audit/2026-10-17-speedrun/checks/batch-upgrade-compatibility.mjs
 ```
 
-All eleven focused checks pass, and gameplay files parse; the previously removed test directory stays removed. The final command additionally compares calculations with the pinned engine checkout. The official RAM check and restart/live-test notes are in [remaining-fixes.md](remaining-fixes.md). Live BN1 progression, tail layout, batch recovery, corporation behavior and Go win rates still require in-game testing.
+All twelve focused checks pass, and gameplay files parse; the previously removed test directory stays removed. The batch-correctness command additionally compares calculations with the pinned engine checkout. The official RAM check and restart/live-test notes are in [remaining-fixes.md](remaining-fixes.md) and [batch-upgrade-hotfix.md](batch-upgrade-hotfix.md). Live BN1 progression, tail layout, batch recovery, corporation behavior and Go win rates still require in-game testing.
 
 ## Implementation follow-ups
 

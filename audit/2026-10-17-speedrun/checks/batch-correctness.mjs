@@ -19,6 +19,7 @@ for (const weaken of [0.025, 0.05, 0.1]) for (const security of [1, 10, 50])
     let exit, batch;
     await batchMain({pid: 1, args: ['n00dles', -1, -1, startingHackThreads, JSON.stringify(multipliers)],
       getPortHandle: () => ({write: result => {batch = result;}}), atExit: callback => {exit = callback;},
+      ramOverride: value => value,
       getPlayer: () => player, getServer: () => ({...server}),
       weakenAnalyze: (threads, cores) => {assert.equal(cores, 1); return threads * weaken;},
     });
@@ -98,6 +99,7 @@ const ns = {print() {}, getScriptRam: file => sizes[file], getPortHandle: port, 
     queueMicrotask(async () => {
       let exit = () => {};
       const child = {pid, args, getPortHandle: port, atExit: callback => {exit = callback;},
+        getFunctionRamCost: name => ({getResetInfo: 1, getBitNodeMultipliers: 4})[name],
         getResetInfo: () => reset, ramOverride: value => {assert(value <= ram); return value;},
         getBitNodeMultipliers: () => {apiReads++; return {...mults};},
         getServer: () => ({...baseServer}), getPlayer: () => player, weakenAnalyze: () => 0.05};

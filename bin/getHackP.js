@@ -1,7 +1,9 @@
 import { hackingPercent, hackingChance, growThreads } from "../hacking-formulas.js"
+import { calculatorMultipliers } from './getbnmultis.js';
 
 /** @param {NS} ns */
 export async function main(ns) {
+  ns.ramOverride(5.1);
   const port = ns.getPortHandle(ns.pid)
   //ns.args[0] is the target, 1 is batches, 2 is threads, 3 is starthacks
   let result = 'ERROR:Batch calculation exited without a result';
@@ -9,7 +11,7 @@ export async function main(ns) {
   const server = ns.getServer(ns.args[0]);
   server.hackDifficulty = server.minDifficulty;
   const player = ns.getPlayer();
-  const mults = JSON.parse(ns.args[4]);
+  const mults = calculatorMultipliers(ns, ns.args[4], 5.1);
   const hack_chance = hackingChance(server, player);
   // Workers are distributed across hosts: one core is the conservative capacity shared by all of them.
   const weakenStrength = ns.weakenAnalyze(1, 1);

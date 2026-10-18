@@ -33,7 +33,12 @@ export async function getHackPercent(ns, hostname, minsecurity) { return await r
 export async function getHackChance(ns, hostname, minsecurity) { return await runScript(ns, "bin/getHackChance.js", false, [hostname, minsecurity]) }
 export async function doGetServerMinSec(ns, hostname) { return await runScript(ns, "bin/doGetServerMinSec.js", false, [hostname]) }
 export async function doGetServerCurSec(ns, hostname) { return await runScript(ns, "bin/doGetServerCurSec.js", false, [hostname]) }
-export async function serverRun(ns, logging, target, w1, g1, w2, h1, w3, g2, w4, batchh1, batchw1, batchg1, batchw2, batches, usehacknet) { return await runScriptLocal(ns, "bin/serverRun.js", false, [logging, target, w1, g1, w2, h1, w3, g2, w4, batchh1, batchw1, batchg1, batchw2, batches, usehacknet]) }
+export async function serverRun(ns, logging, target, w1, g1, w2, h1, w3, g2, w4, batchh1, batchw1, batchg1, batchw2, batches, usehacknet) {
+  const counts = {w1, g1, w2, h1, w3, g2, w4, batchh1, batchw1, batchg1, batchw2, batches};
+  const invalid = Object.entries(counts).find(([, value]) => !Number.isInteger(value) || value < 0);
+  if (invalid) throw new Error(`Invalid dispatcher count for ${target}: ${invalid[0]}=${String(invalid[1])}; refusing to launch work.`);
+  return await runScriptLocal(ns, "bin/serverRun.js", false, [logging, target, w1, g1, w2, h1, w3, g2, w4, batchh1, batchw1, batchg1, batchw2, batches, usehacknet]);
+}
 export async function hasTixApi(ns) { return await runScript(ns, "bin/hasTixApi.js", false, []) }
 export async function getBoard(ns) { return await runScript(ns, "bin/getBoardState.js", false, []) }
 export async function getControlledENodes(ns) { return await runScript(ns, "bin/getControlledEmptyNodes.js", false, []) }
