@@ -405,7 +405,8 @@ export async function main(ns) {
 
   async function ensureFactionRepRates() {
     for (const faction of playerInfo.factions) {
-      if (faction === gangFaction || donationFactions.has(faction) || usefulAugs(faction).length === 0) continue;
+      // These special factions have no ordinary faction jobs; SoA progression belongs to the infiltration runner.
+      if (CANNOT_DONATE.has(faction) || faction === gangFaction || donationFactions.has(faction) || usefulAugs(faction).length === 0) continue;
       if (repRateCache[faction] > 0 && Date.now() - (repRateMeasuredAt[faction] ?? 0) < RATE_CACHE_TIME) continue;
       await detectBestFactionWork(faction);
     }

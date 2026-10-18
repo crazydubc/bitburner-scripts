@@ -6,7 +6,7 @@ import {main as quotes} from '../../../bin/infiltration-locations.js';
 import {main as control} from '../../../bin/infiltration-control.js';
 
 const player = {city:'Aevum',money:10e9,factions:['CyberSec','NiteSec']};
-const reset = {currentNode:1,lastAugReset:100,lastNodeReset:50,ownedSF:new Map()};
+const reset = {currentNode:1,lastAugReset:100,lastNodeReset:50,ownedSF:new Map(),ownedAugs:new Map()};
 const target = {kind:'faction-rep',faction:'CyberSec',targetRep:10000,repRate:10,lastAugReset:100,lastNodeReset:50,updatedAt:10000};
 const location = (name,levels=5,difficulty=1,rep=1000,cash=1e9,city='Aevum') => ({location:{name,city},maxClearanceLevel:levels,difficulty,reward:{tradeRep:rep,sellCash:cash}});
 const base = {locations:[location('Easy'),location('Impossible',5,3.5),location('Far',5,0,1e6,1e12,'Volhaven')],player,target,rep:0,moneyTarget:20e9};
@@ -23,9 +23,14 @@ assert.equal(freshInfiltrationTarget(target,reset,player.factions,20000),true);
 for (const changed of [{lastAugReset:101},{lastNodeReset:51},{updatedAt:1},{faction:'Daedalus'},{targetRep:NaN}])
   assert.ok(!freshInfiltrationTarget({...target,...changed},reset,player.factions,100000));
 
-const defaults = Object.fromEntries([['auto',false],['single',false],['stop',false],['status',false],['quiet',true],['company',''],['faction','CyberSec'],['target-rep',0],['money-target',20e9],['time',120000],['max-runs',3],['min-demand',0.8],['scheduled',false]]);
+const defaults = Object.fromEntries([['auto',false],['single',false],['stop',false],['status',false],['quiet',true],['company',''],['faction','CyberSec'],['target-rep',0],['money-target',20e9],['time',120000],['max-runs',3],['min-demand',0.8],['scheduled',false],['soa',false],['aug-count-target',30],['cooldown',60000]]);
+let soaSource=readFileSync(new URL('../../../infiltration-soa.js',import.meta.url),'utf8')
+  .replace("import { singRun, purchase } from './utils.js';",'const singRun=(ns,fn,...args)=>ns.sing(fn,...args); const purchase=(ns,...args)=>ns.purchase(...args);');
+for(const name of ['infiltration-policy','infiltration-ui']) soaSource=soaSource.replace(`'./${name}.js'`,JSON.stringify(new URL(`../../../${name}.js`,import.meta.url).href));
+const soaUrl='data:text/javascript;base64,'+Buffer.from(soaSource).toString('base64');
 let source=readFileSync(new URL('../../../infiltrate.js',import.meta.url),'utf8')
-  .replace("import { singRun, runScriptLocal } from './utils.js';",'const singRun=(ns,fn,...args)=>ns.sing(fn,...args); const runScriptLocal=async(ns,script,ignore,args)=>ns.infiltration.getPossibleLocations().filter(x=>x.city===args[0]).map(x=>ns.infiltration.getInfiltration(x.name));');
+  .replace("import { singRun, runScriptLocal } from './utils.js';",'const singRun=(ns,fn,...args)=>ns.sing(fn,...args); const runScriptLocal=async(ns,script,ignore,args)=>ns.infiltration.getPossibleLocations().filter(x=>x.city===args[0]).map(x=>ns.infiltration.getInfiltration(x.name));')
+  .replace("'./infiltration-soa.js'",JSON.stringify(soaUrl));
 for (const name of ['infiltration-policy','infiltration-ui']) source=source.replace(`'./${name}.js'`,JSON.stringify(new URL(`../../../${name}.js`,import.meta.url).href));
 const {main}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 
@@ -55,8 +60,8 @@ function fixture(options={}) {
     };
   });
   Object.defineProperty(open,'disabled',{get:()=>now<companyRenderedAt+(options.controlDelay??0)});
-  const sell=el('Sell for $1b',()=>{claims++;p.money+=1e9;screen='city';});
-  const trade=el('Trade for 1000 reputation',()=>{claims++;rep[selected]+=1000;screen='city';});
+  const sell=el('Sell for $1b',()=>{claims++;p.money+=1e9;screen='city';f.onReward?.();});
+  const trade=el('Trade for 1000 reputation',()=>{claims++;rep[selected]+=1000;screen='city';f.onReward?.();});
   const combo={__reactFiber$fixture:{memoizedProps:{value:selected,children:[false,[{props:{value:'CyberSec'}},{props:{value:'NiteSec'}}]],onChange:event=>{pendingFaction=event.target.value;}}}};
   const scope={querySelectorAll:selector=>selector==='li'?[el(`Market demand: ${demand}%`)]:selector==='button'?(screen==='intro'?[start]:[trade,sell]):[],
     querySelector:selector=>selector==='[role="combobox"]'?combo:null};
@@ -73,6 +78,7 @@ function fixture(options={}) {
     return [h];
   }
   const doc={getElementById:()=>screen==='terminal'?{}:null,querySelector:selector=>selector==='[role="dialog"]' && dialog?{}:null,querySelectorAll:selector=>{
+    if(selector==='.MuiModal-root')return f.modals??[];
     if(selector==='h4' || selector==='h4, h5')return headings();
     if(selector==='p')return screen==='city'?[el('Aevum')]:[];
     if(selector==='[role="button"]')return options.hideCity?[]:[city];
@@ -210,8 +216,8 @@ for(const gameTitle of ['Attack after the sentinel drops his guard and is distra
   await f.run();assert.ok(acknowledged);assert.equal(f.counts.claims,1);
 }
 {
-  const f=fixture({faction:'Shadows of Anarchy'}), get=f.ns.getPlayer;
-  f.ns.getPlayer=()=>({...get(),factions:['Shadows of Anarchy']});
+  const f=fixture({faction:'Unlisted Faction'}), get=f.ns.getPlayer;
+  f.ns.getPlayer=()=>({...get(),factions:['Unlisted Faction']});
   await f.run();assert.equal(f.counts.claims,0);assert.equal(f.screen,'victory');assert.equal(f.counts.cancels,0);
 }
 {
@@ -241,3 +247,47 @@ for(const gameTitle of ['Attack after the sentinel drops his guard and is distra
   assert.equal(await probe(false,()=>assert.fail('Disabled integration must not call a helper'),{pid:99})(),false);
 }
 console.log('Infiltration selection, delayed/animated company UI, bounded navigation, UI scope, once-per-stage advancement, reward faction, bounded repeat, cancellation, casino gate, target, and lease checks passed.');
+
+// Execute the real runner plus progression manager: first reward creates the invite,
+// later games award both CyberSec and SoA rep, then the final claim queues WKS.
+for(const invitation of ['suppressed','reward-popup','initial-popup']) {
+  const {SOA_FACTION,SOA_WKS,soaAugmentationQuote,INFILTRATION_PROGRESS}=await import('../../../infiltration-policy.js');
+  const f=fixture({soa:true,auto:true,'max-runs':3});
+  let joined=false,invited=false,soaRep=0,cash=10e9;const owned=[],purchases=[];
+  const invite=()=>{
+    invited=true;
+    if(invitation==='suppressed')return;
+    const element=textContent=>({textContent});
+    f.modals=[{getAttribute:()=>null,querySelector:()=>null,querySelectorAll:selector=>
+      selector==='h4'?[element('You received a faction invitation.')]:
+      selector==='p'?[element(`Would you like to join ${SOA_FACTION}?`)]:
+      selector==='button'?[{...element('Join'),getAttribute:()=>null,__reactProps$invite:{onClick:()=>{
+        joined=true;invited=false;f.modals=[];
+      }}}]:[]}];
+  };
+  if(invitation==='initial-popup')invite();
+  f.files.set('reserve.txt','8000000000');
+  f.ns.getResetInfo=()=>({...reset,currentNode:4});
+  f.ns.getPlayer=()=>({...player,money:cash,factions:[...player.factions,...(joined?[SOA_FACTION]:[])]});
+  f.ns.sing=async(fn,name)=>{
+    if(fn==='getCurrentWork')return null;
+    if(fn==='checkFactionInvitations')return invited?[SOA_FACTION]:[];
+    if(fn==='joinFaction'){assert.equal(name,SOA_FACTION);joined=true;invited=false;return true;}
+    if(fn==='getOwnedAugmentations')return [...owned];
+    if(fn==='getAugmentationPrice')return soaAugmentationQuote(owned).cost;
+    if(fn==='getAugmentationRepReq')return soaAugmentationQuote(owned).rep;
+    if(fn==='getFactionRep')return name===SOA_FACTION?soaRep:f.rep[name];
+    assert.fail(fn);
+  };
+  f.ns.purchase=async(namespace,method,args,policy)=>{
+    assert.equal(namespace,'singularity');assert.equal(method,'purchaseAugmentation');assert.equal(args[0],SOA_FACTION);
+    const quote=soaAugmentationQuote(owned);assert.ok(cash-quote.cost>=8e9);assert.ok(quote.cost<=policy.budget);
+    cash-=quote.cost;owned.push(args[1]);purchases.push(args[1]);return {result:true,spent:quote.cost};
+  };
+  f.onReward=()=>{if(joined)soaRep+=invitation==='initial-popup'?4000:6000;else invite();};
+  await f.run();
+  assert.equal(f.counts.claims,3);assert.equal(f.rep.CyberSec,3000);assert.equal(soaRep,12000);
+  assert.equal(joined,true);assert.deepEqual(purchases,[SOA_WKS]);assert.ok(cash>=8e9);
+  assert.deepEqual(JSON.parse(f.files.get(INFILTRATION_PROGRESS)).owned,[SOA_WKS]);
+}
+console.log('Automatic SoA invitation, concurrent rewards, WKS-first guarded purchase, and progression status checks passed.');

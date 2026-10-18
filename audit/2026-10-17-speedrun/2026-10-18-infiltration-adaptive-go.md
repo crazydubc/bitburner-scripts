@@ -1,25 +1,25 @@
 # Bounded infiltration and opponent-specific Go sizing
 
-This follow-up is on `testing/bn1-go-audit` / PR #34. It supersedes the fixed 13×13 default described in the earlier October 18 follow-up. Infiltration automation is opt-in; Go uses the new adaptive mode by default unless a saved configuration specifies a fixed size.
+This follow-up is on `testing/bn1-go-audit` / PR #34. It supersedes the fixed 13×13 default described in the earlier October 18 follow-up. At the user's request, infiltration now runs automatically through autopilot, including Shadows of Anarchy progression. A saved `"infiltration": false` still disables it. Go uses adaptive mode by default unless a saved configuration specifies a fixed size.
 
 ## Infiltration
 
-The pasted Sphyxis/Dihelvid bot and the repository's older `infiltrate.js` use the game's internal success callback. This implementation retains that completion shortcut, rather than pretending it is an official Netscript completion API. It was checked against official v3.0.1 source. A live UI/save test is still needed.
+The pasted Sphyxis/Dihelvid bot and the repository's older `infiltrate.js` use the game's internal success callback. This implementation retains that completion shortcut. It was checked against official v3.0.1 source. The user confirmed that the navigation/reward flow works in game; the new SoA join/purchase flow still needs live testing.
 
 The old code left an interval alive after Netscript exited, modified `Date.prototype`, accessed unrelated control ports, and could select a success callback from elsewhere in the application. The pasted variant could invoke success twice per tick. The replacement keeps a real script alive, uses a single bounded loop, follows React ancestors only from recognized infiltration headings, and advances each currently displayed stage once. It supports all eight minigames, including the guard's `h5` instruction and both minefield phases. It does not generate keyboard events; the game penalizes synthetic keys.
 
-Navigation follow-up: the original fixed 200 ms waits could reject a company page before React rendered it. Backdoored companies also animate their headings through `CorruptibleText`, so even an open page could fail an exact text match. Navigation now polls every 50 ms for the requested company and an enabled infiltration button, with a five-second limit per transition and checks for cancellation, the overall time budget, and intervening dialogs. Animated headings are identified through the visible heading's location props. The introduction screen gets the same five-second render allowance. Regression fixtures cover delayed City/company/intro rendering, delayed controls, animated names, both city layouts, wrong-company rejection, timeouts, and cancellation. These simulated UI checks still require confirmation in the live game.
+Navigation follow-up: the original fixed 200 ms waits could reject a company page before React rendered it. Backdoored companies also animate their headings through `CorruptibleText`, so even an open page could fail an exact text match. Navigation now polls every 50 ms for the requested company and an enabled infiltration button, with a five-second limit per transition and checks for cancellation, the overall time budget, and intervening dialogs. Animated headings are identified through the visible heading's location props. The introduction screen gets the same five-second render allowance. Regression fixtures cover delayed City/company/intro rendering, delayed controls, animated names, both city layouts, wrong-company rejection, timeouts, and cancellation.
 
 Follow-up validation: the expanded infiltration checks, JS syntax checks, and whitespace check pass. The official RAM comparison against `9f4d1c5` reports no changes, including **5.75 GB** for the runner.
 
 Selection:
 
 - Wait for the current installation's verified $10 billion casino completion. Keep the existing reserve and stock rules.
-- Consider companies in the current city only. No automatic travel, purchases, hospitalization, or faction joining.
+- Consider companies in the current city only. No automatic travel or hospitalization. SoA is the only faction this runner joins or buys augmentations from.
 - Use the game's current, BN-adjusted cash/rep quotes, reject starting difficulty ≥3.5, and check actual market demand on the introduction screen. Unknown demand declines the run. Default minimum demand is 80%.
 - Prefer the faction worker's fresh augmentation/favor milestone. Corporation bribes still run first in that planner. Re-read current reputation before each run; stop spending UI time on a completed target. With no outstanding rep target, consider the configured cash goal.
-- Compare the estimated reward rate with normal faction work or income. Cash comparison includes current script income and average recurring sources such as corporation, Hacknet and stock earnings; casino and infiltration payouts are excluded. Require a 50% rate advantage and enough time to finish before the alternative would close the gap.
-- Estimate duration from floor count and measured company durations. Defaults: at most three runs within a two-minute planning budget, then a five-minute scheduled cooldown. `--single` completes at most one. A slow helper can delay exit; no new game starts after the budget expires.
+- Compare the estimated reward rate with normal faction work or income. Cash comparison includes current script income and average recurring sources such as corporation, Hacknet and stock earnings; casino and infiltration payouts are excluded. Ordinary rewards require a 50% rate advantage and enough time to finish before the alternative would close the gap. An outstanding SoA invitation/augmentation reputation goal can justify a run even when ordinary income/work is faster; it still collects the normal reward alongside SoA reputation.
+- Estimate duration from floor count and measured company durations. Defaults: at most three runs within a two-minute planning budget, then a one-minute scheduled cooldown. `--single` completes at most one. A slow helper can delay exit; no new game starts after the budget expires.
 - The faction worker acknowledges a short-lived, PID-checked pause before the runner takes the UI. It resumes after completion, termination, or lease expiry. This pauses planning, not the player's ongoing faction work.
 - Defer on other work types or an occupied screen. Stop on navigation, a failed stage, unknown controls, `--stop`, or the time limit. An unclaimed completed reward remains available if its faction selector cannot be handled.
 
@@ -34,7 +34,7 @@ home
 run infiltrate.js --single --faction "CyberSec"
 ```
 
-Substitute the faction you are actually working toward. Keep the World/City menu expanded and leave the game screen alone during the run. Both the ASCII map and the list of city locations are supported. Before SF4, check current faction reputation yourself; `--target-rep` deliberately requires Singularity. The BN1 roadmap now shows this optional command.
+Substitute the faction you are actually working toward. Keep the World/City menu expanded and leave the game screen alone during the run. Both the ASCII map and the list of city locations are supported. Before SF4, check current faction reputation yourself; `--target-rep` deliberately requires Singularity. Add `--soa` to include joining SoA and buying its useful augmentations in a manual run.
 
 `--faction` is the joined faction receiving the reputation reward. `--company` is the location to infiltrate; employment and faction membership at that company are not required. For example, to infiltrate NetLink Technologies in Aevum for CyberSec reputation:
 
@@ -51,18 +51,21 @@ run infiltrate.js --stop
 
 If a legacy `tmrAutoInf` timer is detected, the new runner stops it and asks for one game reload to discard its pending callbacks before starting. It does not touch the old shared ports. Normal runs require no reload.
 
-### Enable selection through autopilot
+### Automatic selection through autopilot
 
-Merge these keys into `autopilot.js.config.txt`, retaining your other settings:
+Automatic sessions are enabled by default. To select a normal reputation recipient before SF4, merge these keys into `autopilot.js.config.txt`, retaining your other settings:
 
 ```json
 {
   "infiltration": true,
-  "infiltration-money-target": 10000000000
+  "infiltration-money-target": 10000000000,
+  "infiltration-faction": "CyberSec"
 }
 ```
 
-Restart autopilot and the faction worker from home so the worker receives `--infiltration`. The scheduler does not silently restart an existing worker with different arguments. Disable the setting and use `infiltrate.js --stop` to stop automatic sessions. A manual SF4 faction worker can also be started with `--infiltration` to publish its target and cooperate with the runner.
+Use a faction you have joined and update it as you progress. Without this override, pre-SF4 SoA farming takes the cash reward. With SF4, the fresh faction planner supplies the recipient automatically and this saved BN1 override is ignored. SoA is not a valid `--faction` recipient: its reputation is awarded alongside cash or a normal faction's reputation.
+
+Restart autopilot after pulling. With SF4, also restart an existing faction worker that lacks `--infiltration`, so it can acknowledge screen use. The scheduler does not silently restart an existing worker with different arguments. Set `"infiltration": false` and restart autopilot, then use `infiltrate.js --stop` to stop automatic sessions. `--stop` alone stops the current session; it does not disable later scheduled sessions. A manual SF4 faction worker can also be started with `--infiltration` to publish its target and cooperate with the runner.
 
 Examples:
 
@@ -74,6 +77,17 @@ run infiltrate.js --single --money-target 158000000000
 The first uses an absolute current-reputation target, not reputation to gain this invocation. The cash example can help toward the $150b corporation entry plus an $8b cushion when local infiltration beats income; it does not purchase a corporation or bypass its creation/reserve checks. For scheduled cash funding, adjust `infiltration-money-target`, then restore the normal goal after funding. An active Daedalus cash-reservation phase supplies its $100b goal automatically.
 
 `--company "name"` restricts selection to that local company. `--min-demand`, `--time` and `--max-runs` bound manual experiments. No automatic infiltration is started during intelligence preparation or reset spending.
+
+### Shadows of Anarchy progression
+
+- Claim one infiltration reward to generate the invitation, then join SoA. The first reward does not give SoA reputation if the player was not already a member. Both the invitation popup and the Factions page's `Join!` control are supported; unrelated faction invitations are left for the user.
+- Buy **SoA - phyzical WKS harmonizer first**. Once installed, it multiplies infiltration cash by 1.5, ordinary faction reputation rewards by 1.2, and SoA reputation rewards by 2. The game quotes incorporate installed bonuses, so the selection policy does not apply them twice.
+- Next buy **Beauty of Aphrodite**, then the remaining SoA augmentations, only while more distinct augmentations are needed for Daedalus. Beauty also grants 10% Charisma. Count installed and queued augmentations together; multiple NeuroFlux levels count once. Stop these extra purchases once the BN's count requirement is covered, Daedalus is joined, or The Red Pill is owned/queued.
+- Preserve the live reserve. WKS may use available cash above it. Each extra purchase must also fit within 5% of current cash; do not grind solely to fund an expensive count filler. SoA starts at $1m/10k rep and scales by 7× money/1.3× reputation per owned SoA augment, including queued purchases. These multipliers persist through installations and are separate from ordinary augmentation price inflation.
+- Before SF4, read the visible purchased-augmentation list and SoA augmentation controls, waiting for React to render. Use the displayed confirmation's numeric price and recheck cash/reserve before confirming; also support suppressed confirmations. With SF4, use the official API and existing home purchase guard. Unknown UI, changed prices, cancellation, and unexpected dialogs stop the session.
+- Purchases queue normally. The runner never installs augmentations. BN1's guide reports queued SoA augmentations and points to the existing stock-liquidation/install checklist. After SF4, the ordinary reset planner sees those queued augmentations and follows its existing installation policy.
+
+The faction worker now skips SoA and other factions without ordinary faction work. The faction manager excludes queued SoA augmentations from ordinary price-inflation and NeuroFlux-level calculations while retaining them in the installation queue/count.
 
 ## Go
 
@@ -100,11 +114,15 @@ Results remain in `/data/go-results.json`. The `_adaptive` member holds bounded 
 
 ## Verification and limits
 
-All **17 positive checks** pass: the previous 15 plus `checks/infiltration.mjs` and `checks/go-adaptation.mjs`. New coverage executes the actual UI runner with DOM/React fixtures: all minigame headings, exact faction selection, no double advancement, repeat limits, stop/failure/navigation behavior, casino/demand gates, missing reputation APIs, pause acknowledgement, and preservation of unclaimed rewards. It also executes the Go lifecycle and result helper with per-opponent timing samples, failed-cheat counters, sample caps, corrupt-file preservation, streaks and configuration separation.
+The earlier **17 positive checks** covered the previous 15 plus `checks/infiltration.mjs` and `checks/go-adaptation.mjs`. Coverage executes the actual UI runner with DOM/React fixtures: all minigame headings, exact faction selection, no double advancement, repeat limits, stop/failure/navigation behavior, casino/demand gates, missing reputation APIs, pause acknowledgement, and preservation of unclaimed rewards. It also executes the Go lifecycle and result helper with per-opponent timing samples, failed-cheat counters, sample caps, corrupt-file preservation, streaks and configuration separation.
+
+The SoA follow-up adds `checks/soa-progression.mjs`: actual BN1 join/purchase UI adapters, delayed rendering, confirmations enabled/suppressed, reserve/budget changes, queued/distinct counts, WKS priority, worker exclusion, and NeuroFlux accounting. Its optional official-engine argument verifies the UI cost formula against the real game function. The expanded runner check covers invitations with/without popups, a popup already open at startup, simultaneous normal/SoA rewards, guarded WKS purchase, and status reporting.
+
+All **18 positive checks** passed together for this follow-up, including the official purchase-RAM, batch-formula, and SoA-price checks. The official RAM comparison against `5ba5ea2` reports no increases: infiltration **5.75 GB**, guide **8 GB**, autopilot **4.2 GB**, and faction worker **8.5 GB**. Changed JS/MJS syntax and whitespace checks pass.
 
 The pinned official Go engine completed all 12 smoke games (six opponents each at 5×5 and 13×13, seed base 521) with no errors. Tactical outcomes match the corresponding earlier seeds. These are regression smoke checks, not evidence of a higher live win rate. Go remains **3.5 GB**, and other existing managers retain their prior RAM costs. All changed JS/MJS parses and the whitespace check passes.
 
-No live infiltration, augmentation install, or BN transition was performed. UI internals can change across game updates; the runner declines unknown layouts. Its actual company timings, reward throughput, and interaction with a running save need the user's testing branch run.
+The user confirmed the preceding infiltration navigation/reward fix works in game. The new SoA join/purchase flow has offline fixture coverage and still needs a live testing-branch run. No augmentation install or BN transition was performed. UI internals can change across game updates; the runner declines unknown layouts. Actual company timings, reward throughput, and reset timing still need measurement.
 
 Primary references, read from official `bitburner-official/bitburner-src@1da7316ffd9d281b45a86c4c54ec532276557892` (v3.0.1):
 
@@ -113,6 +131,9 @@ Primary references, read from official `bitburner-official/bitburner-src@1da7316
 - `src/Infiltration/formulas/game.ts`, `formulas/victory.ts`: difficulty cutoff, demand recovery/depletion, and rewards.
 - `src/Locations/ui/City.tsx`, `CompanyLocation.tsx`, `GenericLocation.tsx`: city navigation and infiltration entry.
 - `src/ui/React/CorruptibleText.tsx`: backdoor name animation that prevents reliable rendered-text matching.
+- `src/Augmentation/AugmentationHelpers.ts`, `Augmentations.ts`, and `src/Constants.ts`: SoA prices, ordinary inflation exclusion, and augmentation bonuses.
+- `src/Augmentation/ui/AugmentationsRoot.tsx`, `PurchasedAugmentations.tsx`, `PurchasableAugmentations.tsx`, and `PurchaseAugmentationModal.tsx`: queued counts, visible purchase controls, and confirmation prices.
+- `src/Faction/ui/FactionsRoot.tsx`, `FactionInvitationManager.tsx`, `AugmentationsPage.tsx`, and `src/ui/React/Modal.tsx`: invitations, faction navigation, and dialog lifecycle.
 - `src/Go/boardAnalysis/scoring.ts`, `effects/netscriptGoImplementation.ts`, `effects/effect.ts`: win/cheat outcomes, streak/favor rewards, bonus time and hidden board.
 
 The supplied attachment was inspected alongside the repo's prior Sphyxis/Dihelvid-attributed script. No SphyxOS services, worker ports, or global prototype changes were imported.

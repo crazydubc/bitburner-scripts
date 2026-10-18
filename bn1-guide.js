@@ -1,5 +1,6 @@
 // Non-modal BN1.1 guidance that keeps autopilot running when RAM permits. No Singularity calls.
 import { isScriptRunning } from './utils.js';
+import { SOA_WKS, SOA_AUGS, INFILTRATION_PROGRESS } from './infiltration-policy.js';
 
 export const BN1_CRACKERS = [
   ['BruteSSH.exe', 500_000], ['FTPCrack.exe', 1_500_000],
@@ -80,7 +81,8 @@ export function getBn1FactionRoadmap(s) {
     'How: root/backdoor the server using Tasks/crack-host.js and scan.js, accept its invitation in Factions, then choose Hacking Contracts. Focus when practical; check the displayed reputation gain when comparing work types.',
     'Early parallel setup after coinflip: buy DarkscapeNavigator.exe for $50m through TOR. The $30m option is Chongqing > Shadowed Walkway and includes TOR. Autopilot starts darknet.js after purchase; watch Active Scripts for its workers.',
     darknetWorkTip,
-    'Optional after coinflip: run infiltrate.js --single --faction "CyberSec" from the Terminal or City screen after joining CyberSec (substitute your target faction). It chooses an accessible local company and trades one reward. Uses the game UI; do not navigate during the run. Run infiltrate.js --stop to stop. Without SF4, compare current reputation in Factions yourself.',
+    'After coinflip, autopilot can farm infiltration rewards, join Shadows of Anarchy, and buy WKS first. Its other augments can fill the distinct-augmentation count for Daedalus. They still need installation. Leave the Terminal or City open for automation; run infiltrate.js --stop to stop the current session.',
+    'For BN1 reputation rewards, set "infiltration-faction": "CyberSec" in autopilot.js.config.txt (substitute your current joined target and restart autopilot). Otherwise SoA farming sells data for money. Change the recipient as you progress; before SF4, check its reputation yourself. Set "infiltration": false in that config to disable automatic sessions.',
     ...factionSteps,
     `Early side stop: Sector-12. Visit with $15m cash and accept its invitation; compare Hacking Contracts/Field Work for ${targetsFor('Sector-12')}. CashRoot speeds up future restarts.`,
     'Keep Sector-12 available until you have CashRoot: do not join Chongqing, New Tokyo, Ishima, or Volhaven city factions first. Visiting those cities is fine; if already locked out this installation, return after a reset.',
@@ -162,8 +164,10 @@ export async function readBn1Snapshot(ns, checkAutopilot = true) {
   if (reset.ownedAugs.has('The Red Pill')) {
     try { daemon = ns.getServer('w0r1d_d43m0n'); } catch { /* Not available yet. */ }
   }
+  let infiltrationProgress = null;
+  try { infiltrationProgress = JSON.parse(ns.read(INFILTRATION_PROGRESS) || 'null'); } catch { /* Optional status only. */ }
   return {
-    reset, player: ns.getPlayer(), homeRam, homeFreeRam, hasTor: ns.hasTorRouter(),
+    reset, player: ns.getPlayer(), homeRam, homeFreeRam, hasTor: ns.hasTorRouter(), infiltrationProgress,
     hasDarknet: ns.fileExists('DarkscapeNavigator.exe', 'home'),
     casinoEarned: ns.getMoneySources().sinceInstall.casino ?? 0,
     crackers: BN1_CRACKERS.map(([file]) => file).filter(file => ns.fileExists(file, 'home')),
@@ -173,6 +177,16 @@ export async function readBn1Snapshot(ns, checkAutopilot = true) {
     servers: Object.fromEntries(BN1_FACTION_SERVERS.map(([host]) => [host, ns.getServer(host)])),
     daemon,
   };
+}
+
+export function getSoaGuidance(progress, reset, now = Date.now()) {
+  if (!progress || progress.lastAugReset !== reset.lastAugReset || progress.lastNodeReset !== reset.lastNodeReset ||
+    now < progress.updatedAt || now - progress.updatedAt > 600_000 || !Array.isArray(progress.owned)) return '';
+  const queued = progress.owned.filter(name => SOA_AUGS.includes(name) && !reset.ownedAugs.has(name));
+  if (!queued.length) return '';
+  return `${queued.length} SoA augmentation(s) queued. ` +
+    (queued.includes(SOA_WKS) ? 'WKS rewards improve only after installation. ' : '') +
+    'Include them in your next useful bundle; they count toward Daedalus once installed. Run bn1-guide.js --install for the stock-liquidation checklist.';
 }
 
 /** Run directly on fresh 8 GB home, or automatically from autopilot after upgrading home. @param {NS} ns */
@@ -197,7 +211,11 @@ export async function main(ns) {
     ns.print(`BN1.1 — ${next.title}\n`);
     if (startupMessage) ns.print(`${startupMessage}\n`);
     for (const step of next.steps) ns.print(`• ${step}`);
-    ns.print('\nPurchases, faction work, and installs still need manual input until SF4.');
+    if (snapshot) {
+      const soaGuidance = getSoaGuidance(snapshot.infiltrationProgress, snapshot.reset);
+      if (soaGuidance) ns.print(`\n${soaGuidance}`);
+    }
+    ns.print('\nOrdinary augmentation purchases, faction work, and installs still need manual input until SF4. SoA purchases can run automatically.');
     if (referenceView) {
       ns.print('\nReference view exits now; its log remains available. Scroll for the full checklist.');
       return;

@@ -3,6 +3,7 @@ import {
   getActiveSourceFiles, getBNMults, getStocksValue, getReset, getPlayerInfo, doSCP, getOwnedAugs, singRun, addRepToFavor
 } from './utils.js'
 import { buildDonationFavorProgress, FACTIONS_WITHOUT_DONATIONS } from './donation-favor.js'
+import { SOA_AUGS } from './infiltration-policy.js'
 
 // PLAYER CONFIGURATION CONSTANTS
 // This acts as a list of default "easy" factions to always show even if the user has --hide-locked-factions
@@ -26,6 +27,7 @@ let favorToDonate = 0; // Based on the current BitNode Multipliers, the favour r
 // Various globals because this script does not do modularity well. Assigned values are all ignored, just used to get type hints
 let playerData = (/**@returns{Player}*/() => null)(), bitNode = 0, gangFaction = "";
 let numAugsAwaitingInstall = 0, nfLevelPurchased = 0, startingPlayerMoney = 0, stockValue = 0; // If the player holds stocks, their liquidation value will be determined
+let numPriceScalingAugsAwaitingInstall = 0; // Queued SoA augs count toward installs but do not inflate ordinary aug prices.
 let factionNames = [""], joinedFactions = [""], desiredAugs = [""], desiredStatsFilters = [""], purchaseFactionDonations = [];
 let ownedAugmentations = [""], simulatedOwnedAugmentations = [""], allAugStats = [""], priorityAugs = [""];
 let effectiveSourceFiles = (/**@returns {{[bitNode: number]: number}}*/() => ({}))();
@@ -45,7 +47,7 @@ const argsSchema = [ // The set of all command line arguments
   ['v', false], // (Kept for backwards compatilily) this was an alias flag for setting --verbose to true when it previously defaulted to false.
   ['ignore-player-data', false], // Display stats for all factions and augs, despite what we already have (kind of a "mock" mode)
   ['i', false], // Flag alias for --ignore-player-data
-  // By default, we ignore "Shadows of Anarchy" because they are tied to infiltration (manual action) and their aug prices don't follow normal conventions
+  // SoA purchases are handled by the infiltration runner because their prices use separate multipliers.
   ['ignore-faction', ["Shadows of Anarchy"]], // Factions to omit from all data, stats, and calcs, (e.g.) if you do not want to purchase augs from them, or do not want to see them because they are impractical to join at this time
   ['after-faction', []], // Pretend we were to buy all augs offered by these factions. Show us only what remains.
   ['force-join', null], // Always join these factions if we have an invite (useful to force join a gang faction)
@@ -152,6 +154,7 @@ export async function main(ns) {
   const installedAugmentations = (/**@returns {string[]}*/() => null)() ??
     await getOwnedAugs(ns, false);
   numAugsAwaitingInstall = ownedAugmentations.length - installedAugmentations.length;
+  numPriceScalingAugsAwaitingInstall = ownedAugmentations.slice(installedAugmentations.length).filter(name => !SOA_AUGS.includes(name)).length;
   if (options['neuroflux-disabled']) omitAugs.push(strNF);
   simulatedOwnedAugmentations = ignorePlayerData ? [] : ownedAugmentations.filter(a => a != strNF);
   // Clear "priority" / "desired" lists of any augs we already own
@@ -754,9 +757,9 @@ async function managePurchaseableAugs(ns, outputRows, accessibleAugs) {
   let nextUpAug = dropped.length == 0 ? null : `Next desired aug available at:`.padEnd(37) + ` ${dropped[0].costBefore}  ` +
     `for \"${dropped[0].aug.name}\" from "${dropped[0].aug.getFromJoined()}" (cheapest of ${dropped.length} dropped augs)`
   if (nextUpAug && options['neuroflux-disabled']) outputRows.push(nextUpAug); // Output this now if we will be exiting early, otherwise save for after the last table.
-  if (numAugsAwaitingInstall > 0)
-    outputRows.push(`WARNING: Prices all have a x ${formatNumberShort(augCountMult ** numAugsAwaitingInstall)} cost penalty, because ` +
-      `${numAugsAwaitingInstall} Augmentations were previously purchased but are not yet installed.`);
+  if (numPriceScalingAugsAwaitingInstall > 0)
+    outputRows.push(`WARNING: Ordinary augmentation prices have a x ${formatNumberShort(augCountMult ** numPriceScalingAugsAwaitingInstall)} cost penalty, because ` +
+      `${numPriceScalingAugsAwaitingInstall} non-SoA augmentations were previously purchased but are not yet installed.`);
   if (inaccessiblePriorityAugs.length > 0)
     outputRows.push(`INFO: ${inaccessiblePriorityAugs.length} 'priority' augs are not yet accessible: ${inaccessiblePriorityAugs.map(n => `"${n}"`).join(", ")}`);
   const additionalDroppedPri = droppedPriorityAugs.filter(n => !inaccessiblePriorityAugs.includes(n));
@@ -767,7 +770,7 @@ async function managePurchaseableAugs(ns, outputRows, accessibleAugs) {
   if (options['neuroflux-disabled']) return;
   const augNf = augmentationData[strNF];
   // We can reverse-engineer our current NeuroFlux level by looking at its current price, and knowing its cost scales at x1.14 per level.
-  nfLevelPurchased = Math.round(Math.log(augNf.price / (augCountMult ** numAugsAwaitingInstall * 750000 * bitNodeMults.AugmentationMoneyCost)) / Math.log(1.14));
+  nfLevelPurchased = Math.round(Math.log(augNf.price / (augCountMult ** numPriceScalingAugsAwaitingInstall * 750000 * bitNodeMults.AugmentationMoneyCost)) / Math.log(1.14));
   let nextNfLevel = nfLevelPurchased + 1;
   let getFrom = augNf.getFromJoined();
   // If No currently joined factions can provide us with the next level of Neuroflux, look for the best joined **or unjoined** faction to get NF from.

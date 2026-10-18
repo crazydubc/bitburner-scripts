@@ -1,16 +1,18 @@
 /** Sphyxis / Dihelvid's auto-infiltration approach, with bounded lifecycle and progression selection.
- * Uses the game's undocumented React model success callback; opt-in, stops on unknown UI.
+ * Uses the game's undocumented React model success callback; stops on unknown UI.
  */
 import { singRun, runScriptLocal } from './utils.js';
 import { chooseInfiltration, freshInfiltrationTarget, infiltrationAlternativeIncome, INFILTRATION_TARGET, INFILTRATION_LEASE,
-  INFILTRATION_HISTORY, INFILTRATION_ACK } from './infiltration-policy.js';
+  INFILTRATION_HISTORY, INFILTRATION_ACK, INFILTRATION_PROGRESS, SOA_FACTION } from './infiltration-policy.js';
+import { manageSoaProgression, soaInvitation, acceptSoaInvitation } from './infiltration-soa.js';
 import { infiltrationView, infiltrationDemand, infiltrationButton, clickInfiltrationElement,
   finishInfiltrationStage, selectInfiltrationFaction, idleInfiltrationScreen, openInfiltrationCompany,
   infiltrationUiTimeout } from './infiltration-ui.js';
 
 const argsSchema = [['auto', false], ['single', false], ['stop', false], ['status', false], ['quiet', false],
   ['company', ''], ['faction', ''], ['target-rep', 0], ['money-target', 10e9], ['time', 120_000],
-  ['max-runs', 3], ['min-demand', 0.8], ['scheduled', false]];
+  ['max-runs', 3], ['min-demand', 0.8], ['scheduled', false], ['soa', false],
+  ['aug-count-target', 30], ['cooldown', 60_000]];
 const sessionKey = '__bitburnerScriptsInfiltration';
 export function autocomplete(data) { data.flags(argsSchema); return []; }
 
@@ -35,11 +37,15 @@ export async function main(ns) {
     wnd.clearInterval(wnd.tmrAutoInf); delete wnd.tmrAutoInf;
     return ns.tprint('Stopped the old infiltration timer. Reload the game once to clear its pending callbacks before using this version.');
   }
-  if (![options.time, options['max-runs'], options['min-demand'], options['money-target'], options['target-rep']].every(Number.isFinite) ||
+  if (options.faction === SOA_FACTION)
+    return ns.tprint('SoA reputation is earned alongside cash/normal faction rewards. Use --soa for its progression; --faction selects a normal reputation recipient such as CyberSec.');
+  if (![options.time, options['max-runs'], options['min-demand'], options['money-target'], options['target-rep'],
+    options['aug-count-target'], options.cooldown].every(Number.isFinite) ||
     options.time < 1000 || options.time > 600_000 || !Number.isInteger(options['max-runs']) || options['max-runs'] < 1 ||
     options['max-runs'] > 20 || options['min-demand'] < 0 || options['min-demand'] > 1 ||
-    options['money-target'] < 0 || options['target-rep'] < 0)
-    return ns.tprint('ERROR: Use time 1000..600000 ms, max-runs 1..20, min-demand 0..1, and nonnegative targets.');
+    options['money-target'] < 0 || options['target-rep'] < 0 || !Number.isInteger(options['aug-count-target']) ||
+    options['aug-count-target'] < 0 || options.cooldown < 1000 || options.cooldown > 3_600_000)
+    return ns.tprint('ERROR: Use time 1000..600000 ms, max-runs 1..20, min-demand 0..1, cooldown 1000..3600000 ms, and nonnegative targets (integer aug-count-target).');
   const read = file => JSON.parse(ns.read(file) || 'null');
   const print = message => { ns.print(message); if (!options.quiet) ns.tprint(message); };
   let session, ownedModel, victory = false;
@@ -63,6 +69,21 @@ export async function main(ns) {
     lastLease = Date.now();
   };
   const stopping = () => session.stop || Date.now() >= deadline;
+  const acquireScreen = async plannerPid => {
+    await pulse();
+    while (plannerPid && ns.isRunning(plannerPid) && !stopping()) {
+      const ack = read(INFILTRATION_ACK);
+      if (ack?.pid === ns.pid && ack.workerPid === plannerPid && ack.at >= started) break;
+      await ns.sleep(100); await pulse();
+    }
+  };
+  const updateSoa = async () => {
+    const state = await manageSoaProgression(ns, {doc, canContinue: () => !stopping(), hasSingularity,
+      augRequirement: options['aug-count-target'], print, heartbeat: pulse});
+    if (state.owned) await ns.write(INFILTRATION_PROGRESS, JSON.stringify({...state,
+      updatedAt: Date.now(), lastAugReset: reset.lastAugReset, lastNodeReset: reset.lastNodeReset}), 'w');
+    return state.goal;
+  };
   const cleanup = () => {
     // Release only the model we started; preserve an unclaimed victory screen.
     const complete = ownedModel && (ownedModel.results?.match(/✓/g)?.length ?? 0) >= ownedModel.maxLevel;
@@ -72,14 +93,15 @@ export async function main(ns) {
 
   try {
     if (!(ns.getMoneySources().sinceInstall.casino >= 10e9)) return print('Infiltration deferred until the coinflipper finishes its $10b.');
-    if (!idleInfiltrationScreen(doc, companyNames)) return print('Infiltration deferred: return to the Terminal, City, or company screen.');
+    if (!idleInfiltrationScreen(doc, companyNames) && !(options.soa && soaInvitation(doc)))
+      return print('Infiltration deferred: return to the Terminal, City, or company screen.');
     session = {stop: false}; wnd[sessionKey] = session;
     ns.atExit(cleanup);
     while (!stopping() && runs < limit) {
-      const player = ns.getPlayer();
+      let player = ns.getPlayer();
       const work = hasSingularity ? await singRun(ns, 'getCurrentWork') : null;
       if (work?.type && work.type !== 'FACTION') break;
-      if (!idleInfiltrationScreen(doc, companyNames)) break;
+      if (!idleInfiltrationScreen(doc, companyNames) && !(options.soa && soaInvitation(doc))) break;
       let target = read(INFILTRATION_TARGET), rep = null;
       const plannerPid = Number.isInteger(target?.pid) && target.lastAugReset === reset.lastAugReset &&
         target.lastNodeReset === reset.lastNodeReset && Date.now() >= target.updatedAt &&
@@ -103,21 +125,26 @@ export async function main(ns) {
         if (!Number.isFinite(rep)) throw new Error('Faction reputation unavailable');
       }
       if (options.faction && rep != null && rep >= target.targetRep) break;
+      let soa = null;
+      if (options.soa) {
+        await acquireScreen(plannerPid);
+        if (stopping()) break;
+        await acceptSoaInvitation(ns, doc, () => !stopping(), pulse);
+        if (!idleInfiltrationScreen(doc, companyNames)) break;
+        soa = await updateSoa();
+        if (stopping()) break;
+        player = ns.getPlayer();
+      }
       const locations = await runScriptLocal(ns, 'bin/infiltration-locations.js', false, [player.city]);
       if (!Array.isArray(locations)) throw new Error(`Infiltration quotes unavailable: ${String(locations)}`);
       const input = {locations, player, target, rep, company: options.company, moneyTarget: options['money-target'],
         income: infiltrationAlternativeIncome(ns.getTotalScriptIncome()[0], ns.getMoneySources().sinceInstall,
           (Date.now() - reset.lastAugReset) / 1000),
-        minDemand: options['min-demand'], remainingMs: deadline - Date.now(), history};
+        minDemand: options['min-demand'], remainingMs: deadline - Date.now(), history, soa};
       let choice = chooseInfiltration(input);
       if (!choice) { print('No infiltration currently beats the active income/rep route within this time budget.'); break; }
-      await pulse();
       // Wait for an in-flight faction planning pass to finish before taking the screen.
-      while (plannerPid && ns.isRunning(plannerPid) && !stopping()) {
-        const ack = read(INFILTRATION_ACK);
-        if (ack?.pid === ns.pid && ack.workerPid === plannerPid && ack.at >= started) break;
-        await ns.sleep(100); await pulse();
-      }
+      await acquireScreen(plannerPid);
       if (stopping()) break;
       if (!idleInfiltrationScreen(doc, companyNames)) break;
       // Work/bribes/income may have finished the goal while we waited for the planner.
@@ -183,10 +210,15 @@ export async function main(ns) {
       await ns.write(INFILTRATION_HISTORY, JSON.stringify(history, null, 2), 'w');
       runs++; ownedModel = null; victory = false;
       await ns.sleep(200);
+      // Claiming the first reward creates the invitation; accept it even on a single-run session.
+      if (options.soa && !stopping()) {
+        await acceptSoaInvitation(ns, doc, () => !stopping(), pulse);
+        if (runs >= limit && idleInfiltrationScreen(doc, companyNames)) await updateSoa();
+      }
     }
   } catch (error) { print(`Infiltration stopped: ${String(error?.message ?? error)}`); }
   finally {
     cleanup();
-    if (session) await ns.write(INFILTRATION_LEASE, JSON.stringify({pid: ns.pid, expires: 0, retryAfter: Date.now() + 300_000}), 'w');
+    if (session) await ns.write(INFILTRATION_LEASE, JSON.stringify({pid: ns.pid, expires: 0, retryAfter: Date.now() + options.cooldown}), 'w');
   }
 }

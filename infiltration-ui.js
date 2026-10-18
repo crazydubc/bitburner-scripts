@@ -77,8 +77,12 @@ export function selectInfiltrationFaction(scope, faction) {
   throw new Error(`Faction ${faction} is not offered by this infiltration`);
 }
 
+export function infiltrationModals(doc) {
+  return [...doc.querySelectorAll('.MuiModal-root')].filter(root =>
+    root.getAttribute('aria-hidden') !== 'true' && !root.querySelector('[inert]'));
+}
 export function idleInfiltrationScreen(doc, companies = []) {
-  if (doc.querySelector('[role="dialog"]')) return false;
+  if (doc.querySelector('[role="dialog"]') || infiltrationModals(doc).length) return false;
   const cities = ['Aevum', 'Sector-12', 'Volhaven', 'Chongqing', 'New Tokyo', 'Ishima'];
   const cityPage = [...doc.querySelectorAll('p')].some(element => cities.includes(text(element))) &&
     ([...doc.querySelectorAll('span[aria-label]')].some(element => companies.includes(element.getAttribute('aria-label'))) ||
@@ -104,7 +108,7 @@ export const infiltrationUiTimeout = 5000;
 export async function openInfiltrationCompany(doc, company, sleep, canContinue = () => true) {
   const checkNavigation = () => {
     if (!canContinue()) throw new Error('Infiltration navigation cancelled');
-    if (doc.querySelector('[role="dialog"]')) throw new Error('Infiltration navigation interrupted by a dialog');
+    if (doc.querySelector('[role="dialog"]') || infiltrationModals(doc).length) throw new Error('Infiltration navigation interrupted by a dialog');
   };
   const waitForControl = async (find, message) => {
     const deadline = Date.now() + infiltrationUiTimeout;

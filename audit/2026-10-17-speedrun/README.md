@@ -12,6 +12,8 @@ The highest-value work is fixing progression stalls and making the early-game la
 
 **Darknet discovery fix:** offline devices return an empty model ID. Both discovery passes and authentication dispatch now skip those unavailable records, and cached empty passwords are reused correctly. See [the darknet lifecycle notes](remaining-fixes.md#darknet-discovery) for the reproduced warning, checks, and worker restart instructions.
 
+**Automatic infiltration / SoA:** autopilot now enables bounded infiltration sessions after coinflip, joins Shadows of Anarchy, and buys WKS first. Other SoA augmentations can fill the Daedalus count within the reserve/spending limits. Pull and restart autopilot; see the [infiltration follow-up](2026-10-18-infiltration-adaptive-go.md#automatic-selection-through-autopilot) for the optional BN1 faction recipient, stop/configuration controls, and live-test limits. The same follow-up documents adaptive Go board selection.
+
 ## Pull the combined testing branch
 
 In the game terminal:
@@ -46,6 +48,10 @@ node audit/2026-10-17-speedrun/checks/remaining-paths.mjs
 node audit/2026-10-17-speedrun/checks/purchase-ram.mjs /path/to/bitburner-src
 node audit/2026-10-17-speedrun/checks/batch-correctness.mjs /path/to/bitburner-src
 node audit/2026-10-17-speedrun/checks/batch-upgrade-compatibility.mjs
+node audit/2026-10-17-speedrun/checks/speedrun-improvements.mjs
+node audit/2026-10-17-speedrun/checks/infiltration.mjs
+node audit/2026-10-17-speedrun/checks/go-adaptation.mjs
+node audit/2026-10-17-speedrun/checks/soa-progression.mjs /path/to/bitburner-src
 ```
 
 The twelve earlier checks passed before the purchase RAM hotfix. That fix adds `purchase-ram.mjs` and reruns `api-errors`, `remaining-paths`, `stock-liquidation` and `resource-purchases`; all five pass. The darknet follow-up passes `darknet-lifecycle` and `resource-purchases`, and the official calculator confirms its 12.55 GB RAM cost is unchanged. The batch-correctness command compares calculations with the pinned engine checkout, and purchase-ram uses its effective cost table and dynamic RAM enforcement/termination functions. The official RAM check and restart/live-test notes are in [remaining-fixes.md](remaining-fixes.md) and [batch-upgrade-hotfix.md](batch-upgrade-hotfix.md). Live BN1 progression, tail layout, batch recovery, corporation behavior and Go win rates still require in-game testing.

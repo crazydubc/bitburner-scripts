@@ -17,8 +17,9 @@ import {
 const argsSchema = [
   ['bn-route', 'current'], // current or unlocks-first; set autopilot.js.config.txt to retain the experiment across resets.
   ['disable-go', false], // Prevent Go auto-launch while comparing an external bot; stop an existing go.js yourself first.
-  ['infiltration', false], // Opt-in bounded UI automation after casino; targets the faction planner or a cash goal.
-  ['infiltration-money-target', 10e9], // Cash goal when no useful reputation target is active; no spending/travel.
+  ['infiltration', true], // Bounded UI automation after casino, including Shadows of Anarchy progression.
+  ['infiltration-money-target', 10e9], // Cash goal when no useful reputation target is active.
+  ['infiltration-faction', ''], // Optional explicit reward recipient in BN1; otherwise use the SF4 faction planner.
 ];
 export function autocomplete(data) { data.flags(argsSchema); return []; }
 
@@ -207,8 +208,9 @@ export async function main(ns) {
     {
       name: 'infiltrate.js',
       shouldRun: () => options.infiltration && !shouldIntelFarm && !reservedPurchase && reqRam(128),
-      args: () => ['--scheduled', '--auto', '--quiet', '--money-target',
-        reservingMoneyForDaedalus ? 100e9 : options['infiltration-money-target']],
+      args: () => ['--scheduled', '--auto', '--quiet', '--soa', '--aug-count-target', bitNodeMults.DaedalusAugsRequirement,
+        '--money-target', reservingMoneyForDaedalus ? 100e9 : options['infiltration-money-target'],
+        ...(options['infiltration-faction'] && !(4 in unlockedSFs) ? ['--faction', options['infiltration-faction']] : [])],
     },
   ];
   const reqRam = (ram) => maxRam >= ram;
