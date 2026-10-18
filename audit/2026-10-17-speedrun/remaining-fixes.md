@@ -30,6 +30,16 @@ Both long and short share buys additionally require `getMoneySources().sinceInst
 
 Existing explicit reserve overrides and the small hash-capacity exception retain their meaning. These checks do not govern manual purchases, ongoing training costs, intentionally unrestricted BN10 sleeve acquisition, or final reset spending. They also do not preempt already-running older scripts; restart affected managers after pulling.
 
+### Stock position regression — 2026-10-18
+
+The user reported `stock.getPurchaseCost` rejecting `"Long"` in `purchase-guard.js`. The shared guard introduced in `c6a62fd` supplied enum member names rather than values; the original quote mock ignored its arguments, so it missed this API-contract error. Both long and short purchases were affected.
+
+The guard now passes `ns.enums.PositionType.Long` / `.Short`, whose values are `"L"` / `"S"`. This matches the pinned official engine's `src/StockMarket/Enums.ts` and strict enum validation in `src/NetscriptFunctions/StockMarket.ts`. This is the only gameplay-code change in this hotfix.
+
+The tightened `api-errors.mjs` and `remaining-paths.mjs` checks failed against the original code and pass with the correction. The former executes the actual `utils.purchase` → `bin/purchase.js` → guard path with an offloaded caller and a home helper. It checks the exact enum for each purchase type, successful buys at the $8b reserve boundary, blocked reserve/budget/unfinished-casino purchases, and zero spending when the purchase API returns zero. Historical casino winnings cannot replace this installation's $10b threshold. `stock-liquidation.mjs` and `resource-purchases.mjs` also pass. These are offline checks with strict Netscript fixtures, not live trading results.
+
+Pull `testing/bn1-go-audit` from home and wait for `Pull complete`. New `bin/purchase.js` executions on home will import the corrected guard. Autopilot can relaunch the crashed trader under its existing startup conditions; if normal trading is intended and it remains stopped, run `stockmaster.js` again. A manual liquidation hold should remain active until the user chooses to resume trading.
+
 ## Scheduling, backdoors and contracts
 
 Autopilot honors `nextRun` for both manager lists, preserves startup staggering, and catches individual launch failures. It keeps one continuous four-hour-payback hacknet manager. The two ineffective duplicate passes (eight-hour and effectively unlimited payback) are removed instead of suddenly activating speculative spending.

@@ -6,6 +6,8 @@ The highest-value work is fixing progression stalls and making the early-game la
 
 **Upgrade hotfix:** `c6a62fd` broke old offloaded calculator callers after a pull. The [batch startup hotfix](batch-upgrade-hotfix.md) restores the old argument contracts and tests the actual old-utility/new-helper combination. Pull again and restart kernel/autopilot from updated home files as described there.
 
+**Stock quote hotfix:** the shared purchase guard also passed `"Long"`/`"Short"` to an API that requires `"L"`/`"S"`. It now uses `ns.enums.PositionType`. Stricter checks reproduce the original failure and verify both purchase paths through the remote caller/home helper, including the $8b reserve and casino gate. See [the stock regression notes](remaining-fixes.md#stock-position-regression--2026-10-18), then pull the same testing branch.
+
 ## Pull the combined testing branch
 
 In the game terminal:

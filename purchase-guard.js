@@ -27,7 +27,8 @@ export function executePurchase(ns, namespace, method, args, policy = {}) {
     throw new Error('Invalid purchase budget/reserve');
   const api = ns[namespace], costMethod = costMethods[namespace]?.[method];
   let cost;
-  if (namespace === 'stock' && costMethod) cost = api[costMethod](...args, method === 'buyStock' ? 'Long' : 'Short');
+  if (namespace === 'stock' && costMethod)
+    cost = api[costMethod](...args, method === 'buyStock' ? ns.enums.PositionType.Long : ns.enums.PositionType.Short);
   else if (namespace === 'sleeve' && method === 'purchaseSleeveAug')
     cost = api[costMethod](args[0]).find(aug => aug.name === args[1])?.cost ?? Infinity;
   else if (namespace === 'cloud' && method === 'purchaseServer') cost = api[costMethod](args[1]);

@@ -90,10 +90,15 @@ quarantine = '{bad'; await assert.rejects(sweep(), /JSON/); assert.equal(attempt
 let cash = 200, reserve = 100, casino = 0, purchases = 0, price = 60;
 const debit = cost => {cash -= cost; purchases++; return true;};
 const purchaseNs = {getHostname: () => 'home', read: () => String(reserve), getServerMoneyAvailable: () => cash,
+  enums: {PositionType: {Long: 'L', Short: 'S'}},
   getMoneySources: () => ({sinceInstall: {casino}}), getFunctionRamCost: () => 1,
   cloud: {getServerCost: () => price, purchaseServer: () => {debit(price); return 'daemon-0';}},
   hacknet: {getPurchaseNodeCost: () => price, purchaseNode: () => {debit(price); return 0;}},
-  stock: {getPurchaseCost: () => price, buyStock: () => {debit(price); return 10;}, buyShort: () => {debit(price); return 10;}},
+  stock: {getPurchaseCost: (symbol, shares, positionType) => {
+    assert.equal(symbol, 'AAA'); assert.equal(shares, 6);
+    assert(['L', 'S'].includes(positionType), 'Stock quotes only accept PositionType enum values');
+    return price;
+  }, buyStock: () => {debit(price); return 10;}, buyShort: () => {debit(price); return 10;}},
   gang: {getEquipmentCost: () => price, purchaseEquipment: () => debit(price)},
 };
 assert.equal(executePurchase(purchaseNs, 'cloud', 'purchaseServer', ['daemon', 2]).spent, 60);
@@ -107,6 +112,7 @@ cash = 1e12; price = 60;
 assert.equal(executePurchase(purchaseNs, 'stock', 'buyStock', ['AAA', 6]).spent, 0, 'Unrelated wealth does not prove casino completion');
 casino = 10e9;
 assert.equal(executePurchase(purchaseNs, 'stock', 'buyStock', ['AAA', 6]).spent, 60);
+assert.equal(executePurchase(purchaseNs, 'stock', 'buyShort', ['AAA', 6]).spent, 60);
 casino = 0;
 assert.equal(executePurchase(purchaseNs, 'stock', 'buyShort', ['AAA', 6]).spent, 0, 'A new installation re-locks share buying');
 cash = 200; reserve = 200;

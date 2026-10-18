@@ -83,4 +83,41 @@ for (const [namespace, name, minimum] of families) {
   h.state.beforeExecute = noop;
   await assert.rejects(utils.purchase(h.ns, 'cloud', 'upgradeServer', ['worker', 16]), /purchase denied/);
 }
-console.log('All API wrappers preserve result types, reject API/serialization/RAM failures, and enforce fresh purchase state');
+
+// Stock quotes require enum VALUES (L/S), not their member names (Long/Short).
+// Exercise the actual remote purchase wrapper, home helper, and receipt transport.
+for (const [method, positionType] of [['buyStock', 'L'], ['buyShort', 'S']]) {
+  let purchases = 0, purchasePrice = 10, casino = 10e9;
+  const api = {
+    getPurchaseCost: (...args) => {
+      assert.deepEqual(args, ['AAA', 6, positionType], 'Match the game’s strict PositionType argument contract');
+      return 60;
+    },
+    [method]: (...args) => {
+      assert.deepEqual(args, ['AAA', 6], 'The enum belongs only in the quote, not the purchase call');
+      purchases++;
+      if (purchasePrice > 0) h.state.cash -= 60;
+      return purchasePrice;
+    },
+  };
+  const h = harness(purchaseMain, 'stock', api);
+  h.ns.enums = {PositionType: {Long: 'L', Short: 'S'}};
+  h.ns.getMoneySources = () => ({sinceInstall: {casino}, sinceStart: {casino: 100e9}});
+  h.state.reserve = 8e9; h.state.cash = 8e9 + 60;
+  const remoteNs = {...h.ns, getHostname: () => 'the-hub',
+    read: () => assert.fail('An offloaded buyer must not read its local reserve')};
+  const buy = policy => utils.purchase(remoteNs, 'stock', method, ['AAA', 6], policy);
+  assert.deepEqual(await buy({budget: 60}), {result: 10, spent: 60, cost: 60});
+  assert.equal(h.state.cash, 8e9, 'Buying at the boundary preserves the full reserve');
+  assert.equal(h.state.launches.at(-1).options.ramOverride, purchaseRam(h.ns, 'stock', method));
+  assert.equal((await buy()).spent, 0, 'Cannot spend the protected reserve');
+  h.state.cash += 60; casino = 10e9 - 1;
+  assert.equal((await buy()).spent, 0, 'Historical winnings cannot unlock this installation’s stock buying');
+  casino = 10e9;
+  assert.equal((await buy({budget: 59})).spent, 0, 'The current quote must also fit the caller’s budget');
+  assert.equal(purchases, 1, 'Rejected buys must never reach the stock purchase API');
+  purchasePrice = 0;
+  assert.deepEqual(await buy(), {result: 0, spent: 0, cost: 60});
+  assert.equal(h.state.cash, 8e9 + 60, 'A failed purchase must not be counted as spending');
+}
+console.log('All API wrappers preserve result types, reject API/serialization/RAM failures, and enforce fresh purchase state; long/short stock quotes use valid enums and preserve reserve/casino gates');
