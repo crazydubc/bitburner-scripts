@@ -75,6 +75,16 @@ Corporation missing-division checks now inspect the actual division list. An abs
 
 The [BN route](bitnode-route.md), intelligence bounds and Go strategy have no further policy changes in this follow-up. Earlier IPOs, different investment thresholds, shorter SF3/SF10 blocks and stronger Go heuristics remain experiments requiring measurements, not unfinished defect fixes.
 
+## Darknet discovery
+
+The user reported `Unknown modelID for smart_tv` with `isOnline: false`, no connection/session, an empty model ID and sentinel lengths/depth. This is the unavailable-server record returned by the pinned engine's `src/NetscriptFunctions/Darknet.ts` using `exampleDarknetServerDetails` from `src/DarkNet/Enums.ts`. A device can disappear between discovery and reading its details.
+
+`startup()` could still dispatch a cached host with that record. An empty cached password also failed `breakIn()`'s truthiness check, falling through to the unknown-model warning and a redundant empty-password authentication attempt. Discovery and dispatch now reject offline/disconnected/empty-model records before selecting a solver; a skipped dispatch releases its work claim but preserves cached progress. Cache lookup uses `!== undefined`, so an empty password remains valid. Reachable known models retain their solvers, and reachable unknown models retain their diagnostic and existing fallback.
+
+`checks/darknet-lifecycle.mjs` executes the real worker's discovery, authentication and solver closures. It reproduced the exact warning before the patch and passes afterward, including both discovery passes continuing past unavailable hosts, later reconnection, cached empty passwords, disappearance while authentication yields, and known/unknown model behavior. The existing resource/stasis checks pass. The pinned official RAM calculator reports 12.55 GB before and after. These are offline checks with mocked device state, not a live darknet session.
+
+Pull the testing branch, stop the existing `darknet.js` workers, and start the updated copy from home with `run darknet.js` (or let autopilot launch it). Workers copy their own script to neighbors; restarting an old remote copy alone can redistribute the previous version. The next augmentation installation also clears old workers normally.
+
 ## Verification
 
 All eleven positive checks listed in [README.md](README.md) pass. New checks cover real API helpers through PID ports, serialization/RAM failures, timed-out children, purchase-time changes, manager scheduling, home backdoors, contract quarantine and late corporation expansion. The batch fixture covers 243 planning combinations, every supported batch type, one/eight-core security capacity and money recovery. A separate comparison executes the pinned engine's growth, chance and percent functions.

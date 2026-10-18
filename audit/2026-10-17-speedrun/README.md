@@ -10,6 +10,8 @@ The highest-value work is fixing progression stalls and making the early-game la
 
 **Purchase RAM hotfix:** the follow-up `Purchase helper exited before reporting its result` error exposed a separate missing 0.05 GB charge for `getHostname()`. Stock helpers now allocate 7.25 GB instead of 7.20 GB. The [RAM regression notes](remaining-fixes.md#purchase-helper-ram-regression) explain why the game killed the helper before its error handler could reply and document checks against the official RAM enforcement code.
 
+**Darknet discovery fix:** offline devices return an empty model ID. Both discovery passes and authentication dispatch now skip those unavailable records, and cached empty passwords are reused correctly. See [the darknet lifecycle notes](remaining-fixes.md#darknet-discovery) for the reproduced warning, checks, and worker restart instructions.
+
 ## Pull the combined testing branch
 
 In the game terminal:
@@ -33,6 +35,7 @@ Combined-branch checks:
 node audit/2026-10-17-speedrun/checks/bn1-guide.mjs
 node audit/2026-10-17-speedrun/checks/stock-liquidation.mjs
 node audit/2026-10-17-speedrun/checks/resource-purchases.mjs
+node audit/2026-10-17-speedrun/checks/darknet-lifecycle.mjs
 node audit/2026-10-17-speedrun/checks/rpc-reserve.mjs
 node audit/2026-10-17-speedrun/checks/go-lifecycle.mjs
 node audit/2026-10-17-speedrun/checks/corporation-lifecycle.mjs
@@ -45,7 +48,7 @@ node audit/2026-10-17-speedrun/checks/batch-correctness.mjs /path/to/bitburner-s
 node audit/2026-10-17-speedrun/checks/batch-upgrade-compatibility.mjs
 ```
 
-The twelve earlier checks passed before the purchase RAM hotfix. That fix adds `purchase-ram.mjs` and reruns `api-errors`, `remaining-paths`, `stock-liquidation` and `resource-purchases`; all five pass. The batch-correctness command compares calculations with the pinned engine checkout, and purchase-ram uses its effective cost table and dynamic RAM enforcement/termination functions. The official RAM check and restart/live-test notes are in [remaining-fixes.md](remaining-fixes.md) and [batch-upgrade-hotfix.md](batch-upgrade-hotfix.md). Live BN1 progression, tail layout, batch recovery, corporation behavior and Go win rates still require in-game testing.
+The twelve earlier checks passed before the purchase RAM hotfix. That fix adds `purchase-ram.mjs` and reruns `api-errors`, `remaining-paths`, `stock-liquidation` and `resource-purchases`; all five pass. The darknet follow-up passes `darknet-lifecycle` and `resource-purchases`, and the official calculator confirms its 12.55 GB RAM cost is unchanged. The batch-correctness command compares calculations with the pinned engine checkout, and purchase-ram uses its effective cost table and dynamic RAM enforcement/termination functions. The official RAM check and restart/live-test notes are in [remaining-fixes.md](remaining-fixes.md) and [batch-upgrade-hotfix.md](batch-upgrade-hotfix.md). Live BN1 progression, tail layout, batch recovery, corporation behavior and Go win rates still require in-game testing.
 
 ## Implementation follow-ups
 

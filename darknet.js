@@ -1353,7 +1353,7 @@ export async function main(ns) {
       const details = ns.dnet.getServerDetails(server)
       if (ns.args.includes("lab") && details.modelId !== "(The Labyrinth)") continue
       if (labComplete && details.modelId === "(The Labyrinth)") continue
-      if (!details.isConnectedToCurrentServer) continue
+      if (!details.isOnline || !details.isConnectedToCurrentServer || !details.modelId) continue
       let result
       if (!details.hasSession) {
         result = await breakIn(ns, server, details)
@@ -1425,6 +1425,7 @@ export async function main(ns) {
     for (const serverRaw of servers) {
       const server = serverRaw.toString()
       const firstDetails = ns.dnet.getServerDetails(server)
+      if (!firstDetails.isOnline || !firstDetails.isConnectedToCurrentServer || !firstDetails.modelId) continue
       if (!firstDetails.hasSession) {
         if (easyHacks.includes(firstDetails.modelId)) await breakIn(ns, server, firstDetails)
         else if (complete[server] !== undefined) await breakIn(ns, server, firstDetails)
@@ -1552,8 +1553,13 @@ export async function main(ns) {
 * @param { string } ser  r
   **/
   async function breakIn(ns, server, details) {
+    // A device can disappear after probe(); the API then returns an empty offline record.
+    if (!details.isOnline || !details.isConnectedToCurrentServer || !details.modelId) {
+      updateWorkingOn(ns, server, "remove");
+      return { success: false };
+    }
     if (server === "darkweb") return { success: true }
-    if (complete[server]) {
+    if (complete[server] !== undefined) {
       let result = await workOnServer(ns, server, complete[server], 0, details) || {}
       if (result.success || !serverCheck(ns, server, result)) return result
       else delete complete[server]
