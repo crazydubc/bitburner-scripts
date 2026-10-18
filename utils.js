@@ -54,8 +54,14 @@ export async function getGoSnapshot(ns) {
   return result;
 }
 export async function recordGoResult(ns, result) {
-  if (await runScriptLocal(ns, 'bin/go-stats.js', false, [JSON.stringify(result)]) !== true)
-    ns.print('WARNING: Could not save Go results on home.');
+  const saved = await runScriptLocal(ns, 'bin/go-stats.js', false, [JSON.stringify(result)]) === true;
+  if (!saved) ns.print('WARNING: Could not save Go results on home.');
+  return saved;
+}
+export async function getGoResults(ns) {
+  const result = await runScriptLocal(ns, 'bin/go-stats.js', false, ['read']);
+  if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error(`Go results unavailable: ${String(result)}`);
+  return result;
 }
 export async function getControlledENodes(ns) { return await runScript(ns, "bin/getControlledEmptyNodes.js", false, []) }
 export async function goMove(ns, x, y) { return await runScript(ns, "bin/makeMove.js", false, [x, y]) }
@@ -152,6 +158,8 @@ export const remoteScriptDependencies = [
   "hacking-formulas.js",
   "purchase-guard.js",
   "speedrun-policy.js",
+  "go-policy.js",
+  "infiltration-policy.js",
 ];
 
 /** Return the complete shared runtime bundle copied before launching a script away from home. */

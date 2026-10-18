@@ -12,9 +12,10 @@
 
 import {
   getConfiguration, log, getErrorInfo, getActiveSourceFiles, whichServerIsRunning,
-  getBoard, getGoSnapshot, getReset, recordGoResult, goMove, goCheatChance, play2Moves,
+  getBoard, getGoSnapshot, getReset, recordGoResult, getGoResults, goMove, goCheatChance, play2Moves,
   destroyND, disableLogs
 } from './utils.js'
+import { goCohort, selectGoBoard } from './go-policy.js';
 
 const argsSchema = [
   ['cheats', true], // (Now true by default - but still an option for backwards compatibility) This is only possible if you have BN14.2
@@ -23,7 +24,8 @@ const argsSchema = [
   ['logtime', false], // Logs time time it takes for each player to take their move
   ['runOnce', false], // Will only play one game if enabled
   ['silent', false], // (Obsolete) This script used to automatically tail. Now if you want to do this, call with --tail like normal.
-  ['board-size', 13], // Normal opponents: 5, 7, 9, or 13. Takes effect after the current game completes.
+  ['board-size', 'auto'], // Per-opponent adaptation, or fixed 5/7/9/13. Never abandons a game.
+  ['board-exploration', true], // Bounded smaller-board trials only outside winning streaks.
   ['opponent', 'random'], // A faction name, "hidden", or "random". Never abandons the current board.
   ['hidden-opponent', true], // Include the hidden 19x19 opponent in random selection after installing The Red Pill.
 ];
@@ -55,8 +57,9 @@ export async function main(ns) {
   let logtime = false;
   let runOnce = true;
   let silent = false;
-  let boardSize = 13, requestedOpponent = 'random', includeHidden = true;
+  let boardSize = 'auto', requestedOpponent = 'random', includeHidden = true, exploreBoards = true;
   let gameStartedAt = Date.now(), resumedGame = true;
+  let gameCohort, startWins, gameTrial = false, statisticsHealthy = true;
   let gameRecorded = true;
   let currentValidMovesTurn = -1; //The turn count that the currentValidMoves is valid for
   let turn = 0;
@@ -112,12 +115,13 @@ export async function main(ns) {
 
     logtime = runOptions.logtime;
     runOnce = runOptions.runOnce;
-    boardSize = Number(runOptions['board-size'] ?? 13);
+    boardSize = String(runOptions['board-size'] ?? 'auto');
+    exploreBoards = runOptions['board-exploration'] ?? true;
     requestedOpponent = runOptions.opponent ?? 'random';
     includeHidden = runOptions['hidden-opponent'] ?? true;
-    if (![5, 7, 9, 13].includes(boardSize) ||
+    if (!['auto', '5', '7', '9', '13'].includes(boardSize) ||
       !['random', 'hidden', HIDDEN_GO_OPPONENT, ...GO_OPPONENTS].includes(requestedOpponent)) {
-      log(ns, 'ERROR: Use --board-size 5/7/9/13 and --opponent random, hidden, or a faction name.', true);
+      log(ns, 'ERROR: Use --board-size auto/5/7/9/13 and --opponent random, hidden, or a faction name.', true);
       return;
     }
 
@@ -145,7 +149,8 @@ export async function main(ns) {
   async function playGo(ns) {
     const startBoard = await getBoard(ns)
     gameStartedAt = Date.now();
-    resumedGame = startBoard.some(column => /[XO]/.test(column));
+    resumedGame = true; // Only a board this process reset has a trustworthy start time.
+    startWins = ns.go.analysis?.getStats?.()[ns.go.getOpponent()]?.wins;
     let inProgress = false
     turn = 0
     START = performance.now()
@@ -380,20 +385,35 @@ export async function main(ns) {
       if (!gameRecorded) try {
         gameRecorded = true;
         const score = ns.go.getGameState();
-        await recordGoResult(ns, {opponent: ns.go.getOpponent(), size: (await getBoard(ns)).length,
+        const wins = ns.go.analysis?.getStats?.()[ns.go.getOpponent()]?.wins;
+        const currentCohort = goCohort(cheats, cheatChanceThreshold, score.bonusCycles > 0);
+        const saved = await recordGoResult(ns, {opponent: ns.go.getOpponent(), size: (await getBoard(ns)).length,
           blackScore: score.blackScore, whiteScore: score.whiteScore,
-          durationMs: Date.now() - gameStartedAt, resumed: resumedGame});
-      } catch (error) { log(ns, `WARNING: Go timing unavailable: ${String(error)}`); }
+          won: Number.isFinite(wins) && Number.isFinite(startWins) ? wins > startWins : score.blackScore >= score.whiteScore,
+          durationMs: Date.now() - gameStartedAt, resumed: resumedGame || currentCohort !== gameCohort,
+          cohort: gameCohort, trial: gameTrial});
+        statisticsHealthy = saved !== false;
+      } catch (error) { statisticsHealthy = false; log(ns, `WARNING: Go timing unavailable: ${String(error)}`); }
       if (runOnce) ns.exit()
       const next = selectGoOpponent(requestedOpponent, includeHidden, await getReset(ns));
+      const cohort = goCohort(cheats, cheatChanceThreshold, ns.go.getGameState?.().bonusCycles > 0);
+      let stats = {};
+      if (boardSize === 'auto') try { stats = await getGoResults(ns); }
+      catch (error) { log(ns, `WARNING: Adaptive Go statistics unavailable: ${String(error)}`); }
+      const choice = selectGoBoard({opponent: next, requested: boardSize, stats, cohort,
+        streak: ns.go.analysis?.getStats?.()[next]?.winStreak ?? 0, explore: exploreBoards && statisticsHealthy});
       // The engine supplies the fixed 19x19 Bitverse board for the hidden opponent.
-      ns.go.resetBoardState(next, next === HIDDEN_GO_OPPONENT ? 19 : boardSize);
+      ns.go.resetBoardState(next, choice.size);
       gameStartedAt = Date.now();
+      gameCohort = cohort;
+      gameTrial = choice.trial === true;
+      startWins = ns.go.analysis?.getStats?.()[next]?.wins ?? 0;
       resumedGame = false;
       gameRecorded = false;
       turn = 0
       currentValidMovesTurn = -1;
       ns.clearLog()
+      log(ns, `${next}: ${choice.size}x${choice.size} — ${choice.reason}`);
     }
   }
   /** @param {NS} ns

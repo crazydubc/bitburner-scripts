@@ -17,6 +17,8 @@ import {
 const argsSchema = [
   ['bn-route', 'current'], // current or unlocks-first; set autopilot.js.config.txt to retain the experiment across resets.
   ['disable-go', false], // Prevent Go auto-launch while comparing an external bot; stop an existing go.js yourself first.
+  ['infiltration', false], // Opt-in bounded UI automation after casino; targets the faction planner or a cash goal.
+  ['infiltration-money-target', 10e9], // Cash goal when no useful reputation target is active; no spending/travel.
 ];
 export function autocomplete(data) { data.flags(argsSchema); return []; }
 
@@ -38,6 +40,10 @@ export async function main(ns) {
   if (!options) return;
   if (!['current', 'unlocks-first'].includes(options['bn-route'])) {
     ns.tprint('ERROR: --bn-route must be current or unlocks-first.');
+    return;
+  }
+  if (!Number.isFinite(options['infiltration-money-target']) || options['infiltration-money-target'] < 0) {
+    ns.tprint('ERROR: --infiltration-money-target must be a finite nonnegative cash goal.');
     return;
   }
   const route = options['bn-route'] === 'unlocks-first' ? EARLY_UNLOCK_ROUTE : BN_ROUTE;
@@ -122,10 +128,11 @@ export async function main(ns) {
   function getFactionWorkerArgs() {
     if (shouldIntelFarm)
       return ["--fast-crimes-only", "--prioritize-invites", "--all-company-invites", "--intel-farm-preparation"];
-    return 2 in unlockedSFs && !playerInGang
+    const args = 2 in unlockedSFs && !playerInGang
       ? ["--fast-crimes-only", "--get-invited-to-every-faction", "--crime-focus",
         "--training-stat-per-multi-threshold", 200, "--prioritize-invites"]
       : ["--fast-crimes-only", "--get-invited-to-every-faction"];
+    return options.infiltration ? [...args, '--infiltration'] : args;
   }
 
   //in order by importance!
@@ -197,6 +204,12 @@ export async function main(ns) {
       args: () => []
     },
     { name: "stats.js", shouldRun: () => reqRam(1000), args: () => [] }, // Adds stats not usually in the HUD (nice to have)
+    {
+      name: 'infiltrate.js',
+      shouldRun: () => options.infiltration && !shouldIntelFarm && !reservedPurchase && reqRam(128),
+      args: () => ['--scheduled', '--auto', '--quiet', '--money-target',
+        reservingMoneyForDaedalus ? 100e9 : options['infiltration-money-target']],
+    },
   ];
   const reqRam = (ram) => maxRam >= ram;
   const periodicScripts = [
@@ -403,7 +416,7 @@ export async function main(ns) {
         const serverRunning = await isScriptRunning(ns, script.name, runningScripts);
         if (script.shouldRun() && !serverRunning) {
           let pid;
-          if (script.name == "darknet.js")
+          if (['darknet.js', 'infiltrate.js'].includes(script.name))
             pid = ns.exec(script.name, 'home', { threads: 1, temporary: true, preventDuplicates: true }, ...script.args());
           else
             pid = await runScriptSomewhere(ns, script.name, true, script.args());

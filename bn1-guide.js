@@ -80,6 +80,7 @@ export function getBn1FactionRoadmap(s) {
     'How: root/backdoor the server using Tasks/crack-host.js and scan.js, accept its invitation in Factions, then choose Hacking Contracts. Focus when practical; check the displayed reputation gain when comparing work types.',
     'Early parallel setup after coinflip: buy DarkscapeNavigator.exe for $50m through TOR. The $30m option is Chongqing > Shadowed Walkway and includes TOR. Autopilot starts darknet.js after purchase; watch Active Scripts for its workers.',
     darknetWorkTip,
+    'Optional after coinflip: run infiltrate.js --single --faction "CyberSec" from the Terminal or City screen after joining CyberSec (substitute your target faction). It chooses an accessible local company and trades one reward. Uses the game UI; do not navigate during the run. Run infiltrate.js --stop to stop. Without SF4, compare current reputation in Factions yourself.',
     ...factionSteps,
     `Early side stop: Sector-12. Visit with $15m cash and accept its invitation; compare Hacking Contracts/Field Work for ${targetsFor('Sector-12')}. CashRoot speeds up future restarts.`,
     'Keep Sector-12 available until you have CashRoot: do not join Chongqing, New Tokyo, Ishima, or Volhaven city factions first. Visiting those cities is fine; if already locked out this installation, return after a reset.',

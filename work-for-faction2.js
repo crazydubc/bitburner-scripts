@@ -169,6 +169,7 @@ export async function main(ns) {
   const crimeFocused = ns.args.includes("--crime-focus");
   const fastCrimesOnly = ns.args.includes("--fast-crimes-only");
   const prioritizeInvites = ns.args.includes("--prioritize-invites");
+  const infiltrationEnabled = ns.args.includes('--infiltration');
   let collectAllCompanyInvites = ns.args.includes("--all-company-invites");
   const trainingStatPerMultiThreshold = getNumericFlag(ns.args, "--training-stat-per-multi-threshold", 100);
   const desiredStatOverrides = [
@@ -808,8 +809,29 @@ false, "info");
 
   let nextPlan = 0;
   let nextProgressCheck = 0;
+  async function publishInfiltrationTarget() {
+    if (!infiltrationEnabled) return;
+    const plan = activePlan && ['faction-rep', 'donation-unlock'].includes(activePlan.kind) ? {
+      kind: activePlan.kind, faction: activePlan.faction, targetRep: activePlan.targetRep,
+      repRate: repRateCache[activePlan.faction] ?? 0, updatedAt: Date.now(),
+    } : {kind: 'inactive'};
+    try {
+      await runScriptLocal(ns, 'bin/infiltration-control.js', false, ['target', JSON.stringify({...plan,
+        pid: ns.pid, updatedAt: Date.now(), lastAugReset: resetInfo.lastAugReset, lastNodeReset: resetInfo.lastNodeReset})]);
+    } catch { /* Optional assistance must not interrupt ordinary faction work. */ }
+  }
+  async function infiltrationOwnsScreen() {
+    if (!infiltrationEnabled) return false;
+    try { return await runScriptLocal(ns, 'bin/infiltration-control.js', false, ['lease', ns.pid]) === true; }
+    catch { return false; } // The runner waits for our acknowledgement before navigating.
+  }
   while (true) {
     try {
+      // A live, short lease prevents focus/travel from cancelling the bounded UI run.
+      if (await infiltrationOwnsScreen()) {
+        await ns.sleep(1000);
+        continue;
+      }
       const now = Date.now();
       if (activePlan && ["faction-rep", "donation-unlock"].includes(activePlan.kind) && now >= nextProgressCheck) {
         nextProgressCheck = now + PROGRESS_CHECK_INTERVAL;
@@ -825,6 +847,7 @@ false, "info");
         nextPlan = Date.now() + requestedReplanDelay;
         nextProgressCheck = Date.now() + PROGRESS_CHECK_INTERVAL;
       }
+      await publishInfiltrationTarget();
     } catch (error) {
       log(ns, `WARNING: work-for-faction2.js planner failed; retrying.\n${getErrorInfo(error)}`, false, "warning");
       nextPlan = Date.now() + 10_000;
