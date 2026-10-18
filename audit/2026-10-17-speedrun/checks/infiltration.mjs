@@ -25,63 +25,76 @@ for (const changed of [{lastAugReset:101},{lastNodeReset:51},{updatedAt:1},{fact
 
 const defaults = Object.fromEntries([['auto',false],['single',false],['stop',false],['status',false],['quiet',true],['company',''],['faction','CyberSec'],['target-rep',0],['money-target',20e9],['time',120000],['max-runs',3],['min-demand',0.8],['scheduled',false]]);
 let source=readFileSync(new URL('../../../infiltrate.js',import.meta.url),'utf8')
-  .replace("import { singRun, runScriptLocal } from './utils.js';",'const singRun=(ns,fn,...args)=>ns.sing(fn,...args); const runScriptLocal=async ns=>[ns.infiltration.getInfiltration("Easy")];');
+  .replace("import { singRun, runScriptLocal } from './utils.js';",'const singRun=(ns,fn,...args)=>ns.sing(fn,...args); const runScriptLocal=async(ns,script,ignore,args)=>ns.infiltration.getPossibleLocations().filter(x=>x.city===args[0]).map(x=>ns.infiltration.getInfiltration(x.name));');
 for (const name of ['infiltration-policy','infiltration-ui']) source=source.replace(`'./${name}.js'`,JSON.stringify(new URL(`../../../${name}.js`,import.meta.url).href));
 const {main}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 
 // A minimal DOM/React adapter executes the actual runner and its real UI navigation functions.
 function fixture(options={}) {
-  let screen='terminal', model, displayStage, selected='NiteSec', pendingFaction, now=100000;
+  let screen=options.initialScreen??'terminal', model, displayStage, selected='NiteSec', pendingFaction, now=100000;
   let starts=0, successes=0, claims=0, cancels=0, nativeKeys=0, demand=100, sleeps=0;
+  let cityClicks=0, companyClicks=0, entryClicks=0, pendingScreen, renderAt, companyRenderedAt=now, dialog=false;
+  const companyName=options.companyName??'Easy';
+  const navigate=(next,delay=0)=>{
+    if(delay){pendingScreen=next;renderAt=now+delay;}
+    else {screen=next;if(next==='company')companyRenderedAt=now;}
+  };
   const files=new Map(), messages=[], exit=[];
   const p={...player,factions:[...player.factions]};
   const rep={CyberSec:0,NiteSec:0};
   const el=(textContent,click) => ({textContent,disabled:false,getAttribute:()=>null,...(click?{__reactProps$fixture:{onClick:click}}:{})});
-  const city=el('City',()=>{screen='city';});
-  const company=el('Easy',()=>{screen='company';}); company.getAttribute=()=> 'Easy';
+  const city=el('City',()=>{cityClicks++;navigate('city',options.cityDelay);});
+  const company=el(companyName,()=>{companyClicks++;navigate('company',options.companyDelay);}); company.getAttribute=()=>companyName;
   const start=el('Start',()=>{starts++;model.stage={};displayStage=model.stage;screen='game';});
   const open=el('Infiltrate Company',()=>{
-    screen='intro'; model={location:{name:'Easy'},level:1,maxLevel:3,startingDifficulty:1,stage:{},results:'',
+    entryClicks++;navigate('intro',options.introDelay); model={location:{name:companyName},level:1,maxLevel:3,startingDifficulty:1,stage:{},results:'',
       onFailure(){this.results+='✗';},
       onSuccess(){assert.equal(this,model);successes++;this.results+='✓';this.stage={};this.level++;
         if(this.level>3) screen='victory'; else screen='countdown';displayStage=this.stage;},
       cancel(){cancels++;screen='city';},
     };
   });
+  Object.defineProperty(open,'disabled',{get:()=>now<companyRenderedAt+(options.controlDelay??0)});
   const sell=el('Sell for $1b',()=>{claims++;p.money+=1e9;screen='city';});
   const trade=el('Trade for 1000 reputation',()=>{claims++;rep[selected]+=1000;screen='city';});
   const combo={__reactFiber$fixture:{memoizedProps:{value:selected,children:[false,[{props:{value:'CyberSec'}},{props:{value:'NiteSec'}}]],onChange:event=>{pendingFaction=event.target.value;}}}};
   const scope={querySelectorAll:selector=>selector==='li'?[el(`Market demand: ${demand}%`)]:selector==='button'?(screen==='intro'?[start]:[trade,sell]):[],
     querySelector:selector=>selector==='[role="combobox"]'?combo:null};
   function headings() {
-    if(screen==='company')return [el('Easy')];
-    const titles={intro:'Infiltrating Easy',game:options.gameTitle??'Type it backward',countdown:'Get Ready!',victory:'Infiltration successful!'};
+    if(screen==='company') {
+      const heading=el(options.animatedHeading?'N?tl!nk T@chn0logies':options.wrongCompany??companyName);
+      heading.__reactFiber$fixture={memoizedProps:{},return:{memoizedProps:{location:{name:options.wrongCompany??companyName}}}};
+      return [heading];
+    }
+    const titles={intro:`Infiltrating ${companyName}`,game:options.gameTitle??'Type it backward',countdown:'Get Ready!',victory:'Infiltration successful!'};
     if(!titles[screen])return [];
     const h=el(titles[screen]);h.closest=()=>scope;
     h.__reactFiber$fixture={memoizedProps:{},return:{memoizedProps:{state:model,stage:displayStage}}};
     return [h];
   }
-  const doc={getElementById:()=>screen==='terminal'?{}:null,querySelector:()=>null,querySelectorAll:selector=>{
+  const doc={getElementById:()=>screen==='terminal'?{}:null,querySelector:selector=>selector==='[role="dialog"]' && dialog?{}:null,querySelectorAll:selector=>{
     if(selector==='h4' || selector==='h4, h5')return headings();
     if(selector==='p')return screen==='city'?[el('Aevum')]:[];
-    if(selector==='[role="button"]')return [city];
-    if(selector==='span[aria-label]')return screen==='city'?[company]:[];
-    if(selector==='button')return screen==='company'?[open,el('Return to World')]:[];
+    if(selector==='[role="button"]')return options.hideCity?[]:[city];
+    if(selector==='span[aria-label]')return screen==='city' && !options.listCity?[company]:[];
+    if(selector==='button')return screen==='company'?[open,el('Return to World')]:screen==='city' && options.listCity?[company]:[];
     throw Error('Unexpected unscoped selector '+selector);
   }};
   const ns={pid:17,flags:()=>({...defaults,...options}),getHostname:()=> 'home',getResetInfo:()=>reset,isRunning:()=>true,
     read:file=>files.get(file)??'',write:async(file,value)=>{files.set(file,value);},
     getMoneySources:()=>({sinceInstall:{casino:10e9}}),getPlayer:()=>({...p}),getTotalScriptIncome:()=>[0,0],
-    infiltration:{getPossibleLocations:()=>[{name:'Easy',city:'Aevum'}],getInfiltration:()=>location('Easy')},
+    infiltration:{getPossibleLocations:()=>[{name:companyName,city:'Aevum'}],getInfiltration:()=>location(companyName)},
     print:message=>messages.push(message),tprint:message=>messages.push(message),atExit:fn=>exit.push(fn),
     sing:async(fn,faction)=>fn==='getCurrentWork'?{type:'FACTION',factionName:'CyberSec'}:rep[faction],
     sleep:async ms=>{now+=ms;if(++sleeps>10000)throw Error('Unbounded runner');
+      if(pendingScreen && now>=renderAt){navigate(pendingScreen);pendingScreen=null;}
       if(pendingFaction){selected=pendingFaction;pendingFaction=null;combo.__reactFiber$fixture.memoizedProps.value=selected;}
       if(screen==='countdown'){model.stage={};displayStage=model.stage;screen='game';}
       await f.onSleep?.();},
   };
   const f={ns,doc,files,messages,rep,get model(){return model;},get screen(){return screen;},set screen(v){screen=v;},
-    set demand(v){demand=v;},get now(){return now;},get counts(){return {starts,successes,claims,cancels,nativeKeys};},
+    set demand(v){demand=v;},set dialog(v){dialog=v;},get now(){return now;},
+    get counts(){return {starts,successes,claims,cancels,nativeKeys,cityClicks,companyClicks,entryClicks};},
     async run(){const saved=Date.now;Date.now=()=>now;globalThis.window={document:doc};try{await main(ns);}finally{exit.forEach(fn=>fn());Date.now=saved;delete globalThis.window;}},
   };
   return f;
@@ -98,6 +111,42 @@ function fixture(options={}) {
 }
 {
   const f=fixture({faction:''});await f.run();assert.equal(f.counts.claims,1);assert.equal(f.rep.CyberSec,0);
+}
+// Navigation must wait for React, accept backdoor text animation, and click each transition once.
+for(const listCity of [false,true]) {
+  const f=fixture({companyName:'NetLink Technologies',company:'NetLink Technologies',listCity,
+    cityDelay:850,companyDelay:1200,controlDelay:350,introDelay:2500,animatedHeading:true});
+  await f.run();assert.equal(f.counts.claims,1);assert.equal(f.rep.CyberSec,1000);
+  assert.equal(f.counts.cityClicks,1);assert.equal(f.counts.companyClicks,1);assert.equal(f.counts.entryClicks,1);
+}
+{
+  const f=fixture({initialScreen:'company',hideCity:true,animatedHeading:true});
+  await f.run();assert.equal(f.counts.claims,1);assert.equal(f.counts.cityClicks,0);assert.equal(f.counts.companyClicks,0);
+}
+for(const options of [{cityDelay:6000},{companyDelay:6000},{wrongCompany:'Other Company',animatedHeading:true},{controlDelay:6000}]) {
+  const f=fixture(options);await f.run();assert.equal(f.counts.entryClicks,0);assert.equal(f.counts.starts,0);
+  assert.ok(f.messages.some(m=>m.includes('timed out after 5s')));assert.ok(f.now<=105000);
+  assert.equal(JSON.parse(f.files.get(INFILTRATION_LEASE)).expires,0);
+}
+for(const options of [{cityDelay:1000},{companyDelay:1000}]) {
+  const f=fixture(options);f.onSleep=()=>{globalThis.window.__bitburnerScriptsInfiltration.stop=true;};
+  await f.run();assert.equal(f.counts.entryClicks,0);assert.ok(f.messages.some(m=>m.includes('navigation cancelled')));
+}
+{
+  const f=fixture({cityDelay:4900,companyDelay:4900,time:9500});await f.run();assert.equal(f.counts.companyClicks,1);
+  assert.equal(f.counts.starts,0);assert.equal(f.now,109500);
+  assert.ok(f.messages.some(m=>m.includes('navigation cancelled')));
+}
+{
+  const f=fixture({companyDelay:1000});f.onSleep=()=>{f.dialog=true;};
+  await f.run();assert.equal(f.counts.entryClicks,0);assert.ok(f.messages.some(m=>m.includes('interrupted by a dialog')));
+}
+{
+  const f=fixture({companyName:'NetLink Technologies',faction:'NetLink Technologies'});
+  await f.run();assert.equal(f.counts.companyClicks,0);
+  assert.ok(f.messages.some(m=>m.includes('--company "NetLink Technologies"') && m.includes('reputation recipient')));
+  const g=fixture({companyName:'NetLink Technologies',company:'NetLink Technologies',faction:''}),get=g.ns.getPlayer;
+  g.ns.getPlayer=()=>({...get(),factions:[],jobs:{}});await g.run();assert.equal(g.counts.claims,1,'Cash infiltration needs no faction or job');
 }
 {
   const f=fixture();f.demand=70;await f.run();assert.equal(f.counts.starts,0);assert.ok(f.counts.cancels>0);
@@ -191,4 +240,4 @@ for(const gameTitle of ['Attack after the sentinel drops his guard and is distra
   assert.equal(await probe(true,async()=>true,{pid:99})(),true);
   assert.equal(await probe(false,()=>assert.fail('Disabled integration must not call a helper'),{pid:99})(),false);
 }
-console.log('Infiltration selection, UI scope, once-per-stage advancement, reward faction, bounded repeat, cancellation, casino gate, target, and lease checks passed.');
+console.log('Infiltration selection, delayed/animated company UI, bounded navigation, UI scope, once-per-stage advancement, reward faction, bounded repeat, cancellation, casino gate, target, and lease checks passed.');

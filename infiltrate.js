@@ -5,7 +5,8 @@ import { singRun, runScriptLocal } from './utils.js';
 import { chooseInfiltration, freshInfiltrationTarget, infiltrationAlternativeIncome, INFILTRATION_TARGET, INFILTRATION_LEASE,
   INFILTRATION_HISTORY, INFILTRATION_ACK } from './infiltration-policy.js';
 import { infiltrationView, infiltrationDemand, infiltrationButton, clickInfiltrationElement,
-  finishInfiltrationStage, selectInfiltrationFaction, idleInfiltrationScreen, openInfiltrationCompany } from './infiltration-ui.js';
+  finishInfiltrationStage, selectInfiltrationFaction, idleInfiltrationScreen, openInfiltrationCompany,
+  infiltrationUiTimeout } from './infiltration-ui.js';
 
 const argsSchema = [['auto', false], ['single', false], ['stop', false], ['status', false], ['quiet', false],
   ['company', ''], ['faction', ''], ['target-rep', 0], ['money-target', 10e9], ['time', 120_000],
@@ -89,7 +90,12 @@ export async function main(ns) {
       }
       if (!freshInfiltrationTarget(target, reset, player.factions)) target = null;
       if (options.faction) {
-        if (!player.factions.includes(options.faction)) throw new Error(`Join ${options.faction} before trading infiltration data`);
+        if (!player.factions.includes(options.faction)) {
+          const companyHint = companyNames.includes(options.faction)
+            ? ` To infiltrate that company, use --company ${JSON.stringify(options.faction)} and a joined --faction for the reputation reward.` : '';
+          throw new Error(`Reward faction ${JSON.stringify(options.faction)} is not in your joined factions. ` +
+            `--faction names the reputation recipient; company entry does not require faction membership.${companyHint}`);
+        }
         target = {kind: 'faction-rep', faction: options.faction, targetRep: options['target-rep'] || Infinity, repRate: 0};
       }
       if (target && hasSingularity) {
@@ -126,7 +132,7 @@ export async function main(ns) {
       if (!choice || stopping()) break;
       await openInfiltrationCompany(doc, choice.company, ms => ns.sleep(ms), () => !stopping());
       let view;
-      const appearedBy = Math.min(deadline, Date.now() + 2000);
+      const appearedBy = Math.min(deadline, Date.now() + infiltrationUiTimeout);
       while (!stopping() && Date.now() < appearedBy && !(view = infiltrationView(doc, choice.company))) await ns.sleep(50);
       if (view?.kind !== 'intro' || !view.scope) throw new Error('Expected infiltration introduction did not appear');
       ownedModel = view.model; victory = false;

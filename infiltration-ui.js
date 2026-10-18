@@ -10,10 +10,13 @@ export function reactProps(element) {
   const key = Object.keys(element ?? {}).find(key => key.startsWith('__reactProps$'));
   return key ? element[key] : null;
 }
+function clickable(element) {
+  return !!element && !element.disabled && element.getAttribute?.('aria-disabled') !== 'true' &&
+    typeof reactProps(element)?.onClick === 'function';
+}
 export function clickInfiltrationElement(element) {
-  const handler = reactProps(element)?.onClick;
-  if (!element || element.disabled || element.getAttribute?.('aria-disabled') === 'true' || typeof handler !== 'function')
-    throw new Error('Expected infiltration control is unavailable');
+  if (!clickable(element)) throw new Error('Expected infiltration control is unavailable');
+  const handler = reactProps(element).onClick;
   handler({isTrusted: true, target: element, currentTarget: element, preventDefault() {}, stopPropagation() {}});
 }
 export function infiltrationButton(scope, label, prefix = false) {
@@ -83,21 +86,50 @@ export function idleInfiltrationScreen(doc, companies = []) {
   return !!doc.getElementById('terminal') || !!infiltrationButton(doc, 'Return to World') || cityPage;
 }
 
+function companyPageVisible(doc, company) {
+  return [...doc.querySelectorAll('h4')].some(heading => {
+    if (text(heading) === company) return true;
+    // Backdoored company headings use CorruptibleText. Read the location identity
+    // from this heading's React ancestors instead of matching its animated letters.
+    let fiber = heading[Object.keys(heading).find(key => key.startsWith('__reactFiber$'))];
+    for (let depth = 0; fiber && depth < 20; depth++, fiber = fiber.return) {
+      const location = fiber.memoizedProps?.location;
+      if (typeof location?.name === 'string') return location.name === company;
+    }
+    return false;
+  });
+}
+
+export const infiltrationUiTimeout = 5000;
 export async function openInfiltrationCompany(doc, company, sleep, canContinue = () => true) {
-  if (![...doc.querySelectorAll('h4')].some(heading => text(heading) === company)) {
+  const checkNavigation = () => {
+    if (!canContinue()) throw new Error('Infiltration navigation cancelled');
+    if (doc.querySelector('[role="dialog"]')) throw new Error('Infiltration navigation interrupted by a dialog');
+  };
+  const waitForControl = async (find, message) => {
+    const deadline = Date.now() + infiltrationUiTimeout;
+    while (true) {
+      checkNavigation();
+      const element = find();
+      if (clickable(element)) return element;
+      if (Date.now() >= deadline) throw new Error(`${message} (timed out after ${infiltrationUiTimeout / 1000}s)`);
+      await sleep(50);
+    }
+  };
+  checkNavigation();
+  if (!companyPageVisible(doc, company)) {
     const city = [...doc.querySelectorAll('[role="button"]')].find(element => text(element).replace('🏙', '').trim() === 'City');
     if (!city) throw new Error('Open the City menu before running infiltration');
     clickInfiltrationElement(city);
-    await sleep(200);
-    if (!canContinue()) throw new Error('Infiltration navigation cancelled');
-    const location = [...doc.querySelectorAll('span[aria-label]')].find(element => element.getAttribute('aria-label') === company) ??
-      infiltrationButton(doc, company); // Also support the game's non-ASCII city list.
-    if (!location) throw new Error(`Company ${company} is not visible in this city`);
+    const location = await waitForControl(() =>
+      [...doc.querySelectorAll('span[aria-label]')].find(element => element.getAttribute('aria-label') === company) ??
+        infiltrationButton(doc, company), // Also support the game's non-ASCII city list.
+      `Company ${company} is not visible in this city`);
+    checkNavigation();
     clickInfiltrationElement(location);
-    await sleep(200);
   }
-  if (!canContinue()) throw new Error('Infiltration navigation cancelled');
-  if (![...doc.querySelectorAll('h4')].some(heading => text(heading) === company))
-    throw new Error(`Company page did not open: ${company}`);
-  clickInfiltrationElement(infiltrationButton(doc, 'Infiltrate Company'));
+  const enter = await waitForControl(() => companyPageVisible(doc, company) && infiltrationButton(doc, 'Infiltrate Company'),
+    `Company page or infiltration control did not become ready: ${company}`);
+  checkNavigation();
+  clickInfiltrationElement(enter);
 }

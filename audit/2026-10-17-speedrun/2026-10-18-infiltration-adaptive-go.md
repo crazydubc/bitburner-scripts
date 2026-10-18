@@ -8,6 +8,10 @@ The pasted Sphyxis/Dihelvid bot and the repository's older `infiltrate.js` use t
 
 The old code left an interval alive after Netscript exited, modified `Date.prototype`, accessed unrelated control ports, and could select a success callback from elsewhere in the application. The pasted variant could invoke success twice per tick. The replacement keeps a real script alive, uses a single bounded loop, follows React ancestors only from recognized infiltration headings, and advances each currently displayed stage once. It supports all eight minigames, including the guard's `h5` instruction and both minefield phases. It does not generate keyboard events; the game penalizes synthetic keys.
 
+Navigation follow-up: the original fixed 200 ms waits could reject a company page before React rendered it. Backdoored companies also animate their headings through `CorruptibleText`, so even an open page could fail an exact text match. Navigation now polls every 50 ms for the requested company and an enabled infiltration button, with a five-second limit per transition and checks for cancellation, the overall time budget, and intervening dialogs. Animated headings are identified through the visible heading's location props. The introduction screen gets the same five-second render allowance. Regression fixtures cover delayed City/company/intro rendering, delayed controls, animated names, both city layouts, wrong-company rejection, timeouts, and cancellation. These simulated UI checks still require confirmation in the live game.
+
+Follow-up validation: the expanded infiltration checks, JS syntax checks, and whitespace check pass. The official RAM comparison against `9f4d1c5` reports no changes, including **5.75 GB** for the runner.
+
 Selection:
 
 - Wait for the current installation's verified $10 billion casino completion. Keep the existing reserve and stock rules.
@@ -31,6 +35,14 @@ run infiltrate.js --single --faction "CyberSec"
 ```
 
 Substitute the faction you are actually working toward. Keep the World/City menu expanded and leave the game screen alone during the run. Both the ASCII map and the list of city locations are supported. Before SF4, check current faction reputation yourself; `--target-rep` deliberately requires Singularity. The BN1 roadmap now shows this optional command.
+
+`--faction` is the joined faction receiving the reputation reward. `--company` is the location to infiltrate; employment and faction membership at that company are not required. For example, to infiltrate NetLink Technologies in Aevum for CyberSec reputation:
+
+```text
+run infiltrate.js --single --company "NetLink Technologies" --faction "CyberSec"
+```
+
+Omitting `--company` lets the policy choose a suitable local company. A company accidentally supplied as `--faction` now gets an explanation and the correct flag, instead of an instruction to join that company.
 
 ```text
 run infiltrate.js --status
@@ -100,6 +112,7 @@ Primary references, read from official `bitburner-official/bitburner-src@1da7316
 - `src/Infiltration/Infiltration.ts`, `ui/InfiltrationRoot.tsx`, `ui/Intro.tsx`, `ui/Victory.tsx`, and all minigame views: lifecycle, event penalties, controls and exact faction choices.
 - `src/Infiltration/formulas/game.ts`, `formulas/victory.ts`: difficulty cutoff, demand recovery/depletion, and rewards.
 - `src/Locations/ui/City.tsx`, `CompanyLocation.tsx`, `GenericLocation.tsx`: city navigation and infiltration entry.
+- `src/ui/React/CorruptibleText.tsx`: backdoor name animation that prevents reliable rendered-text matching.
 - `src/Go/boardAnalysis/scoring.ts`, `effects/netscriptGoImplementation.ts`, `effects/effect.ts`: win/cheat outcomes, streak/favor rewards, bonus time and hidden board.
 
 The supplied attachment was inspected alongside the repo's prior Sphyxis/Dihelvid-attributed script. No SphyxOS services, worker ports, or global prototype changes were imported.
