@@ -4,7 +4,7 @@
 
 This guide targets the audited scripts and game 3.0.1 mechanics. A fresh BN1.1 has **no Singularity API**. Hacking, rooting, server buying, and contracts can be scripted; buying home upgrades, faction work, augmentation purchases/installation, and the final transition still need manual input. A later BN1 with SF4.3 can automate those actions.
 
-The testing branch includes focused repairs and guidance; the remaining audit findings still need work. The startup steps below are a conservative operating procedure, not a measured world-record route.
+The testing branch implements all 18 original audit findings and includes on-screen guidance. This written guide retains the original startup reference; use `bn1-guide.js` and the audit README's follow-ups for current prompts and automation. The startup steps below are a conservative operating procedure, not a measured world-record route.
 
 ## 1. Install on home
 
@@ -64,7 +64,7 @@ Rerun the guide; it keeps the manager running and restarts it whenever at least 
 run bn1-guide.js
 ```
 
-Check Active Scripts and the autopilot/kernel logs. You want a live income process, advancing preparation, and no repeating “unable to launch” messages. The testing branch fixes B04's cloud purchase budget and reads/writes reserves on home, including for offloaded managers. Monitor the reserve and casino completion; a separate verified completion gate and cross-script spending coordination remain open. If a helper reports failure, inspect home RAM and the child process before restarting.
+Check Active Scripts and the autopilot/kernel logs. You want a live income process, advancing preparation, and no repeating “unable to launch” messages. The testing branch fixes B04's cloud purchase budget and reads/writes reserves on home, including for offloaded managers. Stock buying now requires verified casino completion, and integrated automatic buyers recheck the current cash/reserve in a synchronous home helper. If a helper reports failure, inspect home RAM and the child process before restarting.
 
 Buy `DarkscapeNavigator.exe` for $50m through TOR after the casino. Alternatively, visit Chongqing > Shadowed Walkway and buy it for $30m; this also grants TOR. Autopilot then starts `darknet.js` when home has space. Darknet phishing trains Charisma, which helps Field Work reputation in BN1.1. At Sector-12, The Black Hand, and Daedalus, compare Field Work and Hacking Contracts and choose the higher displayed rep/sec. CyberSec, NiteSec, and BitRunners only offer hacking work. Visiting Chongqing does not join its city faction.
 
@@ -113,7 +113,7 @@ The script's four-hour cap is a fallback, not a recommended waiting period. Avoi
 
 Before final purchases or a manual installation, enter `run bn1-guide.js --install` to open the on-screen checklist. Leave autopilot running. On home, enter `run stockmaster.js --liquidate`, wait for the sale summary, and verify zero stock positions in the Stock Market screen. The liquidator stays running without buying, preventing autopilot from restarting normal stock trading. If TIX API access is unavailable, sell manually while the liquidator keeps trading paused. Leave the liquidator running until installation, and pause competing spending scripts if needed while buying the bundle. To cancel, stop only the liquidating stockmaster process and let autopilot resume trading when eligible.
 
-Then spend appropriate leftover money on home RAM, then cores when useful. Home upgrades persist across augmentation installations; ordinary purchased servers and hacknet investments do not. Use the augmentation UI to install in fresh BN1.1; `ascend.js` assumes APIs you do not yet possess and currently has missing reset helpers (B07/B11).
+Then spend appropriate leftover money on home RAM, then cores when useful. Home upgrades persist across augmentation installations; ordinary purchased servers and hacknet investments do not. Use the augmentation UI to install in fresh BN1.1; `ascend.js` requires Singularity access. Its earlier missing reset helpers have been repaired.
 
 After installation, run `bn1-guide.js` again. On a 64+ GB home with 48 GB free, it starts autopilot and checks every five seconds to restart it if it exits. Autopilot reuses an existing coinflipper or starts one when missing. CashRoot and retained home RAM make this much shorter than the first cycle. Use `--manual` or stop the normal guide if you want to keep autopilot stopped; old cycle markers no longer affect startup.
 

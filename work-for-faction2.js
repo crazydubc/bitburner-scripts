@@ -1,5 +1,5 @@
 import {
-  findPids, getActiveSourceFiles, getReset, gangRun, singRun, log, getBNMults, getPlayerInfo,
+  findPids, getActiveSourceFiles, getReset, gangRun, singRun, singReadMany, log, getBNMults, getPlayerInfo,
   getOwnedAugs, getErrorInfo, bbRun, addRepToFavor, favorToRep, formatDuration, getServ, corpRun, runScriptLocal
 } from './utils.js';
 import { hasBladeburnerAccess, getIntelFarmReadiness, intelFarmState } from './progression.js';
@@ -14,11 +14,20 @@ const LOOP_SLEEP = 30000;
 const REPLAN_INTERVAL = 60 * 1000;
 const RATE_CACHE_TIME = 15 * 60 * 1000;
 const PROGRESS_CHECK_INTERVAL = 5 * 1000;
+const INFILTRATION_POLL_INTERVAL = 5 * 1000;
 const INVITE_REPLAN_INTERVAL = 15 * 1000;
 const GANG_KARMA_REQUIREMENT = -54_000;
 const COMPANY_FACTION_REP = 400_000;
 const CORPORATION_BRIBE_MIN_RESERVE = 1e12;
 const CORPORATION_BRIBE_OPERATING_RESERVE_SECONDS = 10 * 60;
+
+/** Wake for the next actual deadline; screen requests should not wait for the full planning interval. */
+export function factionWorkerDelay(now, nextPlan, nextProgressCheck, activePlan, infiltrationEnabled) {
+  const repPlan = activePlan && ['faction-rep', 'donation-unlock'].includes(activePlan.kind);
+  return Math.max(50, Math.min(LOOP_SLEEP, nextPlan - now,
+    repPlan ? nextProgressCheck - now : Infinity,
+    infiltrationEnabled ? INFILTRATION_POLL_INTERVAL : Infinity));
+}
 
 /** Return the exact full bribe cost, or zero when corporation excess cannot finish the target. */
 export function getCorporationBribeAmount({
@@ -239,13 +248,7 @@ export async function main(ns) {
   }
 
   async function buildLibSing(fn, items) {
-    const result = {};
-    for (const item of items) {
-      const value = await singRun(ns, fn, item);
-      if (isApiError(value)) throw new Error(`${fn}(${String(item)}) failed: ${value}`);
-      result[item] = value;
-    }
-    return result;
+    return singReadMany(ns, fn, items);
   }
 
   function usefulAugs(faction) {
@@ -317,10 +320,8 @@ export async function main(ns) {
     // faction appears or gang membership changes the gang faction's available augmentations.
     if (nextStaticKey !== staticFactionKey || nextGangFaction !== staticGangFaction) {
       factionAugs = await buildLibSing("getAugmentationsFromFaction", allKnownFactions);
-      factionFavor = await buildLibSing("getFactionFavor", allKnownFactions);
       for (const faction of allKnownFactions) {
         factionAugs[faction] = asArray(factionAugs[faction]);
-        factionFavor[faction] = Number(factionFavor[faction]) || 0;
       }
       // The game can report The Red Pill as a gang augmentation outside BN2 even though it cannot be bought there.
       if (nextGangFaction && resetInfo.currentNode !== 2)
@@ -339,6 +340,12 @@ export async function main(ns) {
       staticGangFaction = nextGangFaction;
     }
 
+    // Go rewards and export bonuses can change favor without an augmentation reset.
+    factionFavor = await buildLibSing("getFactionFavor", allKnownFactions);
+    for (const faction of allKnownFactions) {
+      if (!Number.isFinite(factionFavor[faction]) || factionFavor[faction] < 0)
+        throw new Error(`Invalid favor for ${faction}`);
+    }
     factionRep = Object.fromEntries(allKnownFactions.map(faction => [faction, 0]));
     const joinedFactions = playerInfo.factions ?? [];
     const joinedRep = await buildLibSing("getFactionRep", joinedFactions);
@@ -810,15 +817,19 @@ false, "info");
 
   let nextPlan = 0;
   let nextProgressCheck = 0;
+  let nextTargetPublish = 0, lastPublishedTarget = '';
   async function publishInfiltrationTarget() {
     if (!infiltrationEnabled) return;
     const plan = activePlan && ['faction-rep', 'donation-unlock'].includes(activePlan.kind) ? {
       kind: activePlan.kind, faction: activePlan.faction, targetRep: activePlan.targetRep,
-      repRate: repRateCache[activePlan.faction] ?? 0, updatedAt: Date.now(),
+      repRate: repRateCache[activePlan.faction] ?? 0,
     } : {kind: 'inactive'};
+    const signature = JSON.stringify(plan);
+    if (signature === lastPublishedTarget && Date.now() < nextTargetPublish) return;
     try {
-      await runScriptLocal(ns, 'bin/infiltration-control.js', false, ['target', JSON.stringify({...plan,
+      const published = await runScriptLocal(ns, 'bin/infiltration-control.js', false, ['target', JSON.stringify({...plan,
         pid: ns.pid, updatedAt: Date.now(), lastAugReset: resetInfo.lastAugReset, lastNodeReset: resetInfo.lastNodeReset})]);
+      if (published === true) { lastPublishedTarget = signature; nextTargetPublish = Date.now() + LOOP_SLEEP; }
     } catch { /* Optional assistance must not interrupt ordinary faction work. */ }
   }
   async function infiltrationOwnsScreen() {
@@ -852,7 +863,8 @@ false, "info");
     } catch (error) {
       log(ns, `WARNING: work-for-faction2.js planner failed; retrying.\n${getErrorInfo(error)}`, false, "warning");
       nextPlan = Date.now() + 10_000;
+      nextProgressCheck = nextPlan;
     }
-    await ns.sleep(LOOP_SLEEP);
+    await ns.sleep(factionWorkerDelay(Date.now(), nextPlan, nextProgressCheck, activePlan, infiltrationEnabled));
   }
 }

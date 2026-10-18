@@ -1,5 +1,19 @@
 import { singRun, getActiveSourceFiles, getReserve, purchase } from './utils.js'
 const purchasedServerName = "daemon";
+
+/** Quotes are cumulative price differences, so one jump costs the same as consecutive doublings. */
+export function affordableCloudUpgrade(currentRam, maxRam, budget, quote) {
+  if (![currentRam, maxRam, budget].every(Number.isFinite) || currentRam <= 0 || maxRam <= currentRam || budget < 0 ||
+    !Number.isInteger(Math.log2(currentRam)) || !Number.isInteger(Math.log2(maxRam))) return null;
+  let lower = Math.log2(currentRam) + 1, upper = Math.log2(maxRam), best = null;
+  while (lower <= upper) {
+    const exponent = Math.floor((lower + upper) / 2), ram = 2 ** exponent, cost = quote(ram);
+    if (typeof cost !== 'number' || Number.isNaN(cost) || cost < 0) return null;
+    if (Number.isFinite(cost) && cost <= budget) { best = {ram, cost}; lower = exponent + 1; }
+    else upper = exponent - 1;
+  }
+  return best;
+}
 /** @param {NS} ns */
 export async function main(ns) {
   ns.disableLog('ALL');
@@ -49,18 +63,14 @@ async function tryUpgradeRam(ns) {
 
   max_ram = ns.cloud.getRamLimit();
   for (const server of servers) {
-    let ram = ns.getServerMaxRam(server);
-    while (ram < max_ram) {
-      const newRam = ram * 2;
-      const cost = ns.cloud.getServerUpgradeCost(server, newRam);
-      if (!Number.isFinite(cost) || cost < 0 || cost > await availableBudget()) break;
-
-      const bought = await purchase(ns, 'cloud', 'upgradeServer', [server, newRam], {budget: spendable});
-      if (bought.result !== true) break;
-
-      spendable -= bought.spent;
-      ram = newRam;
-      await ns.sleep(10);
-    }
+    const budget = await availableBudget();
+    if (budget <= 0) break;
+    const upgrade = affordableCloudUpgrade(ns.getServerMaxRam(server), max_ram, budget,
+      ram => ns.cloud.getServerUpgradeCost(server, ram));
+    if (!upgrade) continue;
+    const bought = await purchase(ns, 'cloud', 'upgradeServer', [server, upgrade.ram], {budget});
+    if (bought.result !== true) continue;
+    spendable -= bought.spent;
+    await ns.sleep(10);
   }
 }

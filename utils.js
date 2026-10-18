@@ -92,6 +92,23 @@ export async function sleeveRun(ns, fn, ...args) { return apiRun(ns, 'sleeve', '
 export async function hnRun(ns, fn, ...args) { return apiRun(ns, 'hacknet', 'bin/hnRun.js', 6.6, fn, args); }
 export async function bbRun(ns, fn, ...args) { return apiRun(ns, 'bladeburner', 'bin/bbRun.js', 5.6, fn, args); }
 export async function singRun(ns, fn, ...args) { return apiRun(ns, 'singularity', 'bin/singRun.js', 6.6, fn, args); }
+/** Read one Singularity API for many names using one helper and the same peak RAM as a single read. */
+export async function singReadMany(ns, fn, items) {
+  if (!Array.isArray(items) || !items.every(item => typeof item === 'string' && item.length > 0))
+    throw new Error('Singularity bulk reads require a list of nonempty names');
+  const names = [...new Set(items)], entries = [];
+  if (!names.length) return {};
+  const ram = Math.max(6.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`singularity.${fn}`));
+  for (let i = 0; i < names.length; i += 512) {
+    const chunk = names.slice(i, i + 512);
+    const result = await runScriptLocal(ns, 'bin/singReadMany.js', false, [fn, JSON.stringify(chunk)], ram);
+    if (!result || typeof result !== 'object' || Array.isArray(result) ||
+      !chunk.every(name => Object.hasOwn(result, name)))
+      throw new Error(`singularity.${fn} bulk read failed: ${String(result)}`);
+    entries.push(...chunk.map(name => [name, result[name]]));
+  }
+  return Object.fromEntries(entries);
+}
 export async function stanekRun(ns, fn, ...args) { return apiRun(ns, 'stanek', 'bin/stanekRun.js', 6.6, fn, args); }
 export async function gangRun(ns, fn, ...args) { return apiRun(ns, 'gang', 'bin/gangRun.js', 5.6, fn, args); }
 

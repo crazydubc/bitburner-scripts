@@ -1,6 +1,6 @@
 import {
   log, getConfiguration, findPids, formatNumberShort, formatMoney,
-  getActiveSourceFiles, getBNMults, getStocksValue, getReset, getPlayerInfo, doSCP, getOwnedAugs, singRun, addRepToFavor
+  getActiveSourceFiles, getBNMults, getStocksValue, getReset, getPlayerInfo, doSCP, getOwnedAugs, singRun, singReadMany, addRepToFavor
 } from './utils.js'
 import { buildDonationFavorProgress, FACTIONS_WITHOUT_DONATIONS } from './donation-favor.js'
 import { SOA_AUGS } from './infiltration-policy.js'
@@ -298,12 +298,7 @@ let factionSortValue = faction => {
 
 
 async function buildLib(ns, items, cmd) {
-  let ret = {};
-  for (const item of items) {
-    const val = await singRun(ns, cmd, item);
-    ret[item] = val;
-  }
-  return ret;
+  return singReadMany(ns, cmd, items);
 }
 
 /**

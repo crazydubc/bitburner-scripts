@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {maxRun} from '../../../utils.js';
 import {executePurchase} from '../../../purchase-guard.js';
 import {main as purchaseSleeves} from '../../../purchaseSleeves.js';
+import {affordableCloudUpgrade} from '../../../host-manager.js';
 
 const source = file => readFile(new URL('../../../' + file, import.meta.url), 'utf8');
 const noop = () => {};
@@ -57,14 +58,15 @@ async function hostPass(settings = {}) {
         debit(buyCost); const host = name + '-' + ram.size;
         ram.set(host, size); state.purchases.push(host); return host;
       },
-      getServerUpgradeCost: () => settings.upgradeCost ?? 20_000,
+      getServerUpgradeCost: (host, size) => (settings.upgradeCost ?? 20_000) * Math.log2(size / ram.get(host)),
       upgradeServer: (host, size) => {
-        debit(settings.upgradeCost ?? 20_000);
+        debit(ns.cloud.getServerUpgradeCost(host, size));
         state.upgrades.push([host, size]); ram.set(host, size); return true;
       },
     },
   };
   const run = await functionFrom('host-manager.js', 'async function tryUpgradeRam(ns)', null, {
+    affordableCloudUpgrade,
     purchasedServerName: 'daemon', getActiveSourceFiles: async () => settings.homeCost === undefined ? {} : {4: 3},
     getReserve: async () => state.reserve,
     purchase: async (ns, space, method, args, policy) => {
