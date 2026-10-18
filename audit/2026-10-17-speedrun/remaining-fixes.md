@@ -40,6 +40,16 @@ The tightened `api-errors.mjs` and `remaining-paths.mjs` checks failed against t
 
 Pull `testing/bn1-go-audit` from home and wait for `Pull complete`. New `bin/purchase.js` executions on home will import the corrected guard. Autopilot can relaunch the crashed trader under its existing startup conditions; if normal trading is intended and it remains stopped, run `stockmaster.js` again. A manual liquidation hold should remain active until the user chooses to resume trading.
 
+### Purchase helper RAM regression
+
+The next reported error was `Purchase helper exited before reporting its result`. The enum correction exposed another defect in the shared guard: `purchaseRam()` omitted the 0.05 GB cost of its home-only `getHostname()` check. Both stock buy paths therefore allocated 7.20 GB while actually using 7.25 GB. This omission also affected the other guarded purchase operations.
+
+The pinned engine's `updateDynamicRam()` kills an underallocated script before throwing the RAM error. Termination invokes `atExit` immediately, while the helper's response still contains its default error; the later catch assignment cannot change the already-written port message. The stock purchase API has not executed at this point. The previous fixtures did not enforce per-call RAM or this kill-before-catch ordering.
+
+The gameplay correction adds `getHostname` to the shared budget. `checks/purchase-ram.mjs` executes the actual helper using the official effective RAM table, dynamic RAM enforcement, and termination functions from the pinned engine; only API actions, logging and worker-registry handling are fixtures. It reproduces the exact original stock failure using the old helper/guard from `80e2cfb`, fails against the unfixed current guard, and passes after the correction. All 23 supported operations pass across 115 BN/SF4 combinations, including current allocations, old offloaded callers' smaller allocations, and denied RAM increases. An old caller can still launch the new helper: its existing `ramOverride` increases the allocation before any purchase. If that extra RAM is unavailable, it returns an explicit required-GB error without spending.
+
+The API-error, reserve/purchase, stock-liquidation and resource-purchase checks also pass. These are offline checks; live confirmation remains outstanding. Update home’s `purchase-guard.js` from the testing branch. The helper loads it for each new execution, so the correction also serves already-running offloaded managers without changing their purchase arguments.
+
 ## Scheduling, backdoors and contracts
 
 Autopilot honors `nextRun` for both manager lists, preserves startup staggering, and catches individual launch failures. It keeps one continuous four-hour-payback hacknet manager. The two ineffective duplicate passes (eight-hour and effectively unlimited payback) are removed instead of suddenly activating speculative spending.

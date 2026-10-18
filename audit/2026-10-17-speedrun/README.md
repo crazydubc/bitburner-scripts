@@ -8,6 +8,8 @@ The highest-value work is fixing progression stalls and making the early-game la
 
 **Stock quote hotfix:** the shared purchase guard also passed `"Long"`/`"Short"` to an API that requires `"L"`/`"S"`. It now uses `ns.enums.PositionType`. Stricter checks reproduce the original failure and verify both purchase paths through the remote caller/home helper, including the $8b reserve and casino gate. See [the stock regression notes](remaining-fixes.md#stock-position-regression--2026-10-18), then pull the same testing branch.
 
+**Purchase RAM hotfix:** the follow-up `Purchase helper exited before reporting its result` error exposed a separate missing 0.05 GB charge for `getHostname()`. Stock helpers now allocate 7.25 GB instead of 7.20 GB. The [RAM regression notes](remaining-fixes.md#purchase-helper-ram-regression) explain why the game killed the helper before its error handler could reply and document checks against the official RAM enforcement code.
+
 ## Pull the combined testing branch
 
 In the game terminal:
@@ -38,11 +40,12 @@ node audit/2026-10-17-speedrun/checks/hash-spending.mjs
 node audit/2026-10-17-speedrun/checks/progression.mjs
 node audit/2026-10-17-speedrun/checks/api-errors.mjs
 node audit/2026-10-17-speedrun/checks/remaining-paths.mjs
+node audit/2026-10-17-speedrun/checks/purchase-ram.mjs /path/to/bitburner-src
 node audit/2026-10-17-speedrun/checks/batch-correctness.mjs /path/to/bitburner-src
 node audit/2026-10-17-speedrun/checks/batch-upgrade-compatibility.mjs
 ```
 
-All twelve focused checks pass, and gameplay files parse; the previously removed test directory stays removed. The batch-correctness command additionally compares calculations with the pinned engine checkout. The official RAM check and restart/live-test notes are in [remaining-fixes.md](remaining-fixes.md) and [batch-upgrade-hotfix.md](batch-upgrade-hotfix.md). Live BN1 progression, tail layout, batch recovery, corporation behavior and Go win rates still require in-game testing.
+The twelve earlier checks passed before the purchase RAM hotfix. That fix adds `purchase-ram.mjs` and reruns `api-errors`, `remaining-paths`, `stock-liquidation` and `resource-purchases`; all five pass. The batch-correctness command compares calculations with the pinned engine checkout, and purchase-ram uses its effective cost table and dynamic RAM enforcement/termination functions. The official RAM check and restart/live-test notes are in [remaining-fixes.md](remaining-fixes.md) and [batch-upgrade-hotfix.md](batch-upgrade-hotfix.md). Live BN1 progression, tail layout, batch recovery, corporation behavior and Go win rates still require in-game testing.
 
 ## Implementation follow-ups
 

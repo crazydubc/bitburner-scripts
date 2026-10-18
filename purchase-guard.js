@@ -14,7 +14,7 @@ const fixedPurchases = new Set(['stock.purchaseWseAccount', 'stock.purchaseTixAp
 export function purchaseRam(ns, namespace, method) {
   if (!costMethods[namespace]?.[method] && !fixedPurchases.has(`${namespace}.${method}`))
     throw new Error(`Unsupported guarded purchase: ${namespace}.${method}`);
-  const apis = new Set(['baseCost', 'getServerMoneyAvailable', `${namespace}.${method}`]);
+  const apis = new Set(['baseCost', 'getHostname', 'getServerMoneyAvailable', `${namespace}.${method}`]);
   if (costMethods[namespace]?.[method]) apis.add(`${namespace}.${costMethods[namespace][method]}`);
   if (namespace === 'stock' && ['buyStock', 'buyShort'].includes(method)) apis.add('getMoneySources');
   return [...apis].reduce((ram, name) => ram + ns.getFunctionRamCost(name), 0);
