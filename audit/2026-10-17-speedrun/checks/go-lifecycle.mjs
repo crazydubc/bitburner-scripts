@@ -100,3 +100,24 @@ for (const name of ['getDefPattern','disruptEyes']) {
   assert.deepEqual(new Set([coords.slice(0,2).join(','),coords.slice(2).join(',')]),new Set(['3,2','4,3']));
 }
 console.log('Go opponent transitions, pass decisions, retry cache, pattern execution, cheat threshold, and edge scan passed');
+
+// Configuration applies only after completion, and the hidden opponent always requests its fixed size.
+for (const unlocked of [false, true]) {
+  const ns = mock(), resets = [], records = [];
+  ns.audit.options = {runOnce: false, opponent: 'hidden', 'board-size': 5};
+  ns.audit.reset = {ownedAugs: new Map(unlocked ? [['The Red Pill', 1]] : [])};
+  ns.audit.record = result => records.push(result);
+  ns.go.getGameState = () => ({blackScore: 20, whiteScore: 5.5});
+  ns.audit.play = async () => ({type: 'gameOver'});
+  ns.go.resetBoardState = (opponent, size) => {resets.push({opponent, size}); throw STOP;};
+  await assert.rejects(main(ns), error => error === STOP);
+  assert.equal(resets.length, 1); assert.equal(records.length, 1);
+  assert.equal(resets[0].size, unlocked ? 19 : 5);
+  assert.equal(resets[0].opponent === '????????????', unlocked);
+}
+{
+  const ns = mock(); ns.audit.options = {'board-size': 19};
+  ns.audit.play = () => assert.fail('Invalid ordinary board size must not start playing');
+  await main(ns);
+}
+console.log('Go board-size configuration, hidden-opponent eligibility, and completed-game recording passed');

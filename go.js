@@ -12,8 +12,8 @@
 
 import {
   getConfiguration, log, getErrorInfo, getActiveSourceFiles, whichServerIsRunning,
-  getBoard, getControlledENodes, goMove, goValidMoves, goCheatChance, play2Moves,
-  goLiberties, goChains, destroyND, disableLogs
+  getBoard, getGoSnapshot, getReset, recordGoResult, goMove, goCheatChance, play2Moves,
+  destroyND, disableLogs
 } from './utils.js'
 
 const argsSchema = [
@@ -23,7 +23,22 @@ const argsSchema = [
   ['logtime', false], // Logs time time it takes for each player to take their move
   ['runOnce', false], // Will only play one game if enabled
   ['silent', false], // (Obsolete) This script used to automatically tail. Now if you want to do this, call with --tail like normal.
+  ['board-size', 13], // Normal opponents: 5, 7, 9, or 13. Takes effect after the current game completes.
+  ['opponent', 'random'], // A faction name, "hidden", or "random". Never abandons the current board.
+  ['hidden-opponent', true], // Include the hidden 19x19 opponent in random selection after installing The Red Pill.
 ];
+
+export const GO_OPPONENTS = ['Netburners', 'Slum Snakes', 'The Black Hand', 'Tetrads', 'Daedalus', 'Illuminati'];
+export const HIDDEN_GO_OPPONENT = '????????????';
+export function selectGoOpponent(requested, includeHidden, reset, random = Math.random) {
+  const augs = reset?.ownedAugs;
+  const unlocked = augs instanceof Map ? augs.has('The Red Pill') : Number(augs?.['The Red Pill']) > 0;
+  const pool = unlocked && includeHidden ? [...GO_OPPONENTS, HIDDEN_GO_OPPONENT] : GO_OPPONENTS;
+  const selected = requested === 'hidden' ? HIDDEN_GO_OPPONENT : requested;
+  if (selected === HIDDEN_GO_OPPONENT && unlocked) return selected;
+  if (GO_OPPONENTS.includes(selected)) return selected;
+  return pool[Math.floor(random() * pool.length)];
+}
 
 export function autocomplete(data, args) {
   data.flags(argsSchema);
@@ -40,6 +55,9 @@ export async function main(ns) {
   let logtime = false;
   let runOnce = true;
   let silent = false;
+  let boardSize = 13, requestedOpponent = 'random', includeHidden = true;
+  let gameStartedAt = Date.now(), resumedGame = true;
+  let gameRecorded = true;
   let currentValidMovesTurn = -1; //The turn count that the currentValidMoves is valid for
   let turn = 0;
   let START = performance.now();
@@ -83,10 +101,6 @@ export async function main(ns) {
     ["?WWW?", "W.*.W", "WXXXW", "?????", "?????"], //Take the 3x3 back corner
   ];
 
-  // Original
-  const opponent = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"];
-  const opponent2 = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati", "????????????"];
-
   const sourceFiles = await getActiveSourceFiles(ns, true);
   await start();
 
@@ -98,6 +112,14 @@ export async function main(ns) {
 
     logtime = runOptions.logtime;
     runOnce = runOptions.runOnce;
+    boardSize = Number(runOptions['board-size'] ?? 13);
+    requestedOpponent = runOptions.opponent ?? 'random';
+    includeHidden = runOptions['hidden-opponent'] ?? true;
+    if (![5, 7, 9, 13].includes(boardSize) ||
+      !['random', 'hidden', HIDDEN_GO_OPPONENT, ...GO_OPPONENTS].includes(requestedOpponent)) {
+      log(ns, 'ERROR: Use --board-size 5/7/9/13 and --opponent random, hidden, or a faction name.', true);
+      return;
+    }
 
     // Enable cheats if we have SF14.2 or higher (unless the user disabled cheats).
     cheats = runOptions.cheats && !runOptions['disable-cheats'] && (sourceFiles[14] ?? 0) >= 2;
@@ -122,6 +144,8 @@ export async function main(ns) {
   /** @param {NS} ns */
   async function playGo(ns) {
     const startBoard = await getBoard(ns)
+    gameStartedAt = Date.now();
+    resumedGame = startBoard.some(column => /[XO]/.test(column));
     let inProgress = false
     turn = 0
     START = performance.now()
@@ -137,7 +161,8 @@ export async function main(ns) {
       if (inProgress) break
     }
     let currentGame = await ns.go.opponentNextTurn(false)
-    checkNewGame(ns, currentGame)
+    if (currentGame?.type !== 'gameOver') gameRecorded = false;
+    await checkNewGame(ns, currentGame)
     while (true) {
       turn++
       // Two passes end the game at this score. Do not risk an already secured win.
@@ -145,16 +170,17 @@ export async function main(ns) {
         const score = ns.go.getGameState();
         if (score.blackScore > score.whiteScore) {
           currentGame = await ns.go.passTurn();
-          checkNewGame(ns, currentGame);
+          await checkNewGame(ns, currentGame);
           continue;
         }
       }
       const playStyle = getStyle(ns); // resetBoardState may have selected a different opponent.
-      board = await getBoard(ns);
-      contested = await getControlledENodes(ns);
-      validMove = await goValidMoves(ns);
-      validLibMoves = await goLiberties(ns);
-      chains = await goChains(ns);
+      const snapshot = await getGoSnapshot(ns);
+      board = snapshot.board;
+      contested = snapshot.controlled;
+      validMove = snapshot.valid;
+      validLibMoves = snapshot.liberties;
+      chains = snapshot.chains;
       currentValidMovesTurn = -1; // Invalidate on each snapshot, including retry/new-game turn-number reuse.
       const size = board[0].length
       //Build a test board with walls
@@ -329,7 +355,7 @@ export async function main(ns) {
         } //End of style switch
       } // end of turn >= 3
       currentGame = results;
-      checkNewGame(ns, results)
+      await checkNewGame(ns, results)
     }
   }
 
@@ -349,11 +375,22 @@ export async function main(ns) {
   /** @param {NS} ns
    * @param {{ type:"move"|"pass"|"gameOver"; x:number; y:number;}} gameInfo
    */
-  function checkNewGame(ns, gameInfo) {
+  async function checkNewGame(ns, gameInfo) {
     if (gameInfo?.type === "gameOver") {
+      if (!gameRecorded) try {
+        gameRecorded = true;
+        const score = ns.go.getGameState();
+        await recordGoResult(ns, {opponent: ns.go.getOpponent(), size: (await getBoard(ns)).length,
+          blackScore: score.blackScore, whiteScore: score.whiteScore,
+          durationMs: Date.now() - gameStartedAt, resumed: resumedGame});
+      } catch (error) { log(ns, `WARNING: Go timing unavailable: ${String(error)}`); }
       if (runOnce) ns.exit()
-      try { ns.go.resetBoardState(opponent2[Math.floor(Math.random() * opponent2.length)], 13) }
-      catch { ns.go.resetBoardState(opponent[Math.floor(Math.random() * opponent.length)], 13) }
+      const next = selectGoOpponent(requestedOpponent, includeHidden, await getReset(ns));
+      // The engine supplies the fixed 19x19 Bitverse board for the hidden opponent.
+      ns.go.resetBoardState(next, next === HIDDEN_GO_OPPONENT ? 19 : boardSize);
+      gameStartedAt = Date.now();
+      resumedGame = false;
+      gameRecorded = false;
       turn = 0
       currentValidMovesTurn = -1;
       ns.clearLog()

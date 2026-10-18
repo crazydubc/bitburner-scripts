@@ -13,14 +13,21 @@ export const BN_ROUTE = Object.freeze([
   { node: 8, targetLevel: 3 }, { node: 12, repeat: true },
 ].map(Object.freeze));
 
+/** Opt-in timing experiment: obtain sleeves and Bladeburner before repeating BN3/BN10. */
+export const EARLY_UNLOCK_ROUTE = Object.freeze([
+  ...BN_ROUTE.slice(0, 4), {node: 3, targetLevel: 1}, {node: 10, targetLevel: 1},
+  {node: 6, targetLevel: 1}, {node: 7, targetLevel: 3},
+  {node: 3, targetLevel: 3}, {node: 10, targetLevel: 3}, ...BN_ROUTE.slice(8),
+].map(Object.freeze));
+
 export function sourceFileLevel(sourceFiles, node) {
   const level = Number(sourceFiles instanceof Map ? sourceFiles.get(node) : sourceFiles?.[node]);
   return Number.isFinite(level) ? Math.max(0, Math.floor(level)) : 0;
 }
 
 /** Select the next node after crediting the run that is about to finish. */
-export function selectNextBitNode(sourceFiles, currentNode) {
-  return BN_ROUTE.find(({node, targetLevel, repeat}) => repeat ||
+export function selectNextBitNode(sourceFiles, currentNode, route = BN_ROUTE) {
+  return route.find(({node, targetLevel, repeat}) => repeat ||
     sourceFileLevel(sourceFiles, node) + (Number(currentNode) === node ? 1 : 0) < targetLevel);
 }
 

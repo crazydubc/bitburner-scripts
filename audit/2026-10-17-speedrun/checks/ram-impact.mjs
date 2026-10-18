@@ -81,6 +81,8 @@ const targets=['autopilot.js','kernel.js','bn1-guide.js','go.js','host-manager.j
   'bladeburner.js','work-for-faction2.js','farm-intel.js','bin/intel-farm-state.js',
   'bin/getHackP.js','bin/getGrowThreads.js','bin/getbnmultis.js','bin/singRun.js','bin/reserve.js',
   'bin/sync-script-config.js','bin/purchase.js','bin/terminate-rpc.js','bin/getBackdoorTime.js',
+  'bin/getStockValue.js','bin/getGoSnapshot.js','bin/getHacknetPayoff.js','bin/run-log.js','bin/go-stats.js',
+  'bin/bribe-faction.js',
   'Tasks/backdoor-all-servers.js','Tasks/backdoor-all-servers.js.backdoor-one.js','Tasks/contractor.js.solver.js'];
 for(const file of targets) {
   const before=baseline?cost(baseline,file):null, after=cost(current,file);

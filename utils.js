@@ -41,6 +41,22 @@ export async function serverRun(ns, logging, target, w1, g1, w2, h1, w3, g2, w4,
 }
 export async function hasTixApi(ns) { return await runScript(ns, "bin/hasTixApi.js", false, []) }
 export async function getBoard(ns) { return await runScript(ns, "bin/getBoardState.js", false, []) }
+export async function getGoSnapshot(ns) {
+  const required = ns.getScriptRam('bin/getGoSnapshot.js', 'home');
+  if (!(required > 0) || await getServerAvailRam(ns, 'home') < required) {
+    // Keep the old low-peak-RAM path usable on small/busy home servers.
+    return {board: await getBoard(ns), controlled: await getControlledENodes(ns),
+      valid: await goValidMoves(ns), liberties: await goLiberties(ns), chains: await goChains(ns)};
+  }
+  const result = await runScriptLocal(ns, 'bin/getGoSnapshot.js', false, []);
+  if (!result || !['board', 'controlled', 'valid', 'liberties', 'chains'].every(key => Array.isArray(result[key])))
+    throw new Error(`Go snapshot failed: ${String(result)}`);
+  return result;
+}
+export async function recordGoResult(ns, result) {
+  if (await runScriptLocal(ns, 'bin/go-stats.js', false, [JSON.stringify(result)]) !== true)
+    ns.print('WARNING: Could not save Go results on home.');
+}
 export async function getControlledENodes(ns) { return await runScript(ns, "bin/getControlledEmptyNodes.js", false, []) }
 export async function goMove(ns, x, y) { return await runScript(ns, "bin/makeMove.js", false, [x, y]) }
 export async function goValidMoves(ns) { return await runScript(ns, "bin/goValidMoves.js", false, []) }
@@ -135,6 +151,7 @@ export const remoteScriptDependencies = [
   "progression.js",
   "hacking-formulas.js",
   "purchase-guard.js",
+  "speedrun-policy.js",
 ];
 
 /** Return the complete shared runtime bundle copied before launching a script away from home. */
@@ -453,9 +470,19 @@ export async function whichServerIsRunning(ns, scriptName) {
 }
 
 /** finds if a script is running * @param {NS} ns * @param {string} scriptName * @returns [] */
-export async function isScriptRunning(ns, scriptName) {
+export async function isScriptRunning(ns, scriptName, snapshot) {
+  if (snapshot) return snapshot.has(scriptName.replace(/^\/+/, ''));
   const running = await whichServerIsRunning(ns, scriptName);
   return running[0] !== null;
+}
+
+/** Reuse only within one scheduler pass; launches still use live RAM checks. */
+export function getRunningScriptNames(ns, servers) {
+  const names = new Set();
+  for (const server of servers) {
+    for (const process of ns.ps(server.hostname)) names.add(process.filename.replace(/^\/+/, ''));
+  }
+  return names;
 }
 
 
@@ -682,19 +709,26 @@ export async function buildLib(ns, items, cmd) {
  *  @param {NS} ns The nestcript instance passed to your script's main entry point
  * @returns {Promise<number>} The current total dollar value of all owned stocks */
 export async function getStocksValue(ns) {
-  if (!(await hasTixApi(ns))) return 0;
-  let stockSymbols = await stockRun(ns, 'getSymbols');
-  if (stockSymbols == null) return 0; // No TIX API Access
-  const askPrices = await buildLib(ns, stockSymbols, 'getAskPrice');
-  // Workaround for Bug #304: If we lost TIX access, our cache of stock symbols will still be valid, but we won't be able to get prices.
-  if (askPrices == null) return 0; // No TIX API Access
-  const bidPrices = await buildLib(ns, stockSymbols, 'getBidPrice');
-  const positions = await buildLib(ns, stockSymbols, 'getPosition');
-  return stockSymbols.map(sym => ({ sym, pos: positions[sym], ask: askPrices[sym], bid: bidPrices[sym] }))
-    .reduce((total, stk) => total + (stk.pos[0] * stk.bid) /* Long Value */ + stk.pos[2] * (stk.pos[3] * 2 - stk.ask) /* Short Value */
-      // Subtract commission only if we have one or more shares (this is money we won't get when we sell our position)
-      // If for some crazy reason we have shares both in the short and long position, we'll have to pay the commission twice (two separate sales)
-      - 100000 * (Math.sign(stk.pos[0]) + Math.sign(stk.pos[2])), 0);
+  if (!await hasTixApi(ns)) return 0;
+  const required = ns.getScriptRam('bin/getStockValue.js', 'home');
+  let value = 0;
+  if (required > 0 && await getServerAvailRam(ns, 'home') >= required) {
+    value = await runScriptLocal(ns, 'bin/getStockValue.js', false, []);
+  } else {
+    // Stock snapshots need 9.65 GB in v3.0.1. Retain the smaller per-call helper when they cannot fit.
+    const symbols = await stockRun(ns, 'getSymbols');
+    if (!Array.isArray(symbols)) throw new Error(`Invalid stock symbols: ${String(symbols)}`);
+    for (const symbol of symbols) {
+      const position = await stockRun(ns, 'getPosition', symbol);
+      if (!Array.isArray(position) || position.length !== 4 || !position.every(Number.isFinite))
+        throw new Error(`Invalid position for ${symbol}`);
+      const [long, , short, shortPrice] = position;
+      if (long > 0) value += long * await stockRun(ns, 'getBidPrice', symbol) - 100_000;
+      if (short > 0) value += short * (2 * shortPrice - await stockRun(ns, 'getAskPrice', symbol)) - 100_000;
+    }
+  }
+  if (!Number.isFinite(value)) throw new Error(`Stock valuation failed: ${String(value)}`);
+  return value;
 }
 
 const crackNames = ["BruteSSH.exe", "FTPCrack.exe", "relaySMTP.exe", "HTTPWorm.exe", "SQLInject.exe"];

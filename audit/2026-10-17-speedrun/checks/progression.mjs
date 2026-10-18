@@ -75,7 +75,7 @@ async function finishCase(settings = {}) {
       : method === 'getNumSleeves' ? settings.count ?? 1 : {memory: settings.memory ?? 100},
     hasCompletedBladeburner: async () => settings.blade ?? false, unlockedSFs: {4: 3, 6: 1},
     wdHack: null, player: {skills: {hacking: settings.hacking ?? 1}}, nextRecommendedBn: 7,
-    destroyWD: async (_ns, next, callback) => {assert.equal(next, 7); assert.equal(callback, 'autopilot.js'); destroys++;}, log: noop,
+    destroyWD: async (_ns, next, callback) => {assert.equal(next, 7); assert.equal(callback, 'autopilot.js'); destroys++;}, log: noop, noteMilestones: async () => {},
   });
   await check(ns);
   if (settings.reveal) { caveVisible = true; await check(ns); }

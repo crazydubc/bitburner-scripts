@@ -268,7 +268,7 @@ for (const mode of ['automatic', 'manual', 'once']) {
 // A rejected darknet launch must not prevent the next helper from being checked.
 const autopilotSource = await readFile(new URL('../../../autopilot.js', import.meta.url), 'utf8');
 // Restarting autopilot must reuse any existing coinflipper rather than duplicate it.
-const coinflipStartup = autopilotSource.slice(autopilotSource.indexOf('await doSCP(ns, RUNLOG_FILE'),
+const coinflipStartup = autopilotSource.slice(autopilotSource.indexOf('// A restarted autopilot'),
   autopilotSource.indexOf('let startUpRan = false'));
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 for (const running of [true, false]) {
@@ -279,8 +279,8 @@ for (const running of [true, false]) {
     async (ns, name) => { launches.push(name); return 7; });
   assert.deepEqual(launches, running ? [] : ['coinflip.js']);
 }
-const helperSource = autopilotSource.slice(autopilotSource.indexOf('async function checkOnRunningScripts(ns)'),
-  autopilotSource.indexOf('async function runPeriodicScripts(ns)'));
+const helperSource = autopilotSource.slice(autopilotSource.indexOf('async function checkOnRunningScripts(ns,'),
+  autopilotSource.indexOf('async function runPeriodicScripts(ns,'));
 const helperLaunches = [];
 const checkHelpers = Function('asynchronousHelpers', 'isScriptRunning', 'runScriptSomewhere',
   'const PERIOD=30000; const log=()=>{}, getErrorInfo=String; ' + helperSource + '; return checkOnRunningScripts;')(

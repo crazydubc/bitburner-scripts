@@ -1,18 +1,24 @@
 import {
-  log, getReset, getPlayerInfo, getBNMults, getErrorInfo, isScriptRunning, getStocksValue, destroyWD,
-  launchScriptHelper, crackHosts, getActiveSourceFiles, formatDuration, disableLogs,
+  log, getReset, getPlayerInfo, getBNMults, getErrorInfo, isScriptRunning, getRunningScriptNames, getStocksValue, destroyWD,
+  launchScriptHelper, crackHosts, getActiveSourceFiles, formatDuration, disableLogs, getConfiguration,
   getOwnedAugs, getFacInvReqs, singRun, formatMoney, getServerMaxRam, getPortCrackers,
   getServers, runScriptSomewhere, runScriptLocal, doSCP, gangRun, sleeveRun, stanekRun, bbRun, getReserve, setReserve
 } from './utils.js';
 
-import { recordBnStart, printBnRunSummary, RUNLOG_FILE } from './logger.js'
+import { recordBnStart, recordRunEvents, printBnRunSummary } from './logger.js'
 import {
   buildAscendArgs, getFreshDonationFavorProgress, NEUROFLUX
 } from './donation-favor.js'
 import {
   selectNextBitNode, sourceFileLevel, hasBladeburnerAccess, hasCompletedBladeburner,
-  getIntelFarmReadiness, intelFarmState
+  getIntelFarmReadiness, intelFarmState, BN_ROUTE, EARLY_UNLOCK_ROUTE
 } from './progression.js'
+
+const argsSchema = [
+  ['bn-route', 'current'], // current or unlocks-first; set autopilot.js.config.txt to retain the experiment across resets.
+  ['disable-go', false], // Prevent Go auto-launch while comparing an external bot; stop an existing go.js yourself first.
+];
+export function autocomplete(data) { data.flags(argsSchema); return []; }
 
 /** Preserve player reserves and don't repeatedly launch a disabled corporation feature. */
 export function shouldStartCorporation(ns, sourceFiles, currentNode, money, reserve) {
@@ -28,6 +34,13 @@ export function shouldStartCorporation(ns, sourceFiles, currentNode, money, rese
 /** @param {NS} ns */
 export async function main(ns) {
   ns.ramOverride(4.2) // Include the reply watchdog's API cost, with a small margin.
+  const options = getConfiguration(ns, argsSchema);
+  if (!options) return;
+  if (!['current', 'unlocks-first'].includes(options['bn-route'])) {
+    ns.tprint('ERROR: --bn-route must be current or unlocks-first.');
+    return;
+  }
+  const route = options['bn-route'] === 'unlocks-first' ? EARLY_UNLOCK_ROUTE : BN_ROUTE;
   const factionManagerOutputFile = "/Temp/affordable-augs.txt"; // Temp file produced by faction manager with status information
   //disableLogs(ns, ['getServerMaxRam', 'getServerUsedRam', 'getServerMoneyAvailable', 'getServerGrowth', 'getServerSecurityLevel', 'exec', 'scan', 'sleep', 'scp'])
   log(ns, `Cracking initial hosts..`, 'info')
@@ -56,6 +69,18 @@ export async function main(ns) {
   let wdHack = null;
   let maxRam = 8;
   let lastFactionManagerWarning = 0;
+  const observedMilestones = new Set();
+  let nextTelemetryAttempt = 0;
+  let lastInvestmentDeadline, nextInvestmentDeadlineAttempt = 0;
+  async function noteMilestones(events) {
+    if (Date.now() < nextTelemetryAttempt) return;
+    const fresh = events.filter(event => !observedMilestones.has(`${event.kind}:${event.key ?? ''}`));
+    if (fresh.length) {
+      if (await recordRunEvents(ns, fresh, currBN))
+        fresh.forEach(event => observedMilestones.add(`${event.kind}:${event.key ?? ''}`));
+      else nextTelemetryAttempt = Date.now() + 30_000;
+    }
+  }
   const lastRestart = Date.now();
   let augMomentum = {
     lastAugCount: 0,
@@ -106,14 +131,14 @@ export async function main(ns) {
   //in order by importance!
   const asynchronousHelpers = [
     {
-      name: "work-for-faction2.js",
-      shouldRun: () => 4 in unlockedSFs,
-      args: getFactionWorkerArgs
-    },
-    {
       name: "kernel.js",
       shouldRun: () => true,
       args: () => []
+    },
+    {
+      name: "work-for-faction2.js",
+      shouldRun: () => 4 in unlockedSFs,
+      args: getFactionWorkerArgs
     },
     {
       name: "host-manager.js",
@@ -138,7 +163,7 @@ export async function main(ns) {
     },
     {
       name: "go.js",
-      shouldRun: () => reqRam(2000),
+      shouldRun: () => !options['disable-go'] && reqRam(2000),
       args: () => []
     },
     {
@@ -203,7 +228,7 @@ export async function main(ns) {
     {
       name: "hacknet-upgrade-manager.js",
       shouldRun: shouldUpgradeHacknet,
-      args: () => ["-c", "--max-payoff-time", "4h"],
+      args: () => ["-c", "--max-payoff-time", "4h", "--respect-reset-horizon"],
       nextRun: Date.now() + (2 * STAGGER)
     },
     {
@@ -248,12 +273,11 @@ export async function main(ns) {
     if (ns.getHostname() == 'home') {
       if (await getServerMaxRam(ns, 'home') < 64) {
         log(ns, "INFO: Bootstrapping autopilot.", true, 'info');
-        const pid = await runScriptSomewhere(ns, 'autopilot.js', true, []);
+        const pid = await runScriptSomewhere(ns, 'autopilot.js', true, ns.args);
         if (pid != 0) return;
       }
     }
     log(ns, "INFO: Auto-pilot engaged...", true, 'info');
-    await doSCP(ns, RUNLOG_FILE, ns.getHostname(), "home");
     // A restarted autopilot must not duplicate a coinflipper that is still earning.
     if (!await isScriptRunning(ns, 'coinflip.js'))
       await launchScriptHelper(ns, 'coinflip.js'); //lets try to get some cash!
@@ -297,9 +321,9 @@ export async function main(ns) {
       log(ns, 'Manual steps: work for factions, buy/install useful augmentation bundles, then restart automation. ' +
         'For first-BN1 prompts, run bn1-guide.js. After BN1.1, complete BN4.1–4.3 for Singularity automation.', true);
     }
-    await recordBnStart(ns, currBN);
-    printBnRunSummary(ns, 25);
-    const next = selectNextBitNode(dictOwnedSourceFiles, resetInfo.currentNode);
+    const runLog = await recordBnStart(ns, currBN, {route: options['bn-route']});
+    printBnRunSummary(ns, 25, runLog);
+    const next = selectNextBitNode(dictOwnedSourceFiles, resetInfo.currentNode, route);
     nextRecommendedBn = next.node;
     log(ns, `INFO: After BN${currBN}, next is BN${next.node}` +
       (next.repeat ? ' (repeat).' : ` until SF${next.node}.${next.targetLevel}.`), true);
@@ -332,7 +356,7 @@ export async function main(ns) {
     maxRam = 0;
     for (const server of servers) {
       if (server.hasAdminRights && server.maxRam > 0)
-        maxRam += await getServerMaxRam(ns, server.hostname)
+        maxRam += server.maxRam
     }
     let stocksValue = 0;
     try { stocksValue = await getStocksValue(ns); } catch { /* Assume if this fails (insufficient ram) we also have no stocks */ }
@@ -341,8 +365,14 @@ export async function main(ns) {
     await checkOnDaedalusStatus(ns, player, stocksValue);
     await checkIfBnIsComplete(ns);
     await maybeAcceptStaneksGift(ns);
-    await runPeriodicScripts(ns);
-    await checkOnRunningScripts(ns);
+    const runningScripts = getRunningScriptNames(ns, servers);
+    await checkOnRunningScripts(ns, runningScripts);
+    await runPeriodicScripts(ns, runningScripts);
+    await noteMilestones([
+      ...player.factions.map(faction => ({kind: 'faction-joined', key: faction})),
+      ...(runningScripts.has('kernel.js') ? [{kind: 'hacking-automation-running'}] : []),
+      ...(stocksValue > 0 ? [{kind: 'stock-position-observed'}] : []),
+    ]);
     await maybeInstallAugmentations(ns, player);
     return shouldWeKeepRunning(ns); // Return false to shut down autopilot.js if we installed augs, or don't have enough home RAM
   }
@@ -366,16 +396,18 @@ export async function main(ns) {
     return currentReserve == reserve ? true : currentMoneyReserve = await setReserve(ns, reserve); // Reserve for stocks
   }
 
-  async function checkOnRunningScripts(ns) {
+  async function checkOnRunningScripts(ns, runningScripts) {
     for (const script of asynchronousHelpers) {
       if (Date.now() < (script.nextRun ?? 0)) continue;
       try {
-        const serverRunning = await isScriptRunning(ns, script.name);
+        const serverRunning = await isScriptRunning(ns, script.name, runningScripts);
         if (script.shouldRun() && !serverRunning) {
+          let pid;
           if (script.name == "darknet.js")
-            ns.exec(script.name, 'home', { threads: 1, temporary: true, preventDuplicates: true }, ...script.args());
+            pid = ns.exec(script.name, 'home', { threads: 1, temporary: true, preventDuplicates: true }, ...script.args());
           else
-            await runScriptSomewhere(ns, script.name, true, script.args());
+            pid = await runScriptSomewhere(ns, script.name, true, script.args());
+          if (pid > 0) runningScripts?.add(script.name.replace(/^\/+/, ''));
         }
       } catch (error) {
         log(ns, `WARNING: ${script.name} launch deferred: ${getErrorInfo(error)}`);
@@ -384,16 +416,17 @@ export async function main(ns) {
       }
     }
   }
-  async function runPeriodicScripts(ns) {
+  async function runPeriodicScripts(ns, runningScripts) {
     const now = Date.now();
 
     for (const script of periodicScripts) {
       if (now > script.nextRun) {
         try {
-          const serverRunning = await isScriptRunning(ns, script.name);
+          const serverRunning = await isScriptRunning(ns, script.name, runningScripts);
           if (script.shouldRun() && !serverRunning) {
             log(ns, `Running ${script.name}`);
-            await runScriptSomewhere(ns, script.name, false, script.args());
+            const pid = await runScriptSomewhere(ns, script.name, false, script.args());
+            if (pid > 0) runningScripts?.add(script.name.replace(/^\/+/, ''));
           }
         } catch (error) {
           log(ns, `WARNING: ${script.name} launch deferred: ${getErrorInfo(error)}`);
@@ -459,6 +492,7 @@ export async function main(ns) {
     }
 
     if (bladeburnerComplete || (Number.isFinite(wdHack) && player.skills.hacking >= wdHack && ns.hasRootAccess("w0r1d_d43m0n"))) {
+        await noteMilestones([{kind: 'bn-finish-ready', data: {method: bladeburnerComplete ? 'bladeburner' : 'hacking'}}]);
         //time to leave....
         if (!(4 in unlockedSFs)) {
           log(ns, `You do not own SF4, so you must manually exit the bitnode (` +
@@ -678,7 +712,25 @@ export async function main(ns) {
     const donationFavorProgress = getFreshDonationFavorProgress(facman, resetInfo);
     const readyDonationFavor = donationFavorProgress.filter(progress => progress.ready);
 
-    updateAugMomentum(ns, pendingAugInclNfCount);
+    // Repeat NeuroFlux levels cannot keep moving a useful bundle's installation deadline.
+    // An NF-only queue gets one initial wait window, then no further extensions from more levels.
+    updateAugMomentum(ns, pendingAugCount || (pendingNfCount > 0 ? 1 : 0));
+
+    // Publish only changed deadlines on home. The buyer checks the matching fresh queue before using one.
+    const resetSoon = readyDonationFavor.length > 0 || facman.affordable_augs.includes(augTRP) ||
+      facman.awaiting_install_augs.includes(augTRP) ||
+      (playerInstalledAugCount < bitNodeMults.DaedalusAugsRequirement &&
+        pendingAugCount + playerInstalledAugCount >= bitNodeMults.DaedalusAugsRequirement);
+    const investmentDeadline = resetSoon ? getAugmentationCycleStart() + 1 : pendingAugInclNfCount <= 0 ? 0 :
+      getAugmentationCycleStart() + Math.min(MAX_AUGMENTATION_WAIT,
+        pendingAugInclNfCount > 2 ? augMomentum.nextExpectedAug : MAX_AUGMENTATION_WAIT);
+    if (investmentDeadline !== lastInvestmentDeadline && Date.now() >= nextInvestmentDeadlineAttempt) {
+      nextInvestmentDeadlineAttempt = Date.now() + 30_000;
+      try {
+        if (await runScriptLocal(ns, 'bin/getHacknetPayoff.js', false,
+          ['update', investmentDeadline, resetInfo.lastAugReset]) === true) lastInvestmentDeadline = investmentDeadline;
+      } catch (error) { log(ns, `WARNING: Hacknet reset horizon update deferred: ${String(error)}`); }
+    }
 
     //we need 30 augs to get an invite from deadalus. Reset to get this.
     if (playerInstalledAugCount < bitNodeMults.DaedalusAugsRequirement
@@ -715,6 +767,7 @@ export async function main(ns) {
   }
   /** Logic to detect if it's a good time to install augmentations, and if  o, do s    * @param {NS} ns*/
   async function installAugs(ns, allowSoftReset = false) {
+    await noteMilestones([{kind: 'installation-requested', data: {allowSoftReset}}]);
     const ascendArgs = buildAscendArgs(ns.getScriptName(), allowSoftReset);
     await runScriptLocal(ns, "ascend.js", false, ascendArgs);
     await ns.sleep(1000000);

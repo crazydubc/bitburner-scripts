@@ -5,6 +5,9 @@ const getConfiguration=ns=>({runOnce:true,cheats:false,'disable-cheats':true,'ch
 const log=(ns,message)=>ns.audit.log(message), getErrorInfo=String, getActiveSourceFiles=async ns=>ns.audit.sourceFiles??{};
 const whichServerIsRunning=async()=>['home',1], disableLogs=()=>{};
 const getBoard=async ns=>ns.audit.board(), getControlledENodes=async ns=>ns.audit.controlled();
+const getReset=async ns=>ns.audit.reset??{}, recordGoResult=async(ns,result)=>ns.audit.record?.(result);
+const getGoSnapshot=async ns=>({board:ns.audit.board(),controlled:ns.audit.controlled(),valid:ns.audit.valid(),
+  liberties:ns.audit.liberties(),chains:ns.audit.chains()});
 const goMove=async(ns,x,y)=>ns.audit.play(x,y), goValidMoves=async ns=>ns.audit.valid();
 const goLiberties=async ns=>ns.audit.liberties(), goChains=async ns=>ns.audit.chains();
 const goCheatChance=async()=>0, play2Moves=()=>{throw Error('cheats disabled')}, destroyND=play2Moves;

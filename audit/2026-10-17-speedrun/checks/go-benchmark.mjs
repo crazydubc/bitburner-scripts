@@ -15,7 +15,8 @@ const baselineRef = 'a05225d5c63d877e35ba7d34d70d7adbbff9cc69';
 const engineCommit = execFileSync('git', ['-C', enginePath, 'rev-parse', 'HEAD'], {encoding:'utf8'}).trim();
 const e = await loadGoEngine(enginePath);
 const {black, white, empty} = e.GoColor;
-const opponents = ['Netburners', 'Slum Snakes', 'The Black Hand', 'Tetrads', 'Daedalus', 'Illuminati'];
+const opponents = process.argv[7] === 'hidden' ? ['????????????'] :
+  ['Netburners', 'Slum Snakes', 'The Black Hand', 'Tetrads', 'Daedalus', 'Illuminati'];
 const original = execFileSync('git', ['-C', root, 'show', `${baselineRef}:go.js`], {encoding:'utf8'});
 let candidate = readFileSync(resolve(root, 'go.js'), 'utf8');
 const experiment = process.argv[6] === 'experiment';
@@ -28,8 +29,9 @@ if (experiment) {
     candidate = readFileSync(resolve(temporary, 'go.js'), 'utf8');
   } finally {rmSync(temporary, {recursive:true, force:true});}
 }
-const bots = [['baseline-format-fix', await loadGoBot(original, true)],
+let bots = [['baseline-format-fix', await loadGoBot(original, true)],
   [experiment ? 'experimental-tactics' : 'proposed-fixes', await loadGoBot(candidate)]];
+if (process.argv[6] === 'current-only') bots = bots.slice(1);
 
 async function play(main, opponent, gameSeed) {
   let rng = gameSeed;

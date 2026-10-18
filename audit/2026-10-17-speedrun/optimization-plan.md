@@ -1,5 +1,7 @@
 # Implementation and measurement plan
 
+**October 18 follow-up:** startup ordering, process/stock/Go observations, NeuroFlux-independent timing, reset-aware Hacknet ROI, engine-timestamp logging, and earlier guarded corporation bribes are now implemented. Board-size results, external Go assessment, hidden-opponent support, and an opt-in route comparison are in [2026-10-18-followup.md](2026-10-18-followup.md). The proposals below retain the original audit context; use that follow-up for current implementation status.
+
 Optimize wall-clock time to useful installed augmentations and completed BNs. Keep the existing batcher as the baseline and land bounded changes in the single testing PR. This document records the original proposed work order. All 18 finding fixes and the proposed route are now implemented with focused checks; see [remaining-fixes.md](remaining-fixes.md) and [progression-fixes.md](progression-fixes.md). The candidates below are experiments requiring live timing, not outstanding confirmed defect fixes.
 
 ## Repair order

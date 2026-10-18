@@ -1,4 +1,5 @@
 import { getReset, log, corpRun, getBNMults, getReserve, purchase as guardedPurchase } from './utils.js'
+import { recordRunEvents } from './logger.js'
 
 //Can we get rid of these?
 const corpName = "Shady-Ent"
@@ -767,6 +768,7 @@ async function checkInvest(ns) {
   }
 
   const nextOffer = await corpRun(ns, 'getInvestmentOffer')
+  await recordRunEvents(ns, [{kind: 'corporation-investment', key: String(round), data: {round, offerFunds}}])
   const nextRound = Number(nextOffer?.round)
   investOffer = nextOffer
   teaNeeded = true

@@ -1,8 +1,9 @@
 import {
   findPids, getActiveSourceFiles, getReset, gangRun, singRun, log, getBNMults, getPlayerInfo,
-  getOwnedAugs, getErrorInfo, bbRun, addRepToFavor, favorToRep, formatDuration, getServ, corpRun
+  getOwnedAugs, getErrorInfo, bbRun, addRepToFavor, favorToRep, formatDuration, getServ, corpRun, runScriptLocal
 } from './utils.js';
 import { hasBladeburnerAccess, getIntelFarmReadiness, intelFarmState } from './progression.js';
+import { recordRunEvents } from './logger.js';
 import {
   DEFAULT_PRIORITY_AUGS, DEFAULT_DESIRED_AUGS, getDefaultDesiredStats, buildDesiredAugSet,
   buildAugUtilityMap, getUsefulAugsForFaction, planBestFactionRepRoute,
@@ -16,7 +17,7 @@ const PROGRESS_CHECK_INTERVAL = 5 * 1000;
 const INVITE_REPLAN_INTERVAL = 15 * 1000;
 const GANG_KARMA_REQUIREMENT = -54_000;
 const COMPANY_FACTION_REP = 400_000;
-const CORPORATION_BRIBE_MIN_RESERVE = 1e18;
+const CORPORATION_BRIBE_MIN_RESERVE = 1e12;
 const CORPORATION_BRIBE_OPERATING_RESERVE_SECONDS = 10 * 60;
 
 /** Return the exact full bribe cost, or zero when corporation excess cannot finish the target. */
@@ -642,41 +643,17 @@ export async function main(ns) {
     try {
       if (await corpRun(ns, "hasCorporation") !== true) return false;
 
-      const corporation = await corpRun(ns, "getCorporation");
-      const constants = await corpRun(ns, "getConstants");
-      if (!corporation || typeof corporation !== "object" ||
-        !constants || typeof constants !== "object") return false;
-
-      const valuation = Number(corporation.valuation);
-      const bribeThreshold = Number(constants.bribeThreshold);
-      const costPerRep = Number(constants.bribeAmountPerReputation);
-      if (!Number.isFinite(valuation) || !Number.isFinite(bribeThreshold) ||
-        valuation < bribeThreshold || !Number.isFinite(costPerRep) || costPerRep <= 0) return false;
-
-      const currentRep = Number(await singRun(ns, "getFactionRep", faction));
-      if (!Number.isFinite(currentRep)) return false;
-      if (currentRep >= targetRep) {
-        factionRep[faction] = currentRep;
-        return true;
-      }
-
-      const amount = getCorporationBribeAmount({
-        funds: corporation.funds,
-        expenses: corporation.expenses,
-        currentRep,
-        targetRep,
-        bribeAmountPerReputation: costPerRep,
-      });
-      const request = normalizeCorporationBribeRequest({ faction }, amount);
-      if (!request || await corpRun(ns, "bribe", request.faction, request.amount) !== true) return false;
-
-      const measuredRep = Number(await singRun(ns, "getFactionRep", faction));
-      const updatedRep = Number.isFinite(measuredRep)
-        ? measuredRep
-        : currentRep + request.amount / costPerRep;
+      const result = await runScriptLocal(ns, 'bin/bribe-faction.js', false, [faction, targetRep]);
+      if (!result || typeof result !== 'object' || !Number.isFinite(result.updatedRep) ||
+        !Number.isFinite(result.amount)) throw new Error(`Invalid bribe result: ${String(result)}`);
+      if (!result.success) return false;
+      const {currentRep, updatedRep, amount} = result;
       factionRep[faction] = updatedRep;
+      if (amount === 0) return updatedRep >= targetRep;
+      await recordRunEvents(ns, [{kind: 'corporation-bribe', key: `${faction}:${targetRep}`,
+        data: {faction, amount, targetRep, measuredRep: updatedRep, purpose: plan.kind}}]);
       lastCorporationBribeError = "";
-      log(ns, `Corporation spent $${ns.format.number(request.amount, 3)} to raise ${faction} reputation ` +
+      log(ns, `Corporation spent $${ns.format.number(amount, 3)} to raise ${faction} reputation ` +
         `from ${Math.floor(currentRep).toLocaleString()} to ${Math.floor(updatedRep).toLocaleString()} ` +
         `for [${(plan.unlockedAugs ?? []).join(", ")}].`, false, "success");
       return updatedRep >= targetRep;

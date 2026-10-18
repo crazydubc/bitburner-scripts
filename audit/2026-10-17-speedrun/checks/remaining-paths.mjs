@@ -24,15 +24,15 @@ const active = new Set(), launched = [], entries = [
 const bindings = {PERIOD: 30000, log: noop, getErrorInfo: String,
   isScriptRunning: async (_ns, file) => active.has(file),
   runScriptSomewhere: async (_ns, file) => {launched.push(file); if (file === 'fail.js') throw Error('home full'); active.add(file); return 1;}};
-const runPeriodic = await extract('autopilot.js', 'async function runPeriodicScripts(ns)', '/** Accept Stanek', {...bindings, periodicScripts: entries});
+const runPeriodic = await extract('autopilot.js', 'async function runPeriodicScripts(ns,', '/** Accept Stanek', {...bindings, periodicScripts: entries});
 await runPeriodic({}); assert.deepEqual(launched, ['fail.js', 'manager.js']);
 await runPeriodic({}); assert.equal(launched.length, 2);
 const helpers = [{name: 'manager.js', nextRun: Date.now() + 60000, shouldRun: () => true, args: () => []},
   {name: 'another.js', nextRun: 0, shouldRun: () => true, args: () => []}];
-const runHelpers = await extract('autopilot.js', 'async function checkOnRunningScripts(ns)', 'async function runPeriodicScripts',
+const runHelpers = await extract('autopilot.js', 'async function checkOnRunningScripts(ns,', 'async function runPeriodicScripts',
   {...bindings, asynchronousHelpers: helpers});
 await runHelpers({}); assert.deepEqual(launched, ['fail.js', 'manager.js', 'another.js']);
-assert((await source('autopilot.js')).includes('["-c", "--max-payoff-time", "4h"]'));
+assert((await source('autopilot.js')).includes('["-c", "--max-payoff-time", "4h", "--respect-reset-horizon"]'));
 assert(!(await source('autopilot.js')).includes('1E100h'));
 
 // B13: a clean remote parent uses only the home child, deduplicates by target, and includes equal-level servers.

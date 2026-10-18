@@ -1,4 +1,4 @@
-import { getConfiguration, disableLogs, formatDuration, formatMoney, getReserve, purchase } from './utils.js'
+import { getConfiguration, disableLogs, formatDuration, formatMoney, getReserve, purchase, runScriptLocal } from './utils.js'
 
 let haveHacknetServers = true; // Cached flag after detecting whether we do (or don't) have hacknet servers
 const argsSchema = [
@@ -10,6 +10,7 @@ const argsSchema = [
   ['max-spend', Number.MAX_VALUE], // The maximum amount of money to spend on upgrades
   ['toast', false], // Set to true to toast purchases
   ['reserve', null], // Reserve this much cash (defaults to contents of reserve.txt if not specified)
+  ['respect-reset-horizon', false], // Autopilot enables this: shorten cash ROI when a fresh augmentation queue is approaching reset.
 ];
 
 export function autocomplete(data, _) {
@@ -36,9 +37,21 @@ export async function main(ns) {
   setStatus(ns, `Starting hacknet-upgrade-manager with purchase payoff time limit of ${formatDuration(maxPayoffTime * 1000)} and ` +
     (maxSpend == Number.MAX_VALUE ? 'no spending limit' : `a spend limit of ${formatMoney(maxSpend)}`) +
     `. Current fleet: ${ns.hacknet.numNodes()} nodes...`);
+  let nextHorizonRead = 0, payoffDeadline = 0;
   do {
     try {
-      const moneySpent = await upgradeHacknet(ns, maxSpend, maxPayoffTime, options);
+      let payoffSeconds = maxPayoffTime;
+      if (options['respect-reset-horizon']) {
+        if (Date.now() >= nextHorizonRead) {
+          nextHorizonRead = Date.now() + 30_000;
+          payoffDeadline = 0; // A failed observation pauses new investments until the next sample.
+          const limit = await runScriptLocal(ns, 'bin/getHacknetPayoff.js', false, [maxPayoffTime]);
+          if (!Number.isFinite(limit) || limit < 0) throw new Error(`Invalid Hacknet horizon: ${String(limit)}`);
+          payoffDeadline = Date.now() + limit * 1000;
+        }
+        payoffSeconds = Math.min(maxPayoffTime, Math.max(0, (payoffDeadline - Date.now()) / 1000));
+      }
+      const moneySpent = payoffSeconds > 0 ? await upgradeHacknet(ns, maxSpend, payoffSeconds, options) : 0;
       // Using this method, we cannot know for sure that we don't have hacknet servers until we have purchased one
       if (haveHacknetServers && ns.hacknet.numNodes() > 0 && ns.hacknet.hashCapacity() == 0)
         haveHacknetServers = false;
@@ -52,7 +65,7 @@ export async function main(ns) {
       setStatus(ns, `WARNING: hacknet-upgrade-manager.js Caught (and suppressed) an unexpected error in the main loop:\n` +
         (typeof err === 'string' ? err : err.message || JSON.stringify(err)), false, 'warning');
     }
-    if (continuous) await ns.sleep(interval);
+    if (continuous) await ns.sleep(options['respect-reset-horizon'] && payoffDeadline <= Date.now() ? Math.max(1000, interval) : interval);
   } while (continuous);
 }
 
