@@ -12,6 +12,7 @@ import {getCorporationBribeAmount, normalizeCorporationBribeRequest} from '../..
 import {updateRunLog, RUNLOG_FILE} from '../../../logger.js';
 import {EARLY_UNLOCK_ROUTE, selectNextBitNode} from '../../../progression.js';
 import {selectGoOpponent, HIDDEN_GO_OPPONENT} from '../../../go.js';
+import {evaluateAugmentationReset} from '../../../augmentation-reset-policy.js';
 
 const noop = () => {};
 const source = file => readFileSync(new URL('../../../' + file, import.meta.url), 'utf8');
@@ -101,9 +102,11 @@ function installation() {
   const definitions = section(autopilot, '  function updateAugMomentum(', '  /** Retrieves') +
     section(autopilot, '  function getPendingAugmentationCounts(', '  /** Logic to detect') +
     section(autopilot, '  async function maybeInstallAugmentations(', '  /** Logic to detect if it\'s a good time');
-  const create = Function('live', `
+  const create = Function('live', 'evaluateAugmentationReset', `
     const ns={getHostname:()=> 'remote'}, NEUROFLUX='NeuroFlux Governor', unlockedSFs={4:3}, MAX_AUGMENTATION_WAIT=14400000;
     const resetInfo={currentNode:1,lastAugReset:1000}, factionManagerOutputFile='queue', playerInstalledAugCount=40;
+    const installedAugmentations=[], have4sApi=true, shouldIntelFarm=false, wdHack=null, resetDecisionState={};
+    let lastResetDecisionLog='', nextResetDecisionLog=0;
     const bitNodeMults={DaedalusAugsRequirement:30}, augTRP='The Red Pill';
     const augMomentum={lastAugCount:0,bestRate:0,nextExpectedAug:0}, Date={now:()=>1000+live.elapsed};
     let currentMoneyReserve, lastInvestmentDeadline, nextInvestmentDeadlineAttempt=0;
@@ -116,7 +119,7 @@ function installation() {
     const installAugs=async()=>{live.installs++;};
     ${definitions}
     return {step:()=>maybeInstallAugmentations(ns,{}),momentum:augMomentum};`);
-  return {...create(live), live};
+  return {...create(live,evaluateAugmentationReset), live};
 }
 let install = installation(); await install.step();
 const due = install.momentum.nextExpectedAug;

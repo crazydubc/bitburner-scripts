@@ -4,6 +4,8 @@
 
 **Further implementation:** [the throughput follow-up](2026-10-18-throughput-followup.md) batches faction metadata, refreshes changing favor, honors worker deadlines, and combines cloud upgrades into one affordable jump. The remaining policy experiments still need live milestone comparisons.
 
+**October 19 reset policy:** [time-based goal selection](2026-10-19-neuroflux-reset.md) now values pending NF benefits alongside ordinary augmentations, compares the next goal's ETA with its additional utility, and bounds stalled waits. It supersedes the earlier NeuroFlux-independent timing when fresh goal data is available. The reported ten-hour BN1.1 run is a baseline observation, not a fixed augmentation-count target.
+
 Optimize wall-clock time to useful installed augmentations and completed BNs. Keep the existing batcher as the baseline and land bounded changes in the single testing PR. This document records the original proposed work order. All 18 finding fixes and the proposed route are now implemented with focused checks; see [remaining-fixes.md](remaining-fixes.md) and [progression-fixes.md](progression-fixes.md). The candidates below are experiments requiring live timing, not outstanding confirmed defect fixes.
 
 ## Repair order

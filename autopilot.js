@@ -6,6 +6,7 @@ import {
 } from './utils.js';
 
 import { recordBnStart, recordRunEvents, printBnRunSummary } from './logger.js'
+import { evaluateAugmentationReset } from './augmentation-reset-policy.js';
 import {
   buildAscendArgs, getFreshDonationFavorProgress, NEUROFLUX
 } from './donation-favor.js'
@@ -97,6 +98,8 @@ export async function main(ns) {
     nextExpectedAug: 0,
     hardCapLogged: false,
   };
+  const resetDecisionState = {};
+  let lastResetDecisionLog = '', nextResetDecisionLog = 0;
   const shouldUpgradeHacknet = () =>
     bitNodeMults.HacknetNodeMoney > 0 && // Ensure hacknet is not disabled in this BN
     getPlayerMoney(ns) > reservedMoney(ns); // Player money exceeds the reserve (otherwise it will sit there buying nothing)
@@ -589,37 +592,37 @@ export async function main(ns) {
       };
     }
   }
-  function updateAugMomentum(ns, pendingAugCount) {
-    if (pendingAugCount <= 0) return;
+  function updateAugMomentum(ns, pendingAugCount, pendingNfCount = 0, quiet = false) {
+    const momentumCount = pendingAugCount || (pendingNfCount > 0 ? 1 : 0);
+    if (momentumCount <= 0) return;
 
     const now = Date.now();
     const timeInAug = Math.max(1, getTimeInAug());
     const hardCapReached = timeInAug >= MAX_AUGMENTATION_WAIT;
+    let weight = 2;
+    if ((2 in unlockedSFs)) weight += 0.5; // Resetting with a gang reduces its multipliers.
+    if ((13 in unlockedSFs)) weight += 0.5; // Resetting loses Stanek charges.
+    const nextDeadline = count => timeInAug + Math.max(
+      (timeInAug / count) * Math.max(1, 5 - Math.ceil(count / weight)), 100000);
 
-    if (pendingAugCount > augMomentum.lastAugCount) {
-      augMomentum.lastAugCount = pendingAugCount;
+    if (momentumCount > augMomentum.lastAugCount) {
+      augMomentum.lastAugCount = momentumCount;
       augMomentum.lastIncreaseTime = now;
 
-      // allow delay: up to 5x avg, reduced by 1 for every 2 augs, but never below 1x
-      let weight = 2;
-      if ((2 in unlockedSFs)) weight += 0.5; //resetting with a gang reduces their multipliers 
-      if ((13 in unlockedSFs)) weight += 0.5; //resetting will reset stanek charges.
-      const div = Math.max(1, 5 - Math.ceil(pendingAugCount / weight));
-
       // "expected time since reset when the next aug should arrive"
-      augMomentum.nextExpectedAug = timeInAug + Math.max(((timeInAug / pendingAugCount) * div), 100000);
+      augMomentum.nextExpectedAug = nextDeadline(momentumCount);
 
       const eta = Math.max(0, augMomentum.nextExpectedAug - timeInAug);
 
-      log(
+      if (!quiet) log(
         ns,
         `INFO: ${formatDuration(timeInAug)} since last reset. ` +
-        `Pending augs: ${pendingAugCount}. Next expected in ${formatDuration(eta)} ` +
+        `Pending augs: ${pendingAugCount} + ${pendingNfCount} NF. Next expected in ${formatDuration(eta)} ` +
         `(at T+${formatDuration(augMomentum.nextExpectedAug)}).`,
         true
       );
 
-      const rate = pendingAugCount / timeInAug;
+      const rate = momentumCount / timeInAug;
       augMomentum.bestRate = Math.max(augMomentum.bestRate, rate);
     }
 
@@ -630,7 +633,7 @@ export async function main(ns) {
       augMomentum.nextExpectedAug = timeInAug;
       if (!augMomentum.hardCapLogged) {
         augMomentum.hardCapLogged = true;
-        log(ns, `INFO: Pending augs: ${pendingAugCount}. The four-hour augmentation wait cap has been reached; ` +
+        log(ns, `INFO: Pending augs: ${pendingAugCount} + ${pendingNfCount} NF. The four-hour augmentation wait cap has been reached; ` +
           `the next safe reset check will ascend.`, true, 'info');
       }
     }
@@ -724,21 +727,35 @@ export async function main(ns) {
     }
 
     const pendingAugInclNfCount = pendingAugCount + pendingNfCount;
+    // NF contributes one distinct augmentation only on its first installation.
+    const pendingDistinctAugCount = pendingAugCount +
+      (pendingNfCount > 0 && !installedAugmentations.includes(NEUROFLUX) ? 1 : 0);
     const donationFavorProgress = getFreshDonationFavorProgress(facman, resetInfo);
     const readyDonationFavor = donationFavorProgress.filter(progress => progress.ready);
 
     // Repeat NeuroFlux levels cannot keep moving a useful bundle's installation deadline.
-    // An NF-only queue gets one initial wait window, then no further extensions from more levels.
-    updateAugMomentum(ns, pendingAugCount || (pendingNfCount > 0 ? 1 : 0));
+    // Use this historical timing only when current goal estimates are unavailable.
+    updateAugMomentum(ns, pendingAugCount, pendingNfCount, facman.reset_planning?.version === 1 && !shouldIntelFarm);
+    const stockUpgradeCost = have4sApi ? 0 : 25e9 * bitNodeMults.FourSigmaMarketDataApiCost +
+      (ns.stock.has4SData() ? 0 : 1e9 * bitNodeMults.FourSigmaMarketDataCost);
+    const goalDecision = shouldIntelFarm ? {action: 'fallback', reason: 'intel-preparation'} :
+      evaluateAugmentationReset(facman, resetInfo, resetDecisionState, Date.now(),
+        installedAugmentations.includes(augTRP) ? wdHack : 0, stockUpgradeCost);
+    const goalTimingAvailable = ['wait', 'reset'].includes(goalDecision.action);
+    const expectedInstallTime = goalTimingAvailable
+      ? goalDecision.action === 'reset' ? timeSinceAug : goalDecision.deadline - getAugmentationCycleStart()
+      : augMomentum.nextExpectedAug;
+    const installationDetails = { pendingAugs: pendingAugCount, pendingNeuroflux: pendingNfCount,
+      pendingDistinctAugs: pendingDistinctAugCount, elapsed: timeSinceAug,
+      deadline: expectedInstallTime, decision: goalDecision };
 
     // Publish only changed deadlines on home. The buyer checks the matching fresh queue before using one.
-    const resetSoon = readyDonationFavor.length > 0 || facman.affordable_augs.includes(augTRP) ||
+    const resetSoon = goalDecision.action === 'reset' || readyDonationFavor.length > 0 || facman.affordable_augs.includes(augTRP) ||
       facman.awaiting_install_augs.includes(augTRP) ||
       (playerInstalledAugCount < bitNodeMults.DaedalusAugsRequirement &&
-        pendingAugCount + playerInstalledAugCount >= bitNodeMults.DaedalusAugsRequirement);
+        pendingDistinctAugCount + playerInstalledAugCount >= bitNodeMults.DaedalusAugsRequirement);
     const investmentDeadline = resetSoon ? getAugmentationCycleStart() + 1 : pendingAugInclNfCount <= 0 ? 0 :
-      getAugmentationCycleStart() + Math.min(MAX_AUGMENTATION_WAIT,
-        pendingAugInclNfCount > 2 ? augMomentum.nextExpectedAug : MAX_AUGMENTATION_WAIT);
+      getAugmentationCycleStart() + Math.min(MAX_AUGMENTATION_WAIT, expectedInstallTime);
     if (investmentDeadline !== lastInvestmentDeadline && Date.now() >= nextInvestmentDeadlineAttempt) {
       nextInvestmentDeadlineAttempt = Date.now() + 30_000;
       try {
@@ -749,13 +766,13 @@ export async function main(ns) {
 
     //we need 30 augs to get an invite from deadalus. Reset to get this.
     if (playerInstalledAugCount < bitNodeMults.DaedalusAugsRequirement
-      && pendingAugCount + playerInstalledAugCount >= bitNodeMults.DaedalusAugsRequirement)
-      return await installAugs(ns);
+      && pendingDistinctAugCount + playerInstalledAugCount >= bitNodeMults.DaedalusAugsRequirement)
+      return await installAugs(ns, false, { ...installationDetails, reason: 'daedalus-count' });
     //Always install if we can get the red pill or another critical aug list in the run options
 
     if (facman.affordable_augs.includes(augTRP) ||
       facman.awaiting_install_augs.includes(augTRP))
-      return await installAugs(ns);
+      return await installAugs(ns, false, { ...installationDetails, reason: 'red-pill' });
 
     const totalCost = facman.total_rep_cost + facman.total_aug_cost;
     currentMoneyReserve = await setReserve(ns, totalCost);
@@ -768,21 +785,43 @@ export async function main(ns) {
         `${progress.faction} (${progress.projected_favor.toFixed(1)}/${progress.required_favor} favor; ` +
         `${progress.desired_augs.join(", ")})`).join("; ");
       log(ns, `SUCCESS: Projected favor now unlocks donations after reset for ${milestones}. Ascending now.`, true, 'success');
-      return await installAugs(ns, true);
+      return await installAugs(ns, true, { ...installationDetails, reason: 'donation-favor' });
     }
 
     const hardCapReached = timeSinceAug >= MAX_AUGMENTATION_WAIT;
-    if (!(pendingAugInclNfCount > 0 && (hardCapReached ||
-      (timeSinceAug >= augMomentum.nextExpectedAug && pendingAugInclNfCount > 2)))) return;
+    if (pendingAugInclNfCount <= 0) return;
+    if (goalTimingAvailable) {
+      const signature = `${goalDecision.action}:${goalDecision.reason}:${goalDecision.goal ?? ''}`;
+      if (signature !== lastResetDecisionLog || Date.now() >= nextResetDecisionLog) {
+        lastResetDecisionLog = signature;
+        nextResetDecisionLog = Date.now() + 60_000;
+        log(ns, `INFO: Ready to install ${pendingAugCount} augs + ${pendingNfCount} NF. ` +
+          (goalDecision.action === 'wait' ? goalDecision.goal
+            ? `Working toward ${goalDecision.goal}: ETA ${formatDuration(goalDecision.eta)}, ` +
+              `wait limit ${formatDuration(Math.max(0, goalDecision.deadline - Date.now()))}.`
+            : 'Measuring money and reputation progress before choosing the next goal.'
+            : `Time to install (${goalDecision.reason}).`), true);
+      }
+      if (!hardCapReached && goalDecision.action === 'wait') return;
+    } else if (!hardCapReached && timeSinceAug < augMomentum.nextExpectedAug) return;
 
-    if (await shouldDelayInstall(ns, player, facman, { forceReset: hardCapReached }))
+    if (await shouldDelayInstall(ns, player, facman, { forceReset: hardCapReached, goalTimingAvailable }))
       return;
 
-    return await installAugs(ns);
+    return await installAugs(ns, false, { ...installationDetails,
+      reason: hardCapReached ? 'hard-cap' : goalTimingAvailable ? goalDecision.reason : 'momentum' });
   }
   /** Logic to detect if it's a good time to install augmentations, and if  o, do s    * @param {NS} ns*/
-  async function installAugs(ns, allowSoftReset = false) {
-    await noteMilestones([{kind: 'installation-requested', data: {allowSoftReset}}]);
+  async function installAugs(ns, allowSoftReset = false, decision = {}) {
+    // A bounded infiltration session may have an unclaimed reward. Let it release the screen first.
+    const infiltrationLease = await runScriptLocal(ns, 'bin/infiltration-control.js', false, ['lease']);
+    if (infiltrationLease !== false) {
+      log(ns, infiltrationLease === true
+        ? 'INFO: Installation is ready; waiting for the active infiltration session to finish.'
+        : 'WARNING: Could not verify infiltration status; deferring installation until the next check.', true);
+      return;
+    }
+    await noteMilestones([{kind: 'installation-requested', data: { ...decision, allowSoftReset }}]);
     const ascendArgs = buildAscendArgs(ns.getScriptName(), allowSoftReset);
     await runScriptLocal(ns, "ascend.js", false, ascendArgs);
     await ns.sleep(1000000);
@@ -863,11 +902,12 @@ export async function main(ns) {
   async function shouldDelayInstall(ns, player, facmanOutput, {
     favorMilestoneReady = false,
     forceReset = false,
+    goalTimingAvailable = false,
   } = {}) {
     const bypassOptimizationDelays = favorMilestoneReady || forceReset;
     // A completed donation milestone or the four-hour hard cap must not be postponed by 4S/BN8
     // optimization. Daedalus and active BlackOps remain higher-priority safety safeguards.
-    if (!bypassOptimizationDelays && !have4sApi) {
+    if (!bypassOptimizationDelays && !goalTimingAvailable && !have4sApi) {
       const totalWorth = player.money + await getStocksValue(ns);
       const has4S = ns.stock.has4SData();
       const totalCost = 25E9 * bitNodeMults.FourSigmaMarketDataApiCost +

@@ -175,6 +175,7 @@ export const remoteScriptDependencies = [
   "hacking-formulas.js",
   "purchase-guard.js",
   "speedrun-policy.js",
+  "augmentation-reset-policy.js",
   "go-policy.js",
   "infiltration-policy.js",
 ];

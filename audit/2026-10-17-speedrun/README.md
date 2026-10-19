@@ -16,6 +16,8 @@ The highest-value work is fixing progression stalls and making the early-game la
 
 **Planning/upgrade follow-up:** batch read-only faction metadata, refresh favor during a running installation, honor reputation/infiltration polling deadlines, and upgrade cloud RAM directly to the largest affordable size. All 19 checks pass with no RAM increase for existing scripts. See [the throughput follow-up](2026-10-18-throughput-followup.md) for evidence and restart instructions.
 
+**Time-based reset follow-up:** include every NF level's stat value and wait only for a worthwhile goal with a bounded ETA. There is no twenty-augmentation target. Add goal/decision logging, count first NF correctly for Daedalus, and finish active infiltration sessions before installing. All 20 checks pass with no RAM increase. See [the reset follow-up](2026-10-19-neuroflux-reset.md).
+
 ## Pull the combined testing branch
 
 In the game terminal:
@@ -37,6 +39,7 @@ Combined-branch checks:
 
 ```sh
 node audit/2026-10-17-speedrun/checks/bn1-guide.mjs
+node audit/2026-10-17-speedrun/checks/augmentation-reset.mjs
 node audit/2026-10-17-speedrun/checks/stock-liquidation.mjs
 node audit/2026-10-17-speedrun/checks/resource-purchases.mjs
 node audit/2026-10-17-speedrun/checks/darknet-lifecycle.mjs

@@ -800,7 +800,7 @@ false, "info");
     let route = chooseBestRoute(repRoute, inviteRoutes);
     route = chooseBestRoute(route, donationRoute);
     if (route) {
-      activePlan = route;
+      activePlan = {...route, plannedAt: Date.now()};
       logPlan(route);
       if (route.kind === "faction-rep" || route.kind === "donation-unlock") return await executeRepPlan(route);
       if (route.kind === "faction-invite") {
@@ -819,11 +819,14 @@ false, "info");
   let nextProgressCheck = 0;
   let nextTargetPublish = 0, lastPublishedTarget = '';
   async function publishInfiltrationTarget() {
-    if (!infiltrationEnabled) return;
+    // Also publish invitation estimates for reset planning when infiltration itself is disabled.
     const plan = activePlan && ['faction-rep', 'donation-unlock'].includes(activePlan.kind) ? {
       kind: activePlan.kind, faction: activePlan.faction, targetRep: activePlan.targetRep,
       repRate: repRateCache[activePlan.faction] ?? 0,
     } : {kind: 'inactive'};
+    if (activePlan?.kind === 'faction-invite' && Number.isFinite(activePlan.eta))
+      plan.workGoal = {faction: activePlan.faction, eta: activePlan.eta * 1000,
+        unlockedAugs: activePlan.unlockedAugs, plannedAt: activePlan.plannedAt};
     const signature = JSON.stringify(plan);
     if (signature === lastPublishedTarget && Date.now() < nextTargetPublish) return;
     try {
@@ -855,7 +858,7 @@ false, "info");
         }
       }
       if (now >= nextPlan) {
-        await planAndAct();
+        if (await planAndAct() === false) activePlan = null;
         nextPlan = Date.now() + requestedReplanDelay;
         nextProgressCheck = Date.now() + PROGRESS_CHECK_INTERVAL;
       }

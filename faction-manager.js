@@ -1,9 +1,10 @@
 import {
   log, getConfiguration, findPids, formatNumberShort, formatMoney,
-  getActiveSourceFiles, getBNMults, getStocksValue, getReset, getPlayerInfo, doSCP, getOwnedAugs, singRun, singReadMany, addRepToFavor
+  getActiveSourceFiles, getBNMults, getStocksValue, getReset, getPlayerInfo, doSCP, getOwnedAugs, singRun, singReadMany, addRepToFavor, favorToRep
 } from './utils.js'
 import { buildDonationFavorProgress, FACTIONS_WITHOUT_DONATIONS } from './donation-favor.js'
-import { SOA_AUGS } from './infiltration-policy.js'
+import { SOA_AUGS, INFILTRATION_TARGET } from './infiltration-policy.js'
+import { buildAugUtilityMap } from './faction-route-planner.js'
 
 // PLAYER CONFIGURATION CONSTANTS
 // This acts as a list of default "easy" factions to always show even if the user has --hide-locked-factions
@@ -225,12 +226,23 @@ export async function main(ns) {
     // Infer the number of nf we have installed based on the current nf purchase level, minus the pending nf installs
     const nfInstalled = nfLevelPurchased - augsAwaitingInstall.filter(a => a == strNF).length;
     const donationFavorProgress = getDonationFavorProgress();
+    let workGoal;
+    try {
+      await doSCP(ns, INFILTRATION_TARGET, ns.getHostname(), 'home');
+      const progress = JSON.parse(ns.read(INFILTRATION_TARGET) || 'null');
+      if (progress?.lastAugReset === resetInfo.lastAugReset && progress.lastNodeReset === resetInfo.lastNodeReset &&
+        Date.now() - progress.updatedAt >= 0 && Date.now() - progress.updatedAt <= 90_000 &&
+        Number.isFinite(progress.workGoal?.plannedAt) && Date.now() - progress.workGoal.plannedAt >= 0 &&
+        Date.now() - progress.workGoal.plannedAt <= 90_000)
+        workGoal = progress.workGoal;
+    } catch { /* Old/unavailable workers still allow measured cash/reputation goals. */ }
     ns.write(output_file, JSON.stringify({
       generated_at: Date.now(),
       current_node: resetInfo.currentNode,
       last_aug_reset: resetInfo.lastAugReset,
       favor_to_donate: favorToDonate,
       donation_favor_progress: donationFavorProgress,
+      reset_planning: getResetPlanningSnapshot(augsAwaitingInstall, omitAugs, workGoal),
       // Augs we already have installed
       installed_augs: installedAugmentations, // Names of augs we've installed (Note: NeuroFlux will only appears once)
       installed_count: installedAugmentations.length, // Number of augs we've installed (Note: multiple NeuroFlux levels only counts as one)
@@ -304,7 +316,7 @@ async function buildLib(ns, items, cmd) {
 /**
  * Report productive factions whose current reputation will convert into enough favor to donate now.
  */
-function getDonationFavorProgress() {
+function getDonationFavorProgress(minimumProgressRatio = 1) {
   const joined = joinedFactions.filter(faction => factionData[faction]?.joined);
   const factionFavor = Object.fromEntries(joined.map(faction => [faction, factionData[faction].favor ?? 0]));
   const factionRep = Object.fromEntries(joined.map(faction => [faction, factionData[faction].reputation ?? 0]));
@@ -331,7 +343,78 @@ function getDonationFavorProgress() {
     augRepRequirements,
     augPrerequisites,
     donationFactions,
+    minimumProgressRatio,
   });
+}
+
+/** Reuse this pass's prices, stats and reputation; no additional API calls or purchases. */
+function getResetPlanningSnapshot(awaitingInstall, omitted = [], workGoal) {
+  const pending = [...awaitingInstall, ...purchaseableAugs.map(aug => aug.name)];
+  const names = new Set([...pending, ...Object.values(augmentationData).filter(aug => aug.desired).map(aug => aug.name)]);
+  const utility = buildAugUtilityMap({desiredAugSet: names,
+    augStats: Object.fromEntries(Object.values(augmentationData).map(aug => [aug.name, aug.stats])),
+    augPrereqs: Object.fromEntries(Object.values(augmentationData).map(aug => [aug.name, aug.prereqs])),
+    desiredAugs, priorityAugs});
+  // NF's value comes from its repeated stat improvements, not a distinct-augmentation bonus per level.
+  if (utility[strNF] !== undefined) utility[strNF] = Math.max(0, utility[strNF] - 0.25);
+  const readyUtility = pending.reduce((sum, name) => sum + (utility[name] ?? 0.25), 0);
+  const available = new Set([...ownedAugmentations, ...purchaseableAugs.map(aug => aug.name)]);
+  const plannedNf = purchaseableAugs.filter(aug => aug.name === strNF).length;
+  const currentDonations = Object.values(purchaseFactionDonations).reduce((sum, amount) => sum + amount, 0);
+  const goals = [];
+  for (const original of Object.values(augmentationData)) {
+    if (!original.desired || omitted.includes(original.name) ||
+      (original.name !== strNF && available.has(original.name)) ||
+      !original.prereqs.every(name => available.has(name))) continue;
+    const aug = original.name === strNF ? {...original,
+      price: original.price * nfCountMult ** plannedNf,
+      reputation: original.reputation * nfCountMult ** plannedNf} : original;
+    const price = getTotalCost(sortAugs(_ns, [...purchaseableAugs, aug]));
+    const gain = utility[aug.name] ?? 0.25;
+    for (const faction of original.joinedFactionsWithAug()) {
+      const donation = faction.donationsUnlocked ? Math.max(0,
+        getReqDonationForRep(aug.reputation, faction) - (purchaseFactionDonations[faction.name] ?? 0)) : 0;
+      const money = price + currentDonations + donation;
+      if (!Number.isFinite(money) || !(gain > 0)) continue;
+      const suffix = aug.name === strNF ? `:${nfLevelPurchased + plannedNf + 1}` : '';
+      goals.push({key: `${aug.name}${suffix}:${faction.name}`, label: `${aug.name}${suffix} via ${faction.name}`,
+        faction: faction.name, rep: faction.donationsUnlocked ? 0 : aug.reputation, money, utility: gain});
+    }
+  }
+  // Require present wealth to cover an aug and its full post-reset reputation bill before waiting
+  // for favor. This is a funding proxy: the cash itself does not survive installation.
+  for (const progress of getDonationFavorProgress(0.9).filter(entry => !entry.ready)) {
+    const affordableAfterReset = progress.desired_augs.filter(name => {
+      const aug = augmentationData[name];
+      return aug && aug.price + getCostOfReputation(aug.reputation) <= playerData.money + stockValue;
+    });
+    if (!affordableAfterReset.length) continue;
+    goals.push({key: `favor:${progress.faction}`, label: `donation access for ${progress.faction}`,
+      faction: progress.faction,
+      rep: Math.max(0, favorToRep(progress.required_favor) - favorToRep(progress.current_favor)),
+      money: 0, utility: affordableAfterReset.reduce((sum, name) => sum + (utility[name] ?? 0.25), 0) * 0.2});
+  }
+  if (typeof workGoal?.faction === 'string' && Number.isFinite(workGoal.eta) && workGoal.eta >= 0 &&
+    Array.isArray(workGoal.unlockedAugs) && workGoal.unlockedAugs.every(name => typeof name === 'string')) {
+    const additions = [...new Set(workGoal.unlockedAugs)].filter(name => !available.has(name) && !omitted.includes(name))
+      .map(name => augmentationData[name]);
+    const after = new Set([...available, ...additions.filter(Boolean).map(aug => aug.name)]);
+    if (additions.length && additions.every(aug => aug?.desired && aug.prereqs.every(name => after.has(name)))) {
+      const faction = factionData[workGoal.faction];
+      if (faction && !faction.joined && additions.every(aug => faction.augmentations.includes(aug.name))) {
+        const extraDonation = faction.donationsUnlocked ? getReqDonationForRep(
+          Math.max(...additions.map(aug => aug.reputation)), faction) : 0;
+        const money = getTotalCost(sortAugs(_ns, [...purchaseableAugs, ...additions])) + currentDonations + extraDonation;
+        if (Number.isFinite(money)) goals.push({key: `invite:${workGoal.faction}:${additions.map(aug => aug.name).join('|')}`,
+          label: `join ${workGoal.faction} and unlock ${additions.map(aug => aug.name).join(', ')}`,
+          faction: workGoal.faction, rep: 0, money, eta: workGoal.eta,
+          utility: additions.reduce((sum, aug) => sum + (utility[aug.name] ?? 0.25), 0)});
+      }
+    }
+  }
+  return {version: 1, readyUtility, wealth: playerData.money + stockValue, hacking: playerData.skills.hacking,
+    reputation: Object.fromEntries(Object.values(factionData).filter(faction => faction.joined)
+      .map(faction => [faction.name, faction.reputation])), goals};
 }
 
 
