@@ -25,8 +25,8 @@ const argsSchema = [
   ['logtime', false], // Logs time time it takes for each player to take their move
   ['runOnce', false], // Will only play one game if enabled
   ['silent', false], // (Obsolete) This script used to automatically tail. Now if you want to do this, call with --tail like normal.
-  ['board-size', 'auto'], // Per-opponent adaptation, or fixed 5/7/9/13. Never abandons a game.
-  ['board-exploration', true], // Bounded smaller-board trials only outside winning streaks.
+  ['board-size', 'profile'], // Fixed sizes per opponent from measured favor/time results, auto learns, or force 5/7/9/13.
+  ['board-exploration', true], // With --board-size auto: bounded trials only outside winning streaks and favor routes.
   ['opponent', 'auto'], // Follow the current goal, or choose a faction name, "hidden", or "random". Never abandons a board.
   ['goal', 'auto'], // With --opponent auto: infer work, or use crime/combat/rep/money/hacking (also works before SF4).
   ['hidden-opponent', true], // Allow the hidden 19x19 opponent in auto/random selection after installing The Red Pill.
@@ -57,7 +57,7 @@ export async function main(ns) {
   let logtime = false;
   let runOnce = true;
   let silent = false;
-  let boardSize = 'auto', requestedOpponent = 'auto', requestedGoal = 'auto', includeHidden = true, exploreBoards = true;
+  let boardSize = 'profile', requestedOpponent = 'auto', requestedGoal = 'auto', includeHidden = true, exploreBoards = true;
   let gameStartedAt = Date.now(), resumedGame = true;
   let gameCohort, startWins, gameTrial = false, statisticsHealthy = true;
   let gameRecorded = true;
@@ -116,14 +116,14 @@ export async function main(ns) {
 
     logtime = runOptions.logtime;
     runOnce = runOptions.runOnce;
-    boardSize = String(runOptions['board-size'] ?? 'auto');
+    boardSize = String(runOptions['board-size'] ?? 'profile');
     exploreBoards = runOptions['board-exploration'] ?? true;
     requestedOpponent = runOptions.opponent ?? 'auto';
     requestedGoal = runOptions.goal ?? 'auto';
     includeHidden = runOptions['hidden-opponent'] ?? true;
-    if (!['auto', '5', '7', '9', '13'].includes(boardSize) ||
+    if (!['profile', 'auto', '5', '7', '9', '13'].includes(boardSize) ||
       !['auto', 'random', 'hidden', HIDDEN_GO_OPPONENT, ...GO_OPPONENTS].includes(requestedOpponent) || !GO_GOALS.includes(requestedGoal)) {
-      log(ns, 'ERROR: Use --board-size auto/5/7/9/13; --opponent auto/random/hidden or a faction name; --goal auto/crime/combat/rep/money/hacking.', true);
+      log(ns, 'ERROR: Use --board-size profile/auto/5/7/9/13; --opponent auto/random/hidden or a faction name; --goal auto/crime/combat/rep/money/hacking.', true);
       return;
     }
 
@@ -410,7 +410,8 @@ export async function main(ns) {
           liveStats: ns.go.analysis?.getStats?.() ?? {}, favorDeadlines})
         : {opponent: selectGoOpponent(requestedOpponent, includeHidden, reset), reason: `${requestedOpponent} opponent setting`};
       const next = opponentChoice.opponent;
-      const choice = selectGoBoard({opponent: next, requested: boardSize, stats, cohort,
+      // Execute the board used by the favor forecast, including its current streak and remaining rewards.
+      const choice = opponentChoice.board ?? selectGoBoard({opponent: next, requested: boardSize, stats, cohort,
         streak: ns.go.analysis?.getStats?.()[next]?.winStreak ?? 0,
         explore: exploreBoards && statisticsHealthy && opponentChoice.goal !== 'favor'});
       // The engine supplies the fixed 19x19 Bitverse board for the hidden opponent.

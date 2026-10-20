@@ -5,6 +5,12 @@ export const GO_SAMPLE_LIMIT = 60;
 export const GO_GOALS = ['auto', 'crime', 'combat', 'rep', 'money', 'hacking'];
 export const GO_OPPONENTS = ['Netburners', 'Slum Snakes', 'The Black Hand', 'Tetrads', 'Daedalus', 'Illuminati'];
 export const GO_FAVOR_BUDGET_MS = 15 * 60_000;
+// User's 2026-10-20 patterns-1/no-cheats/normal results: conservative favor rewards/minute.
+// These are fixed defaults, not seeded runtime samples. Small-board evidence is still limited.
+export const GO_BOARD_PROFILE = Object.freeze({
+  'Netburners': 5, 'Slum Snakes': 5, 'The Black Hand': 7,
+  'Tetrads': 5, 'Daedalus': 5, 'Illuminati': 13,
+});
 
 const hiddenOpponent = '????????????';
 const positive = value => Number.isFinite(value) && value > 0 ? value : 0;
@@ -36,7 +42,7 @@ export function sellsGoHashesForMoney(args, config = {}) {
 
 /** A donation unlock is valuable only with a useful, affordable purchase and a short measured route.
  * Official favor conversion and Go's per-faction reward cap; current faction rep is NOT current favor. */
-export function selectGoFavorTarget({context, reset, stats = {}, liveStats = {}, cohort, boardSize = 'auto',
+export function selectGoFavorTarget({context, reset, stats = {}, liveStats = {}, cohort, boardSize = 'profile',
   favorDeadlines = {}, now = Date.now()}) {
   const snapshot = context?.favorSnapshot;
   if (!snapshot || snapshot.current_node !== reset?.currentNode || snapshot.last_aug_reset !== reset?.lastAugReset ||
@@ -58,18 +64,16 @@ export function selectGoFavorTarget({context, reset, stats = {}, liveStats = {},
     // Go favor earned since the planner read must not be requested twice before the next refresh.
     const gap = favorRep(target.requiredFavor) - favorRep(target.currentFavor) - (live.rep - target.goRep);
     if (!(gap > 1e-7) || gap > maxRep - live.rep + 1e-7) continue;
-    const size = selectGoBoard({opponent: target.faction, requested: boardSize, stats, cohort, explore: false}).size;
-    const samples = summarizeGoSamples(stats?._adaptive?.[cohort]?.[`${target.faction}:${size}`]);
+    const rewards = Math.ceil((gap - 1e-7) / reward);
+    const board = selectGoBoard({opponent: target.faction, requested: boardSize, stats, cohort,
+      streak: live.winStreak, favorRewards: rewards, explore: false});
+    const samples = summarizeGoSamples(stats?._adaptive?.[cohort]?.[`${target.faction}:${board.size}`]);
     if (samples.games < 4 || samples.confidence <= 0) continue; // No invented game-time forecast.
-    const rewards = Math.ceil((gap - 1e-7) / reward), p = samples.confidence;
-    // Expected games for two consecutive wins, with the current odd streak already halfway there.
-    const pairGames = (1 + p) / (p * p);
-    const firstGames = live.winStreak > 0 && live.winStreak % 2 === 1 ? 1 + (1 - p) * pairGames : pairGames;
-    const eta = (firstGames + (rewards - 1) * pairGames) * samples.durationMs;
+    const eta = goFavorEta(samples, rewards, live.winStreak);
     const key = `${reset.lastAugReset}:${target.faction}:${target.requiredFavor}`;
     const remaining = Math.min(GO_FAVOR_BUDGET_MS, (favorDeadlines[key] ?? now + GO_FAVOR_BUDGET_MS) - now);
     if (eta > remaining) continue;
-    candidates.push({opponent: target.faction, eta, key, rewards, augmentation: target.augmentation,
+    candidates.push({opponent: target.faction, board, eta, key, rewards, augmentation: target.augmentation,
       reason: `funded donation unlock for ${target.faction}: ~${Math.ceil(eta / 60_000)}m, ${rewards} favor rewards; ${target.augmentation}`});
   }
   return candidates.sort((a, b) => a.eta - b.eta)[0] ?? null;
@@ -78,7 +82,7 @@ export function selectGoFavorTarget({context, reset, stats = {}, liveStats = {},
 /** Goal relevance first; bonus balance and same-strategy reliability break useful alternatives apart.
  * Weights are routing heuristics, not predictions of income or a guaranteed win rate. */
 export function selectAutoGoOpponent({goal = 'auto', context = null, reset, includeHidden = true,
-  liveStats = {}, stats = {}, cohort, boardSize = 'auto', favorDeadlines = {}, now = Date.now()} = {}) {
+  liveStats = {}, stats = {}, cohort, boardSize = 'profile', favorDeadlines = {}, now = Date.now()} = {}) {
   const fresh = context && Number.isFinite(context.updatedAt) && now >= context.updatedAt && now - context.updatedAt <= 30_000 &&
     context.lastAugReset === reset?.lastAugReset && context.lastNodeReset === reset?.lastNodeReset;
   const state = fresh ? context : {};
@@ -162,12 +166,30 @@ export function summarizeGoSamples(samples) {
     durationMs: rows.length ? rows.reduce((sum, row) => sum + row.durationMs, 0) / rows.length : Infinity};
 }
 
-/** Reliability first, then full-game wall time, independently for each opponent. */
-export function selectGoBoard({opponent, requested = 'auto', stats = {}, cohort, streak = 0, explore = true}) {
+/** Expected time for consecutive-win rewards, using a conservative win probability.
+ * A reward needs two wins in a row; a loss breaks the pair. Board area does not affect favor. */
+export function goFavorEta(samples, rewards = 1, streak = 0) {
+  const p = samples.confidence;
+  if (!(p > 0 && p <= 1) || !Number.isFinite(samples.durationMs) || samples.durationMs <= 0 ||
+    !Number.isInteger(rewards) || rewards < 1) return Infinity;
+  const pairGames = (1 + p) / (p * p);
+  const firstGames = streak > 0 && streak % 2 === 1 ? 1 + (1 - p) * pairGames : pairGames;
+  return (firstGames + (rewards - 1) * pairGames) * samples.durationMs;
+}
+
+/** Fixed measured profile by default. Optional auto mode learns within the current cohort.
+ * Funded favor routes minimize time to the remaining rewards; other auto goals retain reliability-first learning. */
+export function selectGoBoard({opponent, requested = 'profile', stats = {}, cohort, streak = 0, explore = true, favorRewards = 0}) {
   if (opponent === '????????????') return {size: 19, reason: 'fixed hidden board'};
+  if (requested === 'profile') return {size: GO_BOARD_PROFILE[opponent] ?? 13, reason: 'fixed favor/time profile (2026-10-20 results)'};
   if (requested !== 'auto') return {size: Number(requested), reason: 'manual size'};
   const data = stats?._adaptive?.[cohort] ?? {};
   const rows = GO_SIZES.map(size => ({size, ...summarizeGoSamples(data[`${opponent}:${size}`])}));
+  if (favorRewards > 0) {
+    const best = rows.filter(row => row.games >= 4 && row.confidence > 0)
+      .sort((a, b) => goFavorEta(a, favorRewards, streak) - goFavorEta(b, favorRewards, streak))[0];
+    if (best) return {size: best.size, reason: `fastest measured favor route: ${best.wins}/${best.games} wins, ${(best.durationMs / 1000).toFixed(1)}s/game`};
+  }
   const proven = rows.filter(row => row.games >= 12);
   const bestConfidence = Math.max(0, ...proven.map(row => row.confidence));
   // A faster candidate may give up at most 5 percentage points of measured reliability.

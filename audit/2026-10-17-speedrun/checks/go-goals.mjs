@@ -31,7 +31,7 @@ for (const hacknetCashRate of [0,-1,NaN,Infinity,1])
 assert.equal(select({money:1e6,hacknetCashRate:1e9},{reset:{...reset,currentNode:8}}).opponent,'Illuminati');
 assert.equal(select({work:repWork,money:0,hacknetCashRate:1e9}).opponent,'Daedalus','Active work wins over a generic cash goal');
 assert.equal(select({work:{type:'CRIME'}},{liveStats:{'Slum Snakes':{bonusPercent:100}}}).opponent,'Tetrads');
-const poorCrimes = {_adaptive:{[cohort]:{'Slum Snakes:13':rows(0,12)}}};
+const poorCrimes = {_adaptive:{[cohort]:{'Slum Snakes:5':rows(0,12)}}};
 assert.equal(select({work:{type:'CRIME'}},{stats:poorCrimes}).opponent,'Tetrads');
 assert.equal(select({work:{type:'CRIME'}},{stats:poorCrimes,cohort:'other-strategy'}).opponent,'Slum Snakes');
 
@@ -50,7 +50,7 @@ assert.notEqual(select({}, {reset:unlocked,includeHidden:false}).opponent,'?????
 assert.notEqual(select({}, {reset:{...reset,ownedAugs:new Map()}}).opponent,'????????????');
 
 // Direct favor is based on CURRENT favor, cap remaining, current cash, and timed games.
-const faction='The Black Hand', favorStats={_adaptive:{[cohort]:{[`${faction}:13`]:rows(54,60)}}};
+const faction='The Black Hand', favorStats={_adaptive:{[cohort]:{[`${faction}:7`]:rows(54,60)}}};
 const quote={faction,currentFavor:149.95,requiredFavor:150,cost:1e9,goRep:1000,augmentation:'Useful Aug'};
 const favorSnapshot={generated_at:now,current_node:4,last_aug_reset:reset.lastAugReset,go_favor_targets:[quote]};
 const liveStats={[faction]:{rep:1000,winStreak:1}}, funded=context({factions:[faction],favorSnapshot,work:repWork});
@@ -75,7 +75,15 @@ for (const rep of [100_000,1500,0,NaN])
   assert.equal(selectGoFavorTarget({...favorArgs,liveStats:{[faction]:{rep,winStreak:1}}}),null,
     'Respect the cap, already-earned favor, reset counters, and invalid stats');
 assert.equal(selectGoFavorTarget({...favorArgs,stats:{}}),null,'Missing timing does not invent a fast unlock');
-assert.equal(selectGoFavorTarget({...favorArgs,stats:{_adaptive:{[cohort]:{[`${faction}:13`]:rows(2,60,60_000)}}}}),null);
+assert.equal(selectGoFavorTarget({...favorArgs,stats:{_adaptive:{[cohort]:{[`${faction}:7`]:rows(2,60,60_000)}}}}),null);
+// Automatic favor routing can favor a much faster board despite a lower win rate.
+const routeStats={_adaptive:{[cohort]:{[`${faction}:5`]:rows(40,60,10000),[`${faction}:7`]:rows(54,60,30000),
+  [`${faction}:9`]:rows(50,60,30000),[`${faction}:13`]:rows(60,60,60000)}}};
+const fastRoute=selectGoFavorTarget({...favorArgs,stats:routeStats,boardSize:'auto'});
+assert.equal(fastRoute.board.size,5);
+assert.equal(selectGoFavorTarget({...favorArgs,stats:routeStats}).board.size,7,'Honor the fixed per-opponent profile');
+assert.equal(selectGoFavorTarget({...favorArgs,stats:routeStats,boardSize:'9'}).board.size,9,'Honor explicit board size');
+assert.equal(selectGoFavorTarget({...favorArgs,stats:routeStats,cohort:'other-strategy'}),null);
 const further={...funded,favorSnapshot:{...favorSnapshot,go_favor_targets:[{...quote,currentFavor:149.8}]}};
 assert.equal(selectGoFavorTarget({...favorArgs,context:further,reset:{...reset,ownedSF:new Map([[14,3]])}}).rewards,1);
 assert(selectGoFavorTarget({...favorArgs,context:further}).rewards>1,'Use effective SF14 reward size');
@@ -160,17 +168,17 @@ h=rpc({work:null});assert.equal((await getGoContext(h.ns,{4:3})).workKnown,true)
 // Execute the real Go loop: route only after completed games, re-evaluate goals, preserve explicit choices.
 const main=await loadGoBot(readFileSync(new URL('../../../go.js',import.meta.url),'utf8'));
 const STOP=new Error('finished');
-async function loop(options={},failContext=false){
+async function loop(options={},failContext=false,scenario={}){
   let plays=0,observations=0,opponent='Netburners';const resets=[],logs=[];
   const ns={pid:1,getScriptName:()=> 'go.js',disableLog(){},clearLog(){},print(){},printf(){},format:{time:String},
     sleep:async()=>{throw STOP;},exit:()=>{throw STOP;},
     go:{getOpponent:()=>opponent,opponentNextTurn:async()=>({type:'move'}),getGameState:()=>({blackScore:20,whiteScore:1,bonusCycles:0}),
-      analysis:{getStats:()=>({[opponent]:{wins:plays,winStreak:1}})},
+      analysis:{getStats:()=>({...scenario.liveStats,[opponent]:{...scenario.liveStats?.[opponent],wins:plays,winStreak:1}})},
       resetBoardState:(who,size)=>{assert(plays>0);resets.push({who,size});opponent=who;if(resets.length===2)throw STOP;}},
-    audit:{options:{runOnce:false,...options},reset,log:message=>logs.push(message),
+    audit:{options:{runOnce:false,...options},reset,stats:scenario.stats??{},log:message=>logs.push(message),
       context:()=>{observations++;assert(plays>0,'Never sample/change goals mid-game');
         if(options.opponent&&options.opponent!=='auto')assert.fail('Explicit opponent must skip the goal helper');
-        if(failContext)throw Error('home busy');return context({work:plays===1?repWork:{type:'CRIME'}});},
+        if(failContext)throw Error('home busy');return scenario.context??context({work:plays===1?repWork:{type:'CRIME'}});},
       board:()=>Array(5).fill('.....'),controlled:()=>Array(5).fill('?????'),valid:()=>Array.from({length:5},()=>Array(5).fill(true)),
       liberties:()=>Array.from({length:5},()=>Array(5).fill(-1)),chains:()=>Array.from({length:5},()=>Array(5).fill(0)),
       play:async()=>{plays++;return {type:'gameOver'};}}};
@@ -178,7 +186,11 @@ async function loop(options={},failContext=false){
 }
 let played=await loop();assert.deepEqual(played.resets.map(row=>row.who),['Daedalus','Slum Snakes']);
 assert(played.logs.some(message=>message.includes('reputation work')));
+assert(played.resets.every(row=>row.size===5),'Default mode executes the fixed per-opponent profile');
 played=await loop({opponent:'Tetrads','board-size':'7'});assert(played.resets.every(row=>row.who==='Tetrads'&&row.size===7));
 assert.equal(played.observations,0);
 played=await loop({},true);assert(played.resets.every(row=>row.who==='The Black Hand'));
+played=await loop({'board-size':'auto'},false,{stats:routeStats,liveStats,context:funded});
+assert(played.resets.every(row=>row.who===faction&&row.size===5),'Execute the forecast board, not the unconstrained reliability choice');
+assert(played.logs.some(message=>message.includes('funded donation unlock')));
 console.log('Goal routing, affordable/time-bounded Go favor, quotes, caps, stale state, hash sinks, effective RAM, and real game-boundary regressions passed.');

@@ -1,0 +1,2235 @@
+{
+  "Netburners:7": {
+    "opponent": "Netburners",
+    "size": 7,
+    "games": 8,
+    "wins": 8,
+    "blackScore": 279,
+    "timedGames": 5,
+    "durationMs": 47591,
+    "updatedAt": 1792457862901
+  },
+  "Tetrads:13": {
+    "opponent": "Tetrads",
+    "size": 13,
+    "games": 244,
+    "wins": 176,
+    "blackScore": 20797,
+    "timedGames": 238,
+    "durationMs": 21713939,
+    "updatedAt": 1792474137524
+  },
+  "_adaptive": {
+    "patterns-1:no-cheats:normal": {
+      "Tetrads:13": [
+        {
+          "won": false,
+          "durationMs": 106817
+        },
+        {
+          "won": false,
+          "durationMs": 84161
+        },
+        {
+          "won": true,
+          "durationMs": 101538
+        },
+        {
+          "won": true,
+          "durationMs": 93466
+        },
+        {
+          "won": true,
+          "durationMs": 89736
+        },
+        {
+          "won": false,
+          "durationMs": 97353
+        },
+        {
+          "won": true,
+          "durationMs": 94549
+        },
+        {
+          "won": true,
+          "durationMs": 73955
+        },
+        {
+          "won": true,
+          "durationMs": 96215
+        },
+        {
+          "won": true,
+          "durationMs": 94063
+        },
+        {
+          "won": true,
+          "durationMs": 91360
+        },
+        {
+          "won": true,
+          "durationMs": 90024
+        },
+        {
+          "won": true,
+          "durationMs": 91785
+        },
+        {
+          "won": false,
+          "durationMs": 98349
+        },
+        {
+          "won": true,
+          "durationMs": 86411
+        },
+        {
+          "won": false,
+          "durationMs": 104843
+        },
+        {
+          "won": false,
+          "durationMs": 99156
+        },
+        {
+          "won": false,
+          "durationMs": 101210
+        },
+        {
+          "won": true,
+          "durationMs": 83937
+        },
+        {
+          "won": true,
+          "durationMs": 85030
+        },
+        {
+          "won": false,
+          "durationMs": 113276
+        },
+        {
+          "won": true,
+          "durationMs": 92698
+        },
+        {
+          "won": false,
+          "durationMs": 105847
+        },
+        {
+          "won": true,
+          "durationMs": 90586
+        },
+        {
+          "won": true,
+          "durationMs": 66711
+        },
+        {
+          "won": false,
+          "durationMs": 100591
+        },
+        {
+          "won": false,
+          "durationMs": 99109
+        },
+        {
+          "won": true,
+          "durationMs": 92738
+        },
+        {
+          "won": false,
+          "durationMs": 70174
+        },
+        {
+          "won": true,
+          "durationMs": 87847
+        },
+        {
+          "won": true,
+          "durationMs": 91444
+        },
+        {
+          "won": false,
+          "durationMs": 93281
+        },
+        {
+          "won": false,
+          "durationMs": 96283
+        },
+        {
+          "won": true,
+          "durationMs": 84789
+        },
+        {
+          "won": false,
+          "durationMs": 97472
+        },
+        {
+          "won": true,
+          "durationMs": 93179
+        },
+        {
+          "won": true,
+          "durationMs": 96215
+        },
+        {
+          "won": true,
+          "durationMs": 92900
+        },
+        {
+          "won": true,
+          "durationMs": 94918
+        },
+        {
+          "won": false,
+          "durationMs": 122463
+        },
+        {
+          "won": true,
+          "durationMs": 85618
+        },
+        {
+          "won": true,
+          "durationMs": 80079
+        },
+        {
+          "won": true,
+          "durationMs": 72870
+        },
+        {
+          "won": true,
+          "durationMs": 98330
+        },
+        {
+          "won": true,
+          "durationMs": 70479
+        },
+        {
+          "won": true,
+          "durationMs": 81585
+        },
+        {
+          "won": true,
+          "durationMs": 100184
+        },
+        {
+          "won": true,
+          "durationMs": 92908
+        },
+        {
+          "won": false,
+          "durationMs": 85096
+        },
+        {
+          "won": false,
+          "durationMs": 93731
+        },
+        {
+          "won": false,
+          "durationMs": 109123
+        },
+        {
+          "won": true,
+          "durationMs": 94510
+        },
+        {
+          "won": true,
+          "durationMs": 84946
+        },
+        {
+          "won": true,
+          "durationMs": 102857
+        },
+        {
+          "won": true,
+          "durationMs": 102664
+        },
+        {
+          "won": true,
+          "durationMs": 102120
+        },
+        {
+          "won": true,
+          "durationMs": 89667
+        },
+        {
+          "won": true,
+          "durationMs": 87346
+        },
+        {
+          "won": true,
+          "durationMs": 72870
+        },
+        {
+          "won": false,
+          "durationMs": 97877
+        }
+      ],
+      "Tetrads:completed": 261,
+      "Slum Snakes:13": [
+        {
+          "won": true,
+          "durationMs": 58728
+        },
+        {
+          "won": true,
+          "durationMs": 77687
+        },
+        {
+          "won": false,
+          "durationMs": 91743
+        },
+        {
+          "won": true,
+          "durationMs": 59896
+        },
+        {
+          "won": true,
+          "durationMs": 82618
+        },
+        {
+          "won": true,
+          "durationMs": 74196
+        },
+        {
+          "won": false,
+          "durationMs": 76545
+        },
+        {
+          "won": true,
+          "durationMs": 60137
+        },
+        {
+          "won": true,
+          "durationMs": 88829
+        },
+        {
+          "won": true,
+          "durationMs": 67697
+        },
+        {
+          "won": true,
+          "durationMs": 67217
+        },
+        {
+          "won": true,
+          "durationMs": 66904
+        },
+        {
+          "won": true,
+          "durationMs": 64487
+        },
+        {
+          "won": true,
+          "durationMs": 74811
+        },
+        {
+          "won": true,
+          "durationMs": 73855
+        },
+        {
+          "won": true,
+          "durationMs": 83574
+        },
+        {
+          "won": true,
+          "durationMs": 70833
+        },
+        {
+          "won": true,
+          "durationMs": 58724
+        },
+        {
+          "won": true,
+          "durationMs": 80293
+        },
+        {
+          "won": true,
+          "durationMs": 68832
+        },
+        {
+          "won": true,
+          "durationMs": 55315
+        },
+        {
+          "won": true,
+          "durationMs": 56913
+        },
+        {
+          "won": true,
+          "durationMs": 57149
+        },
+        {
+          "won": true,
+          "durationMs": 72838
+        },
+        {
+          "won": true,
+          "durationMs": 61911
+        },
+        {
+          "won": true,
+          "durationMs": 47891
+        },
+        {
+          "won": true,
+          "durationMs": 65649
+        },
+        {
+          "won": true,
+          "durationMs": 63748
+        },
+        {
+          "won": true,
+          "durationMs": 68069
+        },
+        {
+          "won": true,
+          "durationMs": 68855
+        },
+        {
+          "won": true,
+          "durationMs": 55094
+        },
+        {
+          "won": true,
+          "durationMs": 59453
+        },
+        {
+          "won": true,
+          "durationMs": 58607
+        },
+        {
+          "won": false,
+          "durationMs": 82181
+        },
+        {
+          "won": true,
+          "durationMs": 72450
+        },
+        {
+          "won": true,
+          "durationMs": 59797
+        },
+        {
+          "won": true,
+          "durationMs": 60447
+        },
+        {
+          "won": true,
+          "durationMs": 71076
+        },
+        {
+          "won": true,
+          "durationMs": 60027
+        },
+        {
+          "won": true,
+          "durationMs": 63664
+        },
+        {
+          "won": true,
+          "durationMs": 64183
+        },
+        {
+          "won": true,
+          "durationMs": 61416
+        },
+        {
+          "won": true,
+          "durationMs": 64287
+        },
+        {
+          "won": true,
+          "durationMs": 63199
+        },
+        {
+          "won": true,
+          "durationMs": 66821
+        },
+        {
+          "won": true,
+          "durationMs": 64666
+        },
+        {
+          "won": true,
+          "durationMs": 64492
+        },
+        {
+          "won": true,
+          "durationMs": 55104
+        },
+        {
+          "won": true,
+          "durationMs": 68357
+        },
+        {
+          "won": true,
+          "durationMs": 86446
+        },
+        {
+          "won": true,
+          "durationMs": 52782
+        },
+        {
+          "won": true,
+          "durationMs": 49645
+        },
+        {
+          "won": true,
+          "durationMs": 64033
+        },
+        {
+          "won": true,
+          "durationMs": 60117
+        },
+        {
+          "won": true,
+          "durationMs": 64404
+        },
+        {
+          "won": true,
+          "durationMs": 60705
+        },
+        {
+          "won": true,
+          "durationMs": 44812
+        },
+        {
+          "won": true,
+          "durationMs": 73037
+        },
+        {
+          "won": true,
+          "durationMs": 62785
+        },
+        {
+          "won": true,
+          "durationMs": 55446
+        }
+      ],
+      "Slum Snakes:completed": 252,
+      "Daedalus:13": [
+        {
+          "won": true,
+          "durationMs": 87260
+        },
+        {
+          "won": true,
+          "durationMs": 70246
+        },
+        {
+          "won": true,
+          "durationMs": 71590
+        },
+        {
+          "won": true,
+          "durationMs": 75196
+        },
+        {
+          "won": true,
+          "durationMs": 83510
+        },
+        {
+          "won": true,
+          "durationMs": 71012
+        },
+        {
+          "won": true,
+          "durationMs": 75329
+        },
+        {
+          "won": true,
+          "durationMs": 72020
+        },
+        {
+          "won": true,
+          "durationMs": 71446
+        },
+        {
+          "won": true,
+          "durationMs": 74100
+        },
+        {
+          "won": true,
+          "durationMs": 75669
+        },
+        {
+          "won": true,
+          "durationMs": 89669
+        },
+        {
+          "won": true,
+          "durationMs": 82615
+        },
+        {
+          "won": true,
+          "durationMs": 71388
+        },
+        {
+          "won": true,
+          "durationMs": 69099
+        },
+        {
+          "won": true,
+          "durationMs": 75094
+        },
+        {
+          "won": true,
+          "durationMs": 72185
+        },
+        {
+          "won": true,
+          "durationMs": 75337
+        },
+        {
+          "won": true,
+          "durationMs": 71519
+        },
+        {
+          "won": true,
+          "durationMs": 77527
+        },
+        {
+          "won": true,
+          "durationMs": 67421
+        },
+        {
+          "won": true,
+          "durationMs": 79793
+        },
+        {
+          "won": false,
+          "durationMs": 88655
+        },
+        {
+          "won": true,
+          "durationMs": 77585
+        },
+        {
+          "won": true,
+          "durationMs": 76436
+        },
+        {
+          "won": true,
+          "durationMs": 70820
+        },
+        {
+          "won": true,
+          "durationMs": 75376
+        },
+        {
+          "won": true,
+          "durationMs": 74259
+        },
+        {
+          "won": true,
+          "durationMs": 68673
+        },
+        {
+          "won": true,
+          "durationMs": 68771
+        },
+        {
+          "won": true,
+          "durationMs": 73422
+        },
+        {
+          "won": true,
+          "durationMs": 82573
+        },
+        {
+          "won": true,
+          "durationMs": 72216
+        },
+        {
+          "won": true,
+          "durationMs": 80637
+        },
+        {
+          "won": true,
+          "durationMs": 73433
+        },
+        {
+          "won": false,
+          "durationMs": 88845
+        },
+        {
+          "won": true,
+          "durationMs": 75602
+        },
+        {
+          "won": true,
+          "durationMs": 58067
+        },
+        {
+          "won": true,
+          "durationMs": 67508
+        },
+        {
+          "won": true,
+          "durationMs": 79003
+        },
+        {
+          "won": true,
+          "durationMs": 74049
+        },
+        {
+          "won": true,
+          "durationMs": 83511
+        },
+        {
+          "won": true,
+          "durationMs": 73538
+        },
+        {
+          "won": true,
+          "durationMs": 84844
+        },
+        {
+          "won": true,
+          "durationMs": 83696
+        },
+        {
+          "won": true,
+          "durationMs": 80149
+        },
+        {
+          "won": true,
+          "durationMs": 55984
+        },
+        {
+          "won": false,
+          "durationMs": 91135
+        },
+        {
+          "won": true,
+          "durationMs": 75298
+        },
+        {
+          "won": true,
+          "durationMs": 72580
+        },
+        {
+          "won": true,
+          "durationMs": 57075
+        },
+        {
+          "won": true,
+          "durationMs": 76410
+        },
+        {
+          "won": true,
+          "durationMs": 80879
+        },
+        {
+          "won": true,
+          "durationMs": 71777
+        },
+        {
+          "won": true,
+          "durationMs": 63245
+        },
+        {
+          "won": true,
+          "durationMs": 79662
+        },
+        {
+          "won": true,
+          "durationMs": 76374
+        },
+        {
+          "won": true,
+          "durationMs": 68874
+        },
+        {
+          "won": true,
+          "durationMs": 75785
+        },
+        {
+          "won": true,
+          "durationMs": 72236
+        }
+      ],
+      "Daedalus:completed": 275,
+      "Illuminati:13": [
+        {
+          "won": true,
+          "durationMs": 84243
+        },
+        {
+          "won": true,
+          "durationMs": 81537
+        },
+        {
+          "won": true,
+          "durationMs": 101052
+        },
+        {
+          "won": false,
+          "durationMs": 90835
+        },
+        {
+          "won": true,
+          "durationMs": 77253
+        },
+        {
+          "won": true,
+          "durationMs": 73602
+        },
+        {
+          "won": true,
+          "durationMs": 77461
+        },
+        {
+          "won": true,
+          "durationMs": 71602
+        },
+        {
+          "won": false,
+          "durationMs": 64970
+        },
+        {
+          "won": false,
+          "durationMs": 80920
+        },
+        {
+          "won": false,
+          "durationMs": 65628
+        },
+        {
+          "won": true,
+          "durationMs": 74515
+        },
+        {
+          "won": false,
+          "durationMs": 80677
+        },
+        {
+          "won": true,
+          "durationMs": 64931
+        },
+        {
+          "won": false,
+          "durationMs": 77108
+        },
+        {
+          "won": true,
+          "durationMs": 78354
+        },
+        {
+          "won": false,
+          "durationMs": 78438
+        },
+        {
+          "won": true,
+          "durationMs": 76050
+        },
+        {
+          "won": true,
+          "durationMs": 56824
+        },
+        {
+          "won": true,
+          "durationMs": 66031
+        },
+        {
+          "won": false,
+          "durationMs": 74900
+        },
+        {
+          "won": true,
+          "durationMs": 69845
+        },
+        {
+          "won": true,
+          "durationMs": 75292
+        },
+        {
+          "won": true,
+          "durationMs": 66476
+        },
+        {
+          "won": false,
+          "durationMs": 77231
+        },
+        {
+          "won": false,
+          "durationMs": 82298
+        },
+        {
+          "won": true,
+          "durationMs": 71594
+        },
+        {
+          "won": true,
+          "durationMs": 71889
+        },
+        {
+          "won": false,
+          "durationMs": 76928
+        },
+        {
+          "won": false,
+          "durationMs": 81590
+        },
+        {
+          "won": false,
+          "durationMs": 84702
+        },
+        {
+          "won": true,
+          "durationMs": 74112
+        },
+        {
+          "won": true,
+          "durationMs": 78169
+        },
+        {
+          "won": false,
+          "durationMs": 80881
+        },
+        {
+          "won": false,
+          "durationMs": 79792
+        },
+        {
+          "won": false,
+          "durationMs": 89756
+        },
+        {
+          "won": true,
+          "durationMs": 76890
+        },
+        {
+          "won": false,
+          "durationMs": 81131
+        },
+        {
+          "won": false,
+          "durationMs": 79157
+        },
+        {
+          "won": false,
+          "durationMs": 85630
+        },
+        {
+          "won": true,
+          "durationMs": 76895
+        },
+        {
+          "won": true,
+          "durationMs": 86116
+        },
+        {
+          "won": true,
+          "durationMs": 87004
+        },
+        {
+          "won": false,
+          "durationMs": 82593
+        },
+        {
+          "won": true,
+          "durationMs": 82885
+        },
+        {
+          "won": true,
+          "durationMs": 74001
+        },
+        {
+          "won": true,
+          "durationMs": 76313
+        },
+        {
+          "won": true,
+          "durationMs": 71184
+        },
+        {
+          "won": true,
+          "durationMs": 81458
+        },
+        {
+          "won": true,
+          "durationMs": 59525
+        },
+        {
+          "won": true,
+          "durationMs": 69252
+        },
+        {
+          "won": true,
+          "durationMs": 67947
+        },
+        {
+          "won": true,
+          "durationMs": 80544
+        },
+        {
+          "won": true,
+          "durationMs": 69141
+        },
+        {
+          "won": true,
+          "durationMs": 65741
+        },
+        {
+          "won": true,
+          "durationMs": 73849
+        },
+        {
+          "won": true,
+          "durationMs": 65708
+        },
+        {
+          "won": true,
+          "durationMs": 70580
+        },
+        {
+          "won": false,
+          "durationMs": 76230
+        },
+        {
+          "won": true,
+          "durationMs": 55114
+        }
+      ],
+      "Illuminati:completed": 280,
+      "The Black Hand:13": [
+        {
+          "won": true,
+          "durationMs": 78358
+        },
+        {
+          "won": true,
+          "durationMs": 67258
+        },
+        {
+          "won": true,
+          "durationMs": 79495
+        },
+        {
+          "won": true,
+          "durationMs": 68316
+        },
+        {
+          "won": true,
+          "durationMs": 77544
+        },
+        {
+          "won": true,
+          "durationMs": 70311
+        },
+        {
+          "won": true,
+          "durationMs": 72421
+        },
+        {
+          "won": true,
+          "durationMs": 70034
+        },
+        {
+          "won": true,
+          "durationMs": 67545
+        },
+        {
+          "won": true,
+          "durationMs": 76292
+        },
+        {
+          "won": true,
+          "durationMs": 71908
+        },
+        {
+          "won": true,
+          "durationMs": 73261
+        },
+        {
+          "won": true,
+          "durationMs": 75985
+        },
+        {
+          "won": true,
+          "durationMs": 87781
+        },
+        {
+          "won": true,
+          "durationMs": 69805
+        },
+        {
+          "won": true,
+          "durationMs": 73612
+        },
+        {
+          "won": false,
+          "durationMs": 85092
+        },
+        {
+          "won": true,
+          "durationMs": 71369
+        },
+        {
+          "won": true,
+          "durationMs": 80203
+        },
+        {
+          "won": true,
+          "durationMs": 64605
+        },
+        {
+          "won": true,
+          "durationMs": 75315
+        },
+        {
+          "won": true,
+          "durationMs": 69660
+        },
+        {
+          "won": true,
+          "durationMs": 85209
+        },
+        {
+          "won": true,
+          "durationMs": 59474
+        },
+        {
+          "won": true,
+          "durationMs": 67839
+        },
+        {
+          "won": true,
+          "durationMs": 74138
+        },
+        {
+          "won": true,
+          "durationMs": 77059
+        },
+        {
+          "won": true,
+          "durationMs": 73149
+        },
+        {
+          "won": true,
+          "durationMs": 75144
+        },
+        {
+          "won": true,
+          "durationMs": 66762
+        },
+        {
+          "won": true,
+          "durationMs": 76819
+        },
+        {
+          "won": true,
+          "durationMs": 83598
+        },
+        {
+          "won": true,
+          "durationMs": 65576
+        },
+        {
+          "won": true,
+          "durationMs": 78958
+        },
+        {
+          "won": true,
+          "durationMs": 83532
+        },
+        {
+          "won": true,
+          "durationMs": 79706
+        },
+        {
+          "won": true,
+          "durationMs": 80941
+        },
+        {
+          "won": true,
+          "durationMs": 82262
+        },
+        {
+          "won": true,
+          "durationMs": 74645
+        },
+        {
+          "won": true,
+          "durationMs": 86534
+        },
+        {
+          "won": true,
+          "durationMs": 73444
+        },
+        {
+          "won": true,
+          "durationMs": 73837
+        },
+        {
+          "won": true,
+          "durationMs": 84693
+        },
+        {
+          "won": true,
+          "durationMs": 74371
+        },
+        {
+          "won": true,
+          "durationMs": 76162
+        },
+        {
+          "won": true,
+          "durationMs": 71557
+        },
+        {
+          "won": true,
+          "durationMs": 79896
+        },
+        {
+          "won": true,
+          "durationMs": 59715
+        },
+        {
+          "won": true,
+          "durationMs": 71393
+        },
+        {
+          "won": true,
+          "durationMs": 75679
+        },
+        {
+          "won": true,
+          "durationMs": 68625
+        },
+        {
+          "won": true,
+          "durationMs": 65781
+        },
+        {
+          "won": true,
+          "durationMs": 74034
+        },
+        {
+          "won": true,
+          "durationMs": 71723
+        },
+        {
+          "won": true,
+          "durationMs": 69453
+        },
+        {
+          "won": true,
+          "durationMs": 70611
+        },
+        {
+          "won": true,
+          "durationMs": 78375
+        },
+        {
+          "won": true,
+          "durationMs": 88214
+        },
+        {
+          "won": true,
+          "durationMs": 75399
+        },
+        {
+          "won": true,
+          "durationMs": 61431
+        }
+      ],
+      "The Black Hand:completed": 234,
+      "Netburners:13": [
+        {
+          "won": true,
+          "durationMs": 54753
+        },
+        {
+          "won": true,
+          "durationMs": 50869
+        },
+        {
+          "won": true,
+          "durationMs": 59436
+        },
+        {
+          "won": true,
+          "durationMs": 46170
+        },
+        {
+          "won": true,
+          "durationMs": 39934
+        },
+        {
+          "won": true,
+          "durationMs": 42354
+        },
+        {
+          "won": true,
+          "durationMs": 40513
+        },
+        {
+          "won": true,
+          "durationMs": 52562
+        },
+        {
+          "won": true,
+          "durationMs": 57084
+        },
+        {
+          "won": true,
+          "durationMs": 41163
+        },
+        {
+          "won": true,
+          "durationMs": 40513
+        },
+        {
+          "won": true,
+          "durationMs": 41422
+        },
+        {
+          "won": true,
+          "durationMs": 47741
+        },
+        {
+          "won": true,
+          "durationMs": 50863
+        },
+        {
+          "won": true,
+          "durationMs": 52801
+        },
+        {
+          "won": true,
+          "durationMs": 55523
+        },
+        {
+          "won": true,
+          "durationMs": 49502
+        },
+        {
+          "won": true,
+          "durationMs": 47399
+        },
+        {
+          "won": true,
+          "durationMs": 42651
+        },
+        {
+          "won": true,
+          "durationMs": 45647
+        },
+        {
+          "won": true,
+          "durationMs": 51579
+        },
+        {
+          "won": true,
+          "durationMs": 47283
+        },
+        {
+          "won": true,
+          "durationMs": 43385
+        },
+        {
+          "won": true,
+          "durationMs": 39965
+        },
+        {
+          "won": true,
+          "durationMs": 40679
+        },
+        {
+          "won": true,
+          "durationMs": 34535
+        },
+        {
+          "won": true,
+          "durationMs": 47570
+        },
+        {
+          "won": true,
+          "durationMs": 48151
+        },
+        {
+          "won": true,
+          "durationMs": 42344
+        },
+        {
+          "won": true,
+          "durationMs": 41814
+        },
+        {
+          "won": true,
+          "durationMs": 56511
+        },
+        {
+          "won": true,
+          "durationMs": 43952
+        },
+        {
+          "won": true,
+          "durationMs": 46536
+        },
+        {
+          "won": true,
+          "durationMs": 47943
+        },
+        {
+          "won": true,
+          "durationMs": 49458
+        },
+        {
+          "won": true,
+          "durationMs": 54443
+        },
+        {
+          "won": true,
+          "durationMs": 51206
+        },
+        {
+          "won": true,
+          "durationMs": 46002
+        },
+        {
+          "won": true,
+          "durationMs": 42238
+        },
+        {
+          "won": true,
+          "durationMs": 45951
+        },
+        {
+          "won": true,
+          "durationMs": 44694
+        },
+        {
+          "won": true,
+          "durationMs": 44893
+        },
+        {
+          "won": true,
+          "durationMs": 46279
+        },
+        {
+          "won": true,
+          "durationMs": 43447
+        },
+        {
+          "won": true,
+          "durationMs": 57296
+        },
+        {
+          "won": true,
+          "durationMs": 49229
+        },
+        {
+          "won": true,
+          "durationMs": 48976
+        },
+        {
+          "won": true,
+          "durationMs": 62067
+        },
+        {
+          "won": true,
+          "durationMs": 44401
+        },
+        {
+          "won": true,
+          "durationMs": 47357
+        },
+        {
+          "won": true,
+          "durationMs": 44664
+        },
+        {
+          "won": true,
+          "durationMs": 52854
+        },
+        {
+          "won": true,
+          "durationMs": 57541
+        },
+        {
+          "won": true,
+          "durationMs": 46677
+        },
+        {
+          "won": true,
+          "durationMs": 48129
+        },
+        {
+          "won": true,
+          "durationMs": 49663
+        },
+        {
+          "won": true,
+          "durationMs": 41895
+        },
+        {
+          "won": true,
+          "durationMs": 42203
+        },
+        {
+          "won": true,
+          "durationMs": 29065
+        },
+        {
+          "won": true,
+          "durationMs": 45447
+        }
+      ],
+      "Netburners:completed": 229,
+      "Tetrads:5": [
+        {
+          "won": true,
+          "durationMs": 8323
+        },
+        {
+          "won": true,
+          "durationMs": 13824
+        },
+        {
+          "won": true,
+          "durationMs": 10283
+        },
+        {
+          "won": false,
+          "durationMs": 12350
+        },
+        {
+          "won": true,
+          "durationMs": 11860
+        },
+        {
+          "won": false,
+          "durationMs": 8968
+        },
+        {
+          "won": true,
+          "durationMs": 7870
+        },
+        {
+          "won": true,
+          "durationMs": 14760
+        }
+      ],
+      "Tetrads:lastTrial": 250,
+      "Netburners:5": [
+        {
+          "won": true,
+          "durationMs": 4196
+        },
+        {
+          "won": true,
+          "durationMs": 3241
+        },
+        {
+          "won": true,
+          "durationMs": 6930
+        },
+        {
+          "won": true,
+          "durationMs": 5443
+        },
+        {
+          "won": true,
+          "durationMs": 6246
+        },
+        {
+          "won": true,
+          "durationMs": 3152
+        }
+      ],
+      "Netburners:lastTrial": 223,
+      "Daedalus:5": [
+        {
+          "won": true,
+          "durationMs": 10472
+        },
+        {
+          "won": true,
+          "durationMs": 10256
+        },
+        {
+          "won": true,
+          "durationMs": 8297
+        },
+        {
+          "won": true,
+          "durationMs": 5948
+        },
+        {
+          "won": false,
+          "durationMs": 17897
+        },
+        {
+          "won": true,
+          "durationMs": 6774
+        },
+        {
+          "won": true,
+          "durationMs": 9071
+        }
+      ],
+      "Daedalus:lastTrial": 271,
+      "Illuminati:9": [
+        {
+          "won": false,
+          "durationMs": 29775
+        },
+        {
+          "won": false,
+          "durationMs": 38179
+        },
+        {
+          "won": false,
+          "durationMs": 29724
+        },
+        {
+          "won": false,
+          "durationMs": 36007
+        },
+        {
+          "won": false,
+          "durationMs": 34562
+        },
+        {
+          "won": false,
+          "durationMs": 34171
+        },
+        {
+          "won": false,
+          "durationMs": 32206
+        },
+        {
+          "won": false,
+          "durationMs": 27516
+        },
+        {
+          "won": false,
+          "durationMs": 32484
+        },
+        {
+          "won": true,
+          "durationMs": 32703
+        }
+      ],
+      "Illuminati:lastTrial": 273,
+      "The Black Hand:5": [
+        {
+          "won": true,
+          "durationMs": 14543
+        },
+        {
+          "won": true,
+          "durationMs": 7672
+        },
+        {
+          "won": false,
+          "durationMs": 13013
+        },
+        {
+          "won": false,
+          "durationMs": 9684
+        },
+        {
+          "won": true,
+          "durationMs": 8136
+        }
+      ],
+      "The Black Hand:lastTrial": 228,
+      "Slum Snakes:5": [
+        {
+          "won": true,
+          "durationMs": 9521
+        },
+        {
+          "won": true,
+          "durationMs": 7732
+        },
+        {
+          "won": true,
+          "durationMs": 8471
+        },
+        {
+          "won": true,
+          "durationMs": 8551
+        },
+        {
+          "won": true,
+          "durationMs": 7208
+        },
+        {
+          "won": true,
+          "durationMs": 9797
+        }
+      ],
+      "Slum Snakes:lastTrial": 245,
+      "Daedalus:7": [
+        {
+          "won": false,
+          "durationMs": 20070
+        },
+        {
+          "won": false,
+          "durationMs": 17847
+        },
+        {
+          "won": true,
+          "durationMs": 17157
+        },
+        {
+          "won": false,
+          "durationMs": 25237
+        },
+        {
+          "won": true,
+          "durationMs": 17201
+        },
+        {
+          "won": true,
+          "durationMs": 16266
+        },
+        {
+          "won": true,
+          "durationMs": 25019
+        }
+      ],
+      "Tetrads:7": [
+        {
+          "won": true,
+          "durationMs": 23199
+        },
+        {
+          "won": true,
+          "durationMs": 16974
+        },
+        {
+          "won": false,
+          "durationMs": 22730
+        },
+        {
+          "won": true,
+          "durationMs": 17155
+        },
+        {
+          "won": true,
+          "durationMs": 24489
+        },
+        {
+          "won": false,
+          "durationMs": 25981
+        },
+        {
+          "won": true,
+          "durationMs": 21165
+        },
+        {
+          "won": true,
+          "durationMs": 27177
+        }
+      ],
+      "Illuminati:7": [
+        {
+          "won": false,
+          "durationMs": 26054
+        },
+        {
+          "won": false,
+          "durationMs": 19823
+        },
+        {
+          "won": false,
+          "durationMs": 20707
+        },
+        {
+          "won": false,
+          "durationMs": 17366
+        },
+        {
+          "won": false,
+          "durationMs": 16441
+        },
+        {
+          "won": false,
+          "durationMs": 20649
+        },
+        {
+          "won": false,
+          "durationMs": 17219
+        },
+        {
+          "won": false,
+          "durationMs": 19882
+        },
+        {
+          "won": true,
+          "durationMs": 17936
+        }
+      ],
+      "Netburners:7": [
+        {
+          "won": true,
+          "durationMs": 9566
+        },
+        {
+          "won": true,
+          "durationMs": 7610
+        },
+        {
+          "won": true,
+          "durationMs": 11549
+        },
+        {
+          "won": true,
+          "durationMs": 9195
+        },
+        {
+          "won": true,
+          "durationMs": 9671
+        }
+      ],
+      "Illuminati:5": [
+        {
+          "won": false,
+          "durationMs": 16568
+        },
+        {
+          "won": false,
+          "durationMs": 16256
+        },
+        {
+          "won": true,
+          "durationMs": 9174
+        },
+        {
+          "won": false,
+          "durationMs": 8166
+        },
+        {
+          "won": false,
+          "durationMs": 13148
+        },
+        {
+          "won": false,
+          "durationMs": 8231
+        },
+        {
+          "won": false,
+          "durationMs": 6389
+        },
+        {
+          "won": true,
+          "durationMs": 7630
+        },
+        {
+          "won": false,
+          "durationMs": 6749
+        }
+      ],
+      "Slum Snakes:7": [
+        {
+          "won": false,
+          "durationMs": 19933
+        },
+        {
+          "won": true,
+          "durationMs": 27434
+        },
+        {
+          "won": true,
+          "durationMs": 15787
+        },
+        {
+          "won": true,
+          "durationMs": 15682
+        },
+        {
+          "won": true,
+          "durationMs": 10573
+        }
+      ],
+      "The Black Hand:7": [
+        {
+          "won": false,
+          "durationMs": 21383
+        },
+        {
+          "won": true,
+          "durationMs": 17857
+        },
+        {
+          "won": true,
+          "durationMs": 19782
+        },
+        {
+          "won": true,
+          "durationMs": 16526
+        },
+        {
+          "won": true,
+          "durationMs": 15489
+        }
+      ],
+      "Tetrads:9": [
+        {
+          "won": false,
+          "durationMs": 43669
+        },
+        {
+          "won": false,
+          "durationMs": 47093
+        },
+        {
+          "won": false,
+          "durationMs": 41839
+        },
+        {
+          "won": true,
+          "durationMs": 35918
+        },
+        {
+          "won": false,
+          "durationMs": 43290
+        },
+        {
+          "won": true,
+          "durationMs": 36381
+        },
+        {
+          "won": false,
+          "durationMs": 35253
+        }
+      ],
+      "Daedalus:9": [
+        {
+          "won": true,
+          "durationMs": 32898
+        },
+        {
+          "won": true,
+          "durationMs": 26306
+        },
+        {
+          "won": true,
+          "durationMs": 33974
+        },
+        {
+          "won": true,
+          "durationMs": 31825
+        },
+        {
+          "won": true,
+          "durationMs": 28285
+        },
+        {
+          "won": true,
+          "durationMs": 28404
+        },
+        {
+          "won": true,
+          "durationMs": 20531
+        }
+      ],
+      "Slum Snakes:9": [
+        {
+          "won": true,
+          "durationMs": 22998
+        },
+        {
+          "won": true,
+          "durationMs": 30382
+        },
+        {
+          "won": true,
+          "durationMs": 27471
+        },
+        {
+          "won": false,
+          "durationMs": 30713
+        },
+        {
+          "won": false,
+          "durationMs": 33474
+        }
+      ],
+      "Netburners:9": [
+        {
+          "won": true,
+          "durationMs": 17879
+        },
+        {
+          "won": true,
+          "durationMs": 22905
+        },
+        {
+          "won": true,
+          "durationMs": 17221
+        },
+        {
+          "won": true,
+          "durationMs": 21681
+        },
+        {
+          "won": true,
+          "durationMs": 16916
+        }
+      ],
+      "The Black Hand:9": [
+        {
+          "won": true,
+          "durationMs": 37853
+        },
+        {
+          "won": true,
+          "durationMs": 33578
+        },
+        {
+          "won": true,
+          "durationMs": 34794
+        },
+        {
+          "won": true,
+          "durationMs": 28602
+        }
+      ],
+      "????????????:19": [
+        {
+          "won": true,
+          "durationMs": 159543
+        }
+      ],
+      "????????????:completed": 1
+    }
+  },
+  "Slum Snakes:13": {
+    "opponent": "Slum Snakes",
+    "size": 13,
+    "games": 246,
+    "wins": 225,
+    "blackScore": 24136,
+    "timedGames": 236,
+    "durationMs": 15906316,
+    "updatedAt": 1792474039646
+  },
+  "Daedalus:13": {
+    "opponent": "Daedalus",
+    "size": 13,
+    "games": 263,
+    "wins": 248,
+    "blackScore": 24258,
+    "timedGames": 254,
+    "durationMs": 18965557,
+    "updatedAt": 1792473786943
+  },
+  "Illuminati:13": {
+    "opponent": "Illuminati",
+    "size": 13,
+    "games": 262,
+    "wins": 147,
+    "blackScore": 21197,
+    "timedGames": 252,
+    "durationMs": 19623650,
+    "updatedAt": 1792473570565
+  },
+  "The Black Hand:13": {
+    "opponent": "The Black Hand",
+    "size": 13,
+    "games": 230,
+    "wins": 227,
+    "blackScore": 25269,
+    "timedGames": 220,
+    "durationMs": 16316769,
+    "updatedAt": 1792473984199
+  },
+  "Netburners:13": {
+    "opponent": "Netburners",
+    "size": 13,
+    "games": 221,
+    "wins": 221,
+    "blackScore": 24574,
+    "timedGames": 213,
+    "durationMs": 10049628,
+    "updatedAt": 1792474182971
+  },
+  "Tetrads:5": {
+    "opponent": "Tetrads",
+    "size": 5,
+    "games": 8,
+    "wins": 6,
+    "blackScore": 116,
+    "timedGames": 8,
+    "durationMs": 88238,
+    "updatedAt": 1792464030064
+  },
+  "Netburners:5": {
+    "opponent": "Netburners",
+    "size": 5,
+    "games": 6,
+    "wins": 6,
+    "blackScore": 101,
+    "timedGames": 6,
+    "durationMs": 29208,
+    "updatedAt": 1792471475892
+  },
+  "Daedalus:5": {
+    "opponent": "Daedalus",
+    "size": 5,
+    "games": 7,
+    "wins": 6,
+    "blackScore": 99,
+    "timedGames": 7,
+    "durationMs": 68715,
+    "updatedAt": 1792461286926
+  },
+  "Illuminati:9": {
+    "opponent": "Illuminati",
+    "size": 9,
+    "games": 10,
+    "wins": 1,
+    "blackScore": 346,
+    "timedGames": 10,
+    "durationMs": 327327,
+    "updatedAt": 1792471508595
+  },
+  "The Black Hand:5": {
+    "opponent": "The Black Hand",
+    "size": 5,
+    "games": 5,
+    "wins": 3,
+    "blackScore": 69,
+    "timedGames": 5,
+    "durationMs": 53048,
+    "updatedAt": 1792465977185
+  },
+  "Slum Snakes:5": {
+    "opponent": "Slum Snakes",
+    "size": 5,
+    "games": 6,
+    "wins": 6,
+    "blackScore": 101,
+    "timedGames": 6,
+    "durationMs": 51280,
+    "updatedAt": 1792471472738
+  },
+  "Daedalus:7": {
+    "opponent": "Daedalus",
+    "size": 7,
+    "games": 7,
+    "wins": 4,
+    "blackScore": 174,
+    "timedGames": 7,
+    "durationMs": 138797,
+    "updatedAt": 1792465969048
+  },
+  "Tetrads:7": {
+    "opponent": "Tetrads",
+    "size": 7,
+    "games": 8,
+    "wins": 6,
+    "blackScore": 196,
+    "timedGames": 8,
+    "durationMs": 178870,
+    "updatedAt": 1792469666457
+  },
+  "Illuminati:7": {
+    "opponent": "Illuminati",
+    "size": 7,
+    "games": 9,
+    "wins": 1,
+    "blackScore": 193,
+    "timedGames": 9,
+    "durationMs": 176077,
+    "updatedAt": 1792462425253
+  },
+  "Illuminati:5": {
+    "opponent": "Illuminati",
+    "size": 5,
+    "games": 9,
+    "wins": 2,
+    "blackScore": 73,
+    "timedGames": 9,
+    "durationMs": 92311,
+    "updatedAt": 1792468326754
+  },
+  "Slum Snakes:7": {
+    "opponent": "Slum Snakes",
+    "size": 7,
+    "games": 5,
+    "wins": 4,
+    "blackScore": 143,
+    "timedGames": 5,
+    "durationMs": 89409,
+    "updatedAt": 1792456991969
+  },
+  "The Black Hand:7": {
+    "opponent": "The Black Hand",
+    "size": 7,
+    "games": 5,
+    "wins": 4,
+    "blackScore": 154,
+    "timedGames": 5,
+    "durationMs": 91037,
+    "updatedAt": 1792471858882
+  },
+  "Tetrads:9": {
+    "opponent": "Tetrads",
+    "size": 9,
+    "games": 7,
+    "wins": 2,
+    "blackScore": 248,
+    "timedGames": 7,
+    "durationMs": 283443,
+    "updatedAt": 1792461396295
+  },
+  "Daedalus:9": {
+    "opponent": "Daedalus",
+    "size": 9,
+    "games": 7,
+    "wins": 7,
+    "blackScore": 307,
+    "timedGames": 7,
+    "durationMs": 202223,
+    "updatedAt": 1792472832739
+  },
+  "Slum Snakes:9": {
+    "opponent": "Slum Snakes",
+    "size": 9,
+    "games": 6,
+    "wins": 4,
+    "blackScore": 237,
+    "timedGames": 5,
+    "durationMs": 145038,
+    "updatedAt": 1792463009814
+  },
+  "Netburners:9": {
+    "opponent": "Netburners",
+    "size": 9,
+    "games": 5,
+    "wins": 5,
+    "blackScore": 235,
+    "timedGames": 5,
+    "durationMs": 96602,
+    "updatedAt": 1792466634592
+  },
+  "The Black Hand:9": {
+    "opponent": "The Black Hand",
+    "size": 9,
+    "games": 4,
+    "wins": 4,
+    "blackScore": 221,
+    "timedGames": 4,
+    "durationMs": 134827,
+    "updatedAt": 1792457388461
+  },
+  "????????????:19": {
+    "opponent": "????????????",
+    "size": 19,
+    "games": 1,
+    "wins": 1,
+    "blackScore": 138,
+    "timedGames": 1,
+    "durationMs": 159543,
+    "updatedAt": 1792445449258
+  }
+}

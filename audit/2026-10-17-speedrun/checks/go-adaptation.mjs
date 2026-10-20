@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {goCohort, selectGoBoard, summarizeGoSamples} from '../../../go-policy.js';
+import {goCohort, selectGoBoard, summarizeGoSamples, goFavorEta, GO_BOARD_PROFILE, GO_OPPONENTS} from '../../../go-policy.js';
 import {main as save} from '../../../bin/go-stats.js';
 import {loadGoBot} from './go-bot-loader.mjs';
 const cohort=goCohort(false,0.9,false), opponent='Netburners';
 const stats={_adaptive:{[cohort]:{}}}, data=stats._adaptive[cohort];
 const rows=(wins,total,ms)=>Array.from({length:total},(_,i)=>({won:i<wins,durationMs:ms}));
-const select=extra=>selectGoBoard({opponent,stats,cohort,explore:false,...extra});
+const select=extra=>selectGoBoard({opponent,requested:'auto',stats,cohort,explore:false,...extra});
 assert.equal(select().size,13);
 data['Netburners:5']=rows(3,3,1000);assert.equal(select().size,13);
 data['Netburners:13']=rows(54,60,60000);data['Netburners:5']=rows(54,60,10000);
@@ -26,6 +26,45 @@ assert.equal(select({stats:trialStats,explore:true,streak:0}).size,5);
 assert.equal(select({stats:trialStats,explore:true,streak:-1,opponent:'Illuminati'}).size,9);
 trialStats._adaptive[cohort]['Netburners:lastTrial']=3;
 assert.equal(select({stats:trialStats,explore:true,streak:0}).size,13);
+
+// Fixed profile is reproducible from the supplied cohort, without importing it into runtime history.
+const measured=JSON.parse(readFileSync(new URL('../data/go-results-2026-10-20.json',import.meta.url),'utf8'));
+for(const opponent of GO_OPPONENTS){
+  const candidates=[5,7,9,13].map(size=>({size,...summarizeGoSamples(measured._adaptive[cohort][`${opponent}:${size}`])}));
+  const fastest=candidates.filter(row=>row.games>=4).sort((a,b)=>goFavorEta(a)-goFavorEta(b))[0];
+  assert.equal(GO_BOARD_PROFILE[opponent],fastest.size,opponent);
+  const chosen=selectGoBoard({opponent,stats:measured,cohort,explore:true,streak:-1});
+  assert.equal(chosen.size,fastest.size);assert.equal(chosen.trial,undefined,'The fixed profile never explores');
+  assert.equal(selectGoBoard({opponent,stats:{},cohort:'unseen'}).size,fastest.size,'Fixed policy is not synthetic timing evidence');
+  assert.equal(selectGoBoard({opponent,requested:'9'}).size,9,'Explicit numeric choices still win');
+}
+assert.equal(selectGoBoard({opponent:'????????????'}).size,19);
+assert.equal(select({opponent:'The Black Hand',stats:measured,favorRewards:1,streak:1}).size,9,
+  'An existing odd streak can change the fastest board for one remaining reward');
+assert.equal(select({opponent:'The Black Hand',stats:measured,favorRewards:3,streak:1}).size,7);
+// Fewer wins can still give more favor per minute. Illuminati's tiny sample is too uncertain.
+assert.equal(select({favorRewards:1,streak:0}).size,5);
+assert.equal(select({opponent:'Illuminati',favorRewards:1}).size,13);
+assert.equal(select({stats:{_adaptive:{[cohort]:{'Netburners:5':rows(3,3,1)}}},favorRewards:1}).size,13);
+// Independently sum the probability of unfinished consecutive-win rewards after each game.
+function expectedGames(p,rewards,odd){
+  let state=Array(rewards*2+1).fill(0);state[odd?1:0]=1;let sum=0;
+  for(let game=0;game<5000;game++){
+    sum+=state.slice(0,-1).reduce((a,b)=>a+b,0);
+    const next=Array(state.length).fill(0);
+    for(let i=0;i<state.length-1;i++){
+      next[i+1]+=state[i]*p;next[i-i%2]+=state[i]*(1-p);
+    }
+    state=next;
+  }
+  return sum;
+}
+for(const p of [0.2,0.5,0.9,1])for(const rewards of [1,2,4])for(const streak of [-1,0,1,2,3]){
+  const actual=goFavorEta({confidence:p,durationMs:1000},rewards,streak)/1000;
+  assert(Math.abs(actual-expectedGames(p,rewards,streak>0&&streak%2===1))<1e-8);
+}
+assert.equal(goFavorEta({confidence:0,durationMs:1000}),Infinity);
+assert.equal(goFavorEta({confidence:1,durationMs:Infinity}),Infinity);
 
 const files=new Map();
 async function helper(args){let callback,result;await save({pid:1,args,read:file=>files.get(file)??'',write:async(file,contents)=>files.set(file,contents),atExit:fn=>{callback=fn;},getPortHandle:()=>({write:value=>{result=value;}})});callback();return result;}
@@ -58,4 +97,4 @@ const ns={pid:1,getScriptName:()=> 'go.js',disableLog(){},clearLog(){},print(){}
 await assert.rejects(main(ns),error=>error===STOP);
 assert.equal(resets[0].size,5);assert.equal(records.length,2);assert.equal(records[0].resumed,true);
 assert.equal(records[0].won,true);assert.equal(records[1].won,false);assert.equal(records[1].resumed,false);
-console.log('Go per-opponent reliability/time choice, streak protection, bounded exploration, cohort separation, result retention, and real lifecycle checks passed.');
+console.log('Go fixed favor/time profile, consecutive-win forecasts, adaptive reliability/time choice, streak protection, bounded exploration, cohort separation, result retention, and real lifecycle checks passed.');
