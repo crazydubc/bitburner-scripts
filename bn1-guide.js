@@ -23,6 +23,7 @@ const factionTargets = {
   BitRunners: [['BitRunners Neurolink', '875k']],
   'Tian Di Hui': [['Neuroreceptor Management Implant', '75k']],
 };
+const shareWorkTip = 'While doing faction work in BN1, set "share-mode": "on" in kernel.js.config.txt, then restart kernel from home (autopilot can relaunch it). Sharing uses spare RAM with buffers. Return the setting to "auto" when you switch to crime/company work or finish the rep goal; before SF4, manual work cannot be detected. With SF4, auto follows player and sleeve faction work.';
 const installReminder = 'Before final purchases/install: leave autopilot running and run stockmaster.js --liquidate on home. Stockmaster sells your positions and stays running without buying. Verify all stock positions are zero; leave the liquidator running until installation.';
 
 /** Returns a status for the panel. Launch attempts never wait for RAM. */
@@ -81,6 +82,7 @@ export function getBn1FactionRoadmap(s) {
     'How: root/backdoor the server using Tasks/crack-host.js and scan.js, accept its invitation in Factions, then choose Hacking Contracts. Focus when practical; check the displayed reputation gain when comparing work types.',
     'Early parallel setup after coinflip: buy DarkscapeNavigator.exe for $50m through TOR. The $30m option is Chongqing > Shadowed Walkway and includes TOR. Autopilot starts darknet.js after purchase; watch Active Scripts for its workers.',
     darknetWorkTip,
+    shareWorkTip,
     'After coinflip, autopilot can farm infiltration rewards, join Shadows of Anarchy, and buy WKS first. Its other augments can fill the distinct-augmentation count for Daedalus. They still need installation. Leave the Terminal or City open for automation; run infiltrate.js --stop to stop the current session.',
     'For BN1 reputation rewards, set "infiltration-faction": "CyberSec" in autopilot.js.config.txt (substitute your current joined target and restart autopilot). Otherwise SoA farming sells data for money. Change the recipient as you progress; before SF4, check its reputation yourself. Set "infiltration": false in that config to disable automatic sessions.',
     ...factionSteps,
@@ -127,7 +129,7 @@ export function getBn1Guidance(s) {
   if (reset.ownedAugs.has('The Red Pill'))
     return action('daemon-prep', 'Prepare the final server', `Reach hacking ${s.daemon?.requiredHackingSkill ?? 3000}; current level ${hacking}.`, 'Buy all five port crackers, run Tasks/crack-host.js, then use scan.js to connect/backdoor w0r1d_d43m0n.');
   if (player.factions.includes('Daedalus'))
-    return action('red-pill', 'Work toward The Red Pill', 'In Factions > Daedalus, compare Hacking Contracts and Field Work; use the higher rep/sec until you can buy The Red Pill (2.5m reputation in BN1). Darknet-trained Charisma helps Field Work.', installReminder, 'Run bn1-guide.js --install for the full checklist, then buy The Red Pill if needed and install from the Augmentations screen.', 'After installation, run bn1-guide.js again; it can restart autopilot on the new cycle.');
+    return action('red-pill', 'Work toward The Red Pill', 'In Factions > Daedalus, compare Hacking Contracts and Field Work; use the higher rep/sec until you can buy The Red Pill (2.5m reputation in BN1). Darknet-trained Charisma helps Field Work.', shareWorkTip, installReminder, 'Run bn1-guide.js --install for the full checklist, then buy The Red Pill if needed and install from the Augmentations screen.', 'After installation, run bn1-guide.js again; it can restart autopilot on the new cycle.');
   if (installed >= 30 && hacking >= 2500)
     return action('daedalus', 'Secure the Daedalus invitation', `${installed}/30 distinct installed augmentations; hacking ${hacking}/2500.`, `Hold $100b in cash until invited. Current cash: ${money(player.money)}. Stocks do not count as cash.`, 'Check Factions for the invitation and join Daedalus.');
   for (const [host, faction] of BN1_FACTION_SERVERS) {
@@ -144,6 +146,7 @@ export function getBn1Guidance(s) {
   return action('augmentations', 'Work, buy a useful bundle, then install',
     factionWorkAdvice(s),
     darknetWorkTip,
+    shareWorkTip,
     'Focus work when practical. If a target is already purchased, choose the next useful target; the guide cannot see queued purchases or faction reputation.',
     'For faction access, targets, and optional side stops: run bn1-guide.js --roadmap.',
     installReminder,

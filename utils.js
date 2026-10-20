@@ -201,6 +201,7 @@ export const remoteScriptDependencies = [
   "speedrun-policy.js",
   "augmentation-reset-policy.js",
   "go-policy.js",
+  "share-controller.js",
   "infiltration-policy.js",
 ];
 

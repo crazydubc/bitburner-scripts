@@ -3,9 +3,18 @@ import {
   getGrowThreads, getServers, serverRun, getServerAvailRam, getPlayerInfo, getHackP,
   doGetServerMinSec, doGetServerCurSec, getReset,
   getActiveSourceFiles, doSCP, getBNMults, stanekRun,
-  getServerMaxRam, getPortCrackers
+  getServerMaxRam, getPortCrackers, getConfiguration
 } from './utils.js'
+import {createShareController, validShareOptions} from './share-controller.js';
 
+const argsSchema = [
+  ['share-mode', 'auto'], // auto follows player/sleeve faction work, on is the manual BN1 option, off disables sharing.
+  ['share-home-buffer', 64], // Minimum GB left free on home by share workers.
+  ['share-host-buffer', 8], // Minimum GB left free on each other host by share workers.
+  ['share-buffer-fraction', 0.05], // Also leave this fraction of total host RAM free, using the larger buffer.
+];
+
+export function autocomplete(data) { data.flags(argsSchema); return []; }
 
 //ram to reserve on home.
 const reservedRam = 32;
@@ -20,6 +29,12 @@ export function validateBatchPlan(batch, hostname) {
 }
 /** @param {NS} ns */
 export async function main(ns) {
+  const options = getConfiguration(ns, argsSchema);
+  if (!options) return;
+  if (!validShareOptions(options)) {
+    log(ns, 'ERROR: Use --share-mode auto/on/off, nonnegative RAM buffers, and a share-buffer-fraction from 0 to 1.', true);
+    return;
+  }
   let resetInfo = await getReset(ns);
   let player = await getPlayerInfo(ns);
   let target, nextTarget;
@@ -31,7 +46,6 @@ export async function main(ns) {
   let botsSent = 0;
   let botsRequired = -1;
   let threadsLeft = 0;
-  let lastShareTime = Date.now() + 30000;
   let totalram = await getServerAvailRam(ns, "home");
   const dictSourceFiles = await getActiveSourceFiles(ns);
   if (resetInfo.currentNode == 4) dictSourceFiles[4] = 3;
@@ -39,6 +53,8 @@ export async function main(ns) {
   const useHacknet = bnMultis.CloudServerLimit == 0 && 9 in dictSourceFiles;
 
   let stanekUnlocked = 13 in dictSourceFiles;
+  const sharing = createShareController(ns, options, dictSourceFiles);
+  ns.atExit(() => sharing.stop());
 
   /** @param {NS} ns **/
   async function startup(ns) {
@@ -183,40 +199,36 @@ export async function main(ns) {
       if (botnetStatus && botsRequired !== botsSent) await runbotnet(ns, threadsLeft);
       loopCount++;
       let pids = [];
-      while (ns.isRunning(results.lastpid, "home")) {
-        //share what is left
-        if (stanekUnlocked) {
-          if (!pids.some(pid => ns.isRunning(pid))) {
+      try {
+        while (ns.isRunning(results.lastpid, "home")) {
+          const shareActive = await sharing.update(baseServers, () => ns.isRunning(results.lastpid, 'home'));
+          if (!ns.isRunning(results.lastpid, 'home')) break;
+          if (shareActive) {
+            // Only reclaim this kernel's optional charges; active faction work gets spare RAM first.
+            for (const pid of pids) if (ns.isRunning(pid)) ns.kill(pid);
             pids = [];
-            const frags = await stanekRun(ns, 'activeFragments');
-            if (frags.length == 0) break;
-            for (const server of baseServers) {
-              if (server.hostname == 'home') continue;
-              const mult = server.hostname.startsWith('hacknet') ? 10 : 2.1;
-              const threads = Math.floor(await getServerAvailRam(ns, server.hostname) / mult);
-              if (threads > 0) {
-                await doSCP(ns, 'stanek.charge.js', server.hostname);
-                const pid = ns.exec('stanek.charge.js', server.hostname, threads, JSON.stringify(frags));
-                if (pid) pids.push(pid);
+          } else if (stanekUnlocked) {
+            if (!pids.some(pid => ns.isRunning(pid))) {
+              pids = [];
+              const frags = await stanekRun(ns, 'activeFragments');
+              if (frags.length == 0) break;
+              for (const server of baseServers) {
+                if (server.hostname == 'home') continue;
+                const mult = server.hostname.startsWith('hacknet') ? 10 : 2.1;
+                const threads = Math.floor(await getServerAvailRam(ns, server.hostname) / mult);
+                if (threads > 0) {
+                  await doSCP(ns, 'stanek.charge.js', server.hostname);
+                  const pid = ns.exec('stanek.charge.js', server.hostname, threads, JSON.stringify(frags));
+                  if (pid) pids.push(pid);
+                }
               }
             }
           }
+          await ns.sleep(100);
         }
-        if (totalram > 1200 && lastShareTime < Date.now() - 11000) {
-          lastShareTime = Date.now();
-          for (const server of baseServers) {
-            if (server.hostname == 'home') continue;
-            if (server.hostname.startsWith('hacknet')) continue;
-            if (server.hasAdminRights && server.maxRam > 0) {
-              const threads = Math.floor(await getServerAvailRam(ns, server.hostname) / 6)
-              if (threads > 0) {
-                await doSCP(ns, 'bin/share.js', server.hostname)
-                ns.exec('bin/share.js', server.hostname, threads)
-              }
-            }
-          }
-        }
-        await ns.sleep(100);
+      } finally {
+        sharing.stop();
+        for (const pid of pids) if (ns.isRunning(pid)) ns.kill(pid);
       }
       player = await getPlayerInfo(ns);
       if (hacking < player.skills.hacking) {

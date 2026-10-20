@@ -4,6 +4,8 @@ The highest-value work is fixing progression stalls and making the early-game la
 
 **The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) now contains implemented fixes and positive offline checks for all 18 original findings.** It combines BN1.1 prompts, focused Go fixes, resource/purchase repairs, corporation lifecycle/expansion fixes, the revised BN route, and the remaining infrastructure/batcher corrections. See [remaining-fixes.md](remaining-fixes.md) for the final backlog pass and its limits. Batch timing/scheduling and the $8b reserve formula are unchanged. Live validation and route/performance measurements remain necessary.
 
+**Faction-aware sharing:** [Share allocation and controls](2026-10-20-sharing.md) uses spare RAM for player/sleeve faction work, prioritizes it over optional Stanek charging, applies home/host buffers, and reclaims workers before the next batch RAM census. The old 1.2 TB gate and 6 GB divisor are gone. Five relevant regression suites and the official RAM comparison pass. Kernel is 5.85 GB; managed share workers are 4.1 GB. Pull and restart both autopilot and kernel from home for the new dependency bundle. Before SF4, the BN1 panel explains `share-mode: on` for manual faction work.
+
 **Measured Go board defaults:** [Fixed boards and favor throughput](2026-10-20-go-board-profile.md) adds `--board-size profile` as the default, based on the supplied results. Netburners, Slum Snakes, Tetrads and Daedalus use 5×5; The Black Hand uses 7×7; Illuminati uses 13×13; the hidden opponent stays 19×19. Favor estimates account for consecutive wins and game time. Optional adaptive favor routes choose and execute the board forecast to reach the remaining rewards fastest. Three Go suites and the official RAM comparison pass; Go remains 3.5 GB. Restart Go after pulling, and use `--board-size profile` if an older config pins `auto` or a number.
 
 **Goal-aware Go:** [Opponent selection and funded donation favor](2026-10-20-go-goals.md) replaces the default random rotation with current crime/combat, reputation, cash-production, and hacking priorities. A measured short Go favor route can take priority when cash above reserve covers a useful augmentation and its donation bill. All 21 regression checks pass; Go remains 3.5 GB. Pull, restart Go from home, and use `--opponent auto` if an older config pins another mode. Before SF4, `--goal rep/crime/combat/money/hacking` supplies the work goal explicitly.
@@ -60,6 +62,7 @@ node audit/2026-10-17-speedrun/checks/batch-upgrade-compatibility.mjs
 node audit/2026-10-17-speedrun/checks/speedrun-improvements.mjs
 node audit/2026-10-17-speedrun/checks/infiltration.mjs
 node audit/2026-10-17-speedrun/checks/go-adaptation.mjs
+node audit/2026-10-17-speedrun/checks/share-allocation.mjs
 node audit/2026-10-17-speedrun/checks/go-goals.mjs
 node audit/2026-10-17-speedrun/checks/soa-progression.mjs /path/to/bitburner-src
 node audit/2026-10-17-speedrun/checks/progression-throughput.mjs /path/to/bitburner-src

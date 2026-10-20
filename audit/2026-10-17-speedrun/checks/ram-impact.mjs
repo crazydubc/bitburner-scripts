@@ -81,7 +81,7 @@ const targets=['autopilot.js','kernel.js','bn1-guide.js','go.js','host-manager.j
   'bladeburner.js','work-for-faction2.js','farm-intel.js','bin/intel-farm-state.js',
   'bin/getHackP.js','bin/getGrowThreads.js','bin/getbnmultis.js','bin/singRun.js','bin/singReadMany.js','bin/reserve.js',
   'bin/sync-script-config.js','bin/purchase.js','bin/terminate-rpc.js','bin/getBackdoorTime.js',
-  'bin/getStockValue.js','bin/getGoSnapshot.js','bin/go-context.js','bin/getHacknetPayoff.js','bin/run-log.js','bin/go-stats.js',
+  'bin/share.js','bin/share-context.js','bin/getStockValue.js','bin/getGoSnapshot.js','bin/go-context.js','bin/getHacknetPayoff.js','bin/run-log.js','bin/go-stats.js',
   'bin/bribe-faction.js','infiltrate.js','bin/infiltration-control.js','bin/infiltration-locations.js',
   'Tasks/backdoor-all-servers.js','Tasks/backdoor-all-servers.js.backdoor-one.js','Tasks/contractor.js.solver.js'];
 for(const file of targets) {

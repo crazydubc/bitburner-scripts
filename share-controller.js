@@ -1,0 +1,113 @@
+import {runScriptLocal, doSCP} from './utils.js';
+
+export const SHARE_WORKER = 'bin/share.js';
+export const SHARE_DEFAULTS = {'share-mode': 'auto', 'share-home-buffer': 64, 'share-host-buffer': 8, 'share-buffer-fraction': 0.05};
+
+export function validShareOptions(options) {
+  return ['auto', 'on', 'off'].includes(options['share-mode']) &&
+    ['share-home-buffer', 'share-host-buffer', 'share-buffer-fraction'].every(key => Number.isFinite(options[key]) && options[key] >= 0) &&
+    options['share-buffer-fraction'] <= 1;
+}
+
+/** Keep an absolute helper cushion as well as a fraction of each host's total RAM. */
+export function shareBuffer(host, maxRam, options = SHARE_DEFAULTS) {
+  return Math.max(host === 'home' ? options['share-home-buffer'] : options['share-host-buffer'], maxRam * options['share-buffer-fraction']);
+}
+
+export function shareContextRam(ns, workAccess, sleeveAccess) {
+  return ns.getFunctionRamCost('baseCost') +
+    (workAccess ? ns.getFunctionRamCost('singularity.getCurrentWork') : 0) +
+    (sleeveAccess ? ns.getFunctionRamCost('sleeve.getNumSleeves') + ns.getFunctionRamCost('sleeve.getTask') : 0);
+}
+
+/** Optional work reads must not block batch progress when home is busy or an API is unavailable. */
+export async function getShareContext(ns, sourceFiles) {
+  const workAccess = (sourceFiles[4] ?? 0) > 0, sleeveAccess = (sourceFiles[10] ?? 0) > 0;
+  if (!workAccess && !sleeveAccess) return null;
+  const ram = shareContextRam(ns, workAccess, sleeveAccess);
+  if (!(ns.getScriptRam('bin/share-context.js', 'home') > 0) || !Number.isFinite(ram) ||
+    ns.getServerMaxRam('home') - ns.getServerUsedRam('home') < ram) return null;
+  try {
+    const result = await runScriptLocal(ns, 'bin/share-context.js', false, [workAccess, sleeveAccess], ram);
+    return result && typeof result === 'object' && typeof result.active === 'boolean' ? result : null;
+  } catch { return null; }
+}
+
+/** Only owns the PIDs it starts. The kernel releases them before its next RAM census. */
+export function createShareController(ns, options, sourceFiles) {
+  const jobs = new Map(), copied = new Set();
+  let nextContext = 0, nextAllocation = 0, context = null, previousStatus = '', nextLog = 0;
+  const stopHost = host => {
+    const job = jobs.get(host);
+    if (job && ns.isRunning(job.pid)) ns.kill(job.pid);
+    jobs.delete(host);
+  };
+  const stop = () => {
+    for (const host of jobs.keys()) stopHost(host);
+    nextAllocation = 0;
+  };
+  const report = (active, reason) => {
+    const key = `${active}:${reason}`;
+    if (key === previousStatus && (!active || Date.now() < nextLog)) return;
+    previousStatus = key; nextLog = Date.now() + 60_000;
+    const live = [...jobs.values()].filter(job => ns.isRunning(job.pid));
+    const threads = live.reduce((sum, job) => sum + job.threads, 0), ram = live.reduce((sum, job) => sum + job.threads * job.ram, 0);
+    ns.print(`INFO: Share ${active ? 'active' : 'idle'}: ${reason}. ${threads} threads / ${ram.toFixed(1)} GB; ` +
+      `buffers home ${options['share-home-buffer']} GB, other hosts ${options['share-host-buffer']} GB, or ${(options['share-buffer-fraction'] * 100).toFixed(0)}% (whichever is larger).`);
+  };
+  async function update(servers, batchRunning) {
+    if (!batchRunning()) { stop(); return false; }
+    if (options['share-mode'] === 'auto' && Date.now() >= nextContext) {
+      context = await getShareContext(ns, sourceFiles);
+      nextContext = Date.now() + 5_000;
+    }
+    const active = options['share-mode'] === 'on' || options['share-mode'] === 'auto' && context?.active === true;
+    const reason = options['share-mode'] === 'on' ? 'manual faction-work mode' : options['share-mode'] === 'off' ? 'disabled' :
+      context?.active ? context.reason : context ? 'no faction work on player or sleeves' :
+        'work data unavailable (before SF4, use --share-mode on while doing faction work)';
+    if (!active) { stop(); report(false, reason); return false; }
+    if (Date.now() < nextAllocation) return true;
+    nextAllocation = Date.now() + 2_000;
+    const eligible = servers.filter(server => server.hasAdminRights && server.maxRam > 0 && !server.hostname.startsWith('hacknet'));
+    const allowed = new Set(eligible.map(server => server.hostname));
+    for (const host of jobs.keys()) if (!allowed.has(host)) stopHost(host);
+    // Core bonuses make home/high-core hosts useful too; never spend their helper buffer.
+    eligible.sort((a, b) => (b.cpuCores ?? 1) - (a.cpuCores ?? 1));
+    for (const server of eligible) {
+      if (!batchRunning()) { stop(); return false; }
+      const host = server.hostname;
+      try {
+        let job = jobs.get(host);
+        if (job && !ns.isRunning(job.pid)) { jobs.delete(host); job = null; }
+        const ram = ns.getScriptRam(SHARE_WORKER, 'home');
+        if (!(ram > 0) || !Number.isFinite(ram)) { stopHost(host); continue; }
+        const budget = () => {
+          const max = ns.getServerMaxRam(host), used = ns.getServerUsedRam(host);
+          const free = max - used + (job ? job.threads * job.ram : 0) - shareBuffer(host, max, options);
+          return Number.isFinite(free) ? Math.max(0, Math.floor(free / ram)) : 0;
+        };
+        let threads = budget();
+        if (threads === job?.threads && ram === job.ram) continue;
+        if (threads <= 0) { stopHost(host); continue; }
+        if (host !== 'home' && !copied.has(host)) {
+          if (!await doSCP(ns, SHARE_WORKER, host)) continue;
+          copied.add(host);
+        }
+        // SCP/helper waits allow other scripts to allocate RAM or finish the batch. Recheck both.
+        if (!batchRunning()) { stop(); return false; }
+        threads = budget();
+        stopHost(host); job = null;
+        if (threads > 0) {
+          const pid = ns.exec(SHARE_WORKER, host, {threads, temporary: true}, '--owner', ns.pid);
+          if (pid) jobs.set(host, {pid, threads, ram});
+        }
+      } catch (error) {
+        stopHost(host);
+        ns.print(`WARNING: Share skipped ${host}: ${String(error)}`);
+      }
+    }
+    report(true, reason);
+    return true;
+  }
+  return {update, stop};
+}
