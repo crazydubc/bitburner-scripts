@@ -63,6 +63,30 @@ export async function getGoResults(ns) {
   if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error(`Go results unavailable: ${String(result)}`);
   return result;
 }
+/** Optional once-per-game reads must not prevent playing when home RAM/API access is limited. */
+export async function getGoContext(ns, sourceFiles = {}) {
+  const required = ns.getScriptRam('bin/go-context.js', 'home');
+  if (!(required > 0)) return null;
+  const free = await getServerAvailRam(ns, 'home');
+  if (!Number.isFinite(free) || free < required) return null;
+  const context = await runScriptLocal(ns, 'bin/go-context.js', false, []);
+  if (!context || typeof context !== 'object' || Array.isArray(context)) return null;
+  if ((sourceFiles[4] ?? 0) > 0) {
+    const fits = fn => free >= Math.max(6.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`singularity.${fn}`));
+    try {
+      if (fits('getCurrentWork')) {
+        const work = await singRun(ns, 'getCurrentWork');
+        if (work === null || (work && typeof work === 'object' && typeof work.type === 'string')) {
+          context.work = work;
+          context.workKnown = true;
+        }
+        if (work?.type === 'CRIME' && typeof work.crimeType === 'string' && fits('getCrimeChance'))
+          context.crimeChance = await singRun(ns, 'getCrimeChance', work.crimeType);
+      }
+    } catch { /* Keep the cheap snapshot if the optional work/chance read fails. */ }
+  }
+  return context;
+}
 export async function getControlledENodes(ns) { return await runScript(ns, "bin/getControlledEmptyNodes.js", false, []) }
 export async function goMove(ns, x, y) { return await runScript(ns, "bin/makeMove.js", false, [x, y]) }
 export async function goValidMoves(ns) { return await runScript(ns, "bin/goValidMoves.js", false, []) }

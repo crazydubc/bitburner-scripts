@@ -12,10 +12,11 @@
 
 import {
   getConfiguration, log, getErrorInfo, getActiveSourceFiles, whichServerIsRunning,
-  getBoard, getGoSnapshot, getReset, recordGoResult, getGoResults, goMove, goCheatChance, play2Moves,
+  getBoard, getGoSnapshot, getReset, recordGoResult, getGoResults, getGoContext, goMove, goCheatChance, play2Moves,
   destroyND, disableLogs
 } from './utils.js'
-import { goCohort, selectGoBoard } from './go-policy.js';
+import { goCohort, selectGoBoard, GO_GOALS, GO_OPPONENTS as POLICY_OPPONENTS, selectAutoGoOpponent, hasHiddenGoOpponent } from './go-policy.js';
+export const GO_OPPONENTS = POLICY_OPPONENTS;
 
 const argsSchema = [
   ['cheats', true], // (Now true by default - but still an option for backwards compatibility) This is only possible if you have BN14.2
@@ -26,15 +27,14 @@ const argsSchema = [
   ['silent', false], // (Obsolete) This script used to automatically tail. Now if you want to do this, call with --tail like normal.
   ['board-size', 'auto'], // Per-opponent adaptation, or fixed 5/7/9/13. Never abandons a game.
   ['board-exploration', true], // Bounded smaller-board trials only outside winning streaks.
-  ['opponent', 'random'], // A faction name, "hidden", or "random". Never abandons the current board.
-  ['hidden-opponent', true], // Include the hidden 19x19 opponent in random selection after installing The Red Pill.
+  ['opponent', 'auto'], // Follow the current goal, or choose a faction name, "hidden", or "random". Never abandons a board.
+  ['goal', 'auto'], // With --opponent auto: infer work, or use crime/combat/rep/money/hacking (also works before SF4).
+  ['hidden-opponent', true], // Allow the hidden 19x19 opponent in auto/random selection after installing The Red Pill.
 ];
 
-export const GO_OPPONENTS = ['Netburners', 'Slum Snakes', 'The Black Hand', 'Tetrads', 'Daedalus', 'Illuminati'];
 export const HIDDEN_GO_OPPONENT = '????????????';
 export function selectGoOpponent(requested, includeHidden, reset, random = Math.random) {
-  const augs = reset?.ownedAugs;
-  const unlocked = augs instanceof Map ? augs.has('The Red Pill') : Number(augs?.['The Red Pill']) > 0;
+  const unlocked = hasHiddenGoOpponent(reset);
   const pool = unlocked && includeHidden ? [...GO_OPPONENTS, HIDDEN_GO_OPPONENT] : GO_OPPONENTS;
   const selected = requested === 'hidden' ? HIDDEN_GO_OPPONENT : requested;
   if (selected === HIDDEN_GO_OPPONENT && unlocked) return selected;
@@ -57,10 +57,11 @@ export async function main(ns) {
   let logtime = false;
   let runOnce = true;
   let silent = false;
-  let boardSize = 'auto', requestedOpponent = 'random', includeHidden = true, exploreBoards = true;
+  let boardSize = 'auto', requestedOpponent = 'auto', requestedGoal = 'auto', includeHidden = true, exploreBoards = true;
   let gameStartedAt = Date.now(), resumedGame = true;
   let gameCohort, startWins, gameTrial = false, statisticsHealthy = true;
   let gameRecorded = true;
+  const favorDeadlines = {};
   let currentValidMovesTurn = -1; //The turn count that the currentValidMoves is valid for
   let turn = 0;
   let START = performance.now();
@@ -117,11 +118,12 @@ export async function main(ns) {
     runOnce = runOptions.runOnce;
     boardSize = String(runOptions['board-size'] ?? 'auto');
     exploreBoards = runOptions['board-exploration'] ?? true;
-    requestedOpponent = runOptions.opponent ?? 'random';
+    requestedOpponent = runOptions.opponent ?? 'auto';
+    requestedGoal = runOptions.goal ?? 'auto';
     includeHidden = runOptions['hidden-opponent'] ?? true;
     if (!['auto', '5', '7', '9', '13'].includes(boardSize) ||
-      !['random', 'hidden', HIDDEN_GO_OPPONENT, ...GO_OPPONENTS].includes(requestedOpponent)) {
-      log(ns, 'ERROR: Use --board-size auto/5/7/9/13 and --opponent random, hidden, or a faction name.', true);
+      !['auto', 'random', 'hidden', HIDDEN_GO_OPPONENT, ...GO_OPPONENTS].includes(requestedOpponent) || !GO_GOALS.includes(requestedGoal)) {
+      log(ns, 'ERROR: Use --board-size auto/5/7/9/13; --opponent auto/random/hidden or a faction name; --goal auto/crime/combat/rep/money/hacking.', true);
       return;
     }
 
@@ -395,13 +397,22 @@ export async function main(ns) {
         statisticsHealthy = saved !== false;
       } catch (error) { statisticsHealthy = false; log(ns, `WARNING: Go timing unavailable: ${String(error)}`); }
       if (runOnce) ns.exit()
-      const next = selectGoOpponent(requestedOpponent, includeHidden, await getReset(ns));
+      const reset = await getReset(ns);
       const cohort = goCohort(cheats, cheatChanceThreshold, ns.go.getGameState?.().bonusCycles > 0);
       let stats = {};
-      if (boardSize === 'auto') try { stats = await getGoResults(ns); }
+      if (boardSize === 'auto' || requestedOpponent === 'auto') try { stats = await getGoResults(ns); }
       catch (error) { log(ns, `WARNING: Adaptive Go statistics unavailable: ${String(error)}`); }
+      let context = null;
+      if (requestedOpponent === 'auto') try { context = await getGoContext(ns, sourceFiles); }
+      catch (error) { log(ns, `WARNING: Go goal context unavailable: ${String(error)}`); }
+      const opponentChoice = requestedOpponent === 'auto'
+        ? selectAutoGoOpponent({goal: requestedGoal, context, reset, includeHidden, stats, cohort, boardSize,
+          liveStats: ns.go.analysis?.getStats?.() ?? {}, favorDeadlines})
+        : {opponent: selectGoOpponent(requestedOpponent, includeHidden, reset), reason: `${requestedOpponent} opponent setting`};
+      const next = opponentChoice.opponent;
       const choice = selectGoBoard({opponent: next, requested: boardSize, stats, cohort,
-        streak: ns.go.analysis?.getStats?.()[next]?.winStreak ?? 0, explore: exploreBoards && statisticsHealthy});
+        streak: ns.go.analysis?.getStats?.()[next]?.winStreak ?? 0,
+        explore: exploreBoards && statisticsHealthy && opponentChoice.goal !== 'favor'});
       // The engine supplies the fixed 19x19 Bitverse board for the hidden opponent.
       ns.go.resetBoardState(next, choice.size);
       gameStartedAt = Date.now();
@@ -413,7 +424,7 @@ export async function main(ns) {
       turn = 0
       currentValidMovesTurn = -1;
       ns.clearLog()
-      log(ns, `${next}: ${choice.size}x${choice.size} — ${choice.reason}`);
+      log(ns, `${next}: ${choice.size}x${choice.size} — ${opponentChoice.reason}. Board: ${choice.reason}`);
     }
   }
   /** @param {NS} ns

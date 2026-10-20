@@ -4,6 +4,8 @@ The highest-value work is fixing progression stalls and making the early-game la
 
 **The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) now contains implemented fixes and positive offline checks for all 18 original findings.** It combines BN1.1 prompts, focused Go fixes, resource/purchase repairs, corporation lifecycle/expansion fixes, the revised BN route, and the remaining infrastructure/batcher corrections. See [remaining-fixes.md](remaining-fixes.md) for the final backlog pass and its limits. Batch timing/scheduling and the $8b reserve formula are unchanged. Live validation and route/performance measurements remain necessary.
 
+**Goal-aware Go:** [Opponent selection and funded donation favor](2026-10-20-go-goals.md) replaces the default random rotation with current crime/combat, reputation, cash-production, and hacking priorities. A measured short Go favor route can take priority when cash above reserve covers a useful augmentation and its donation bill. All 21 regression checks pass; Go remains 3.5 GB. Pull, restart Go from home, and use `--opponent auto` if an older config pins another mode. Before SF4, `--goal rep/crime/combat/money/hacking` supplies the work goal explicitly.
+
 **Upgrade hotfix:** `c6a62fd` broke old offloaded calculator callers after a pull. The [batch startup hotfix](batch-upgrade-hotfix.md) restores the old argument contracts and tests the actual old-utility/new-helper combination. Pull again and restart kernel/autopilot from updated home files as described there.
 
 **Stock quote hotfix:** the shared purchase guard also passed `"Long"`/`"Short"` to an API that requires `"L"`/`"S"`. It now uses `ns.enums.PositionType`. Stricter checks reproduce the original failure and verify both purchase paths through the remote caller/home helper, including the $8b reserve and casino gate. See [the stock regression notes](remaining-fixes.md#stock-position-regression--2026-10-18), then pull the same testing branch.
@@ -56,6 +58,7 @@ node audit/2026-10-17-speedrun/checks/batch-upgrade-compatibility.mjs
 node audit/2026-10-17-speedrun/checks/speedrun-improvements.mjs
 node audit/2026-10-17-speedrun/checks/infiltration.mjs
 node audit/2026-10-17-speedrun/checks/go-adaptation.mjs
+node audit/2026-10-17-speedrun/checks/go-goals.mjs
 node audit/2026-10-17-speedrun/checks/soa-progression.mjs /path/to/bitburner-src
 node audit/2026-10-17-speedrun/checks/progression-throughput.mjs /path/to/bitburner-src
 ```

@@ -242,6 +242,7 @@ export async function main(ns) {
       last_aug_reset: resetInfo.lastAugReset,
       favor_to_donate: favorToDonate,
       donation_favor_progress: donationFavorProgress,
+      go_favor_targets: getGoFavorTargets(omitAugs),
       reset_planning: getResetPlanningSnapshot(augsAwaitingInstall, omitAugs, workGoal),
       // Augs we already have installed
       installed_augs: installedAugmentations, // Names of augs we've installed (Note: NeuroFlux will only appears once)
@@ -344,6 +345,21 @@ function getDonationFavorProgress(minimumProgressRatio = 1) {
     augPrerequisites,
     donationFactions,
     minimumProgressRatio,
+  });
+}
+
+/** Quotes for direct Go favor unlocks. A quote covers an aug plus its remaining donation bill.
+ * Only already-owned prerequisites qualify; do not promise an unfunded prerequisite chain. */
+function getGoFavorTargets(omitted = []) {
+  const goStats = _ns.go.analysis.getStats();
+  return getDonationFavorProgress(0).flatMap(progress => {
+    const faction = factionData[progress.faction];
+    const quotes = progress.desired_augs.filter(name => !omitted.includes(name)).map(name => augmentationData[name])
+      .filter(aug => aug && aug.prereqs.every(name => ownedAugmentations.includes(name)))
+      .map(aug => ({augmentation: aug.name, cost: aug.price + getReqDonationForRep(aug.reputation, faction)}))
+      .filter(quote => Number.isFinite(quote.cost) && quote.cost > 0).sort((a, b) => a.cost - b.cost);
+    return quotes.length ? [{faction: progress.faction, currentFavor: progress.current_favor,
+      requiredFavor: progress.required_favor, goRep: goStats[progress.faction]?.rep ?? 0, ...quotes[0]}] : [];
   });
 }
 

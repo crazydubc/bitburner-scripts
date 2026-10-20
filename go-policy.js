@@ -2,6 +2,145 @@
 export const GO_STRATEGY = 'patterns-1';
 export const GO_SIZES = [5, 7, 9, 13];
 export const GO_SAMPLE_LIMIT = 60;
+export const GO_GOALS = ['auto', 'crime', 'combat', 'rep', 'money', 'hacking'];
+export const GO_OPPONENTS = ['Netburners', 'Slum Snakes', 'The Black Hand', 'Tetrads', 'Daedalus', 'Illuminati'];
+export const GO_FAVOR_BUDGET_MS = 15 * 60_000;
+
+const hiddenOpponent = '????????????';
+const positive = value => Number.isFinite(value) && value > 0 ? value : 0;
+
+export function hasHiddenGoOpponent(reset) {
+  const augs = reset?.ownedAugs;
+  return augs instanceof Map ? augs.has('The Red Pill') : Number(augs?.['The Red Pill']) > 0;
+}
+
+/** Ignore old worker plans after a reset, shutdown, or a change of work. */
+export function freshGoWorkTarget(target, reset, now = Date.now()) {
+  return !!target && Number.isFinite(target.updatedAt) && now >= target.updatedAt && now - target.updatedAt <= 90_000 &&
+    target.lastAugReset === reset?.lastAugReset && target.lastNodeReset === reset?.lastNodeReset &&
+    ['faction-rep', 'donation-unlock'].includes(target.kind) && typeof target.faction === 'string';
+}
+
+/** Detect a cash seller without changing its configuration or redirecting any hashes. */
+export function sellsGoHashesForMoney(args, config = {}) {
+  if (!Array.isArray(args)) return false;
+  const explicit = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--spend-on') explicit.push(args[++i]);
+    else if (typeof args[i] === 'string' && args[i].startsWith('--spend-on=')) explicit.push(args[i].slice(11));
+  }
+  const options = Array.isArray(config) ? Object.fromEntries(config) : config;
+  const actions = explicit.length ? explicit : options?.['spend-on'] ?? ['Sell for Money'];
+  return Array.isArray(actions) && actions.some(action => typeof action === 'string' && action.replaceAll('_', ' ') === 'Sell for Money');
+}
+
+/** A donation unlock is valuable only with a useful, affordable purchase and a short measured route.
+ * Official favor conversion and Go's per-faction reward cap; current faction rep is NOT current favor. */
+export function selectGoFavorTarget({context, reset, stats = {}, liveStats = {}, cohort, boardSize = 'auto',
+  favorDeadlines = {}, now = Date.now()}) {
+  const snapshot = context?.favorSnapshot;
+  if (!snapshot || snapshot.current_node !== reset?.currentNode || snapshot.last_aug_reset !== reset?.lastAugReset ||
+    !Number.isFinite(snapshot.generated_at) || snapshot.generated_at < reset.lastAugReset ||
+    now < snapshot.generated_at || now - snapshot.generated_at > 90_000 || !Array.isArray(snapshot.go_favor_targets) ||
+    !Array.isArray(context.factions) || !Number.isFinite(context.money) || !Number.isFinite(context.reserve) || context.reserve < 0) return null;
+  const sf14 = reset.ownedSF instanceof Map ? reset.ownedSF.get(14) : reset.ownedSF?.[14];
+  const maxRep = 100_000 * (1 + Math.min(3, positive(sf14)));
+  const reward = maxRep / 200, spendable = Math.max(0, context.money - context.reserve);
+  const favorRep = favor => 25_000 * Math.expm1(0.019802627296179712 * favor);
+  const candidates = [];
+  for (const target of snapshot.go_favor_targets) {
+    if (!GO_OPPONENTS.includes(target?.faction) || !context.factions.includes(target.faction) ||
+      ![target.currentFavor, target.requiredFavor, target.cost, target.goRep].every(Number.isFinite) ||
+      target.currentFavor < 0 || target.currentFavor >= target.requiredFavor || target.cost <= 0 ||
+      target.cost > spendable || target.goRep < 0 || typeof target.augmentation !== 'string') continue;
+    const live = liveStats[target.faction];
+    if (!live || !Number.isFinite(live.rep) || live.rep < target.goRep) continue;
+    // Go favor earned since the planner read must not be requested twice before the next refresh.
+    const gap = favorRep(target.requiredFavor) - favorRep(target.currentFavor) - (live.rep - target.goRep);
+    if (!(gap > 1e-7) || gap > maxRep - live.rep + 1e-7) continue;
+    const size = selectGoBoard({opponent: target.faction, requested: boardSize, stats, cohort, explore: false}).size;
+    const samples = summarizeGoSamples(stats?._adaptive?.[cohort]?.[`${target.faction}:${size}`]);
+    if (samples.games < 4 || samples.confidence <= 0) continue; // No invented game-time forecast.
+    const rewards = Math.ceil((gap - 1e-7) / reward), p = samples.confidence;
+    // Expected games for two consecutive wins, with the current odd streak already halfway there.
+    const pairGames = (1 + p) / (p * p);
+    const firstGames = live.winStreak > 0 && live.winStreak % 2 === 1 ? 1 + (1 - p) * pairGames : pairGames;
+    const eta = (firstGames + (rewards - 1) * pairGames) * samples.durationMs;
+    const key = `${reset.lastAugReset}:${target.faction}:${target.requiredFavor}`;
+    const remaining = Math.min(GO_FAVOR_BUDGET_MS, (favorDeadlines[key] ?? now + GO_FAVOR_BUDGET_MS) - now);
+    if (eta > remaining) continue;
+    candidates.push({opponent: target.faction, eta, key, rewards, augmentation: target.augmentation,
+      reason: `funded donation unlock for ${target.faction}: ~${Math.ceil(eta / 60_000)}m, ${rewards} favor rewards; ${target.augmentation}`});
+  }
+  return candidates.sort((a, b) => a.eta - b.eta)[0] ?? null;
+}
+
+/** Goal relevance first; bonus balance and same-strategy reliability break useful alternatives apart.
+ * Weights are routing heuristics, not predictions of income or a guaranteed win rate. */
+export function selectAutoGoOpponent({goal = 'auto', context = null, reset, includeHidden = true,
+  liveStats = {}, stats = {}, cohort, boardSize = 'auto', favorDeadlines = {}, now = Date.now()} = {}) {
+  const fresh = context && Number.isFinite(context.updatedAt) && now >= context.updatedAt && now - context.updatedAt <= 30_000 &&
+    context.lastAugReset === reset?.lastAugReset && context.lastNodeReset === reset?.lastNodeReset;
+  const state = fresh ? context : {};
+  if (goal === 'auto' || goal === 'rep') {
+    const favor = selectGoFavorTarget({context: state, reset, stats, liveStats, cohort, boardSize, favorDeadlines, now});
+    if (favor) {
+      favorDeadlines[favor.key] ??= now + GO_FAVOR_BUDGET_MS;
+      return {...favor, goal: 'favor'};
+    }
+  }
+  const work = state.work;
+  const target = freshGoWorkTarget(state.target, reset, now) ? state.target : null;
+  const cashLow = Number.isFinite(state.money) && state.money < Math.max(1e6, positive(state.reserve));
+  let reason = `manual ${goal} goal`;
+  if (goal === 'auto') {
+    if (work?.type === 'CRIME') { goal = 'crime'; reason = `crime work (${work.crimeType ?? 'active crime'})`; }
+    else if (work?.type === 'CLASS' && ['str', 'def', 'dex', 'agi'].includes(work.classType)) {
+      goal = 'combat'; reason = `combat training (${work.classType})`;
+    } else if (['FACTION', 'COMPANY'].includes(work?.type)) {
+      goal = 'rep'; reason = `reputation work (${work.factionName ?? work.companyName ?? 'active work'})`;
+    } else if (!state.workKnown && target) { goal = 'rep'; reason = `worker reputation target (${target.faction})`; }
+    else if (hasHiddenGoOpponent(reset)) { goal = 'hacking'; reason = 'installed Red Pill: build hacking level'; }
+    else if (cashLow) { goal = 'money'; reason = 'cash below reserve / early cash cushion'; }
+    else { goal = 'hacking'; reason = fresh ? 'background hacking progress' : 'goal data unavailable: hacking fallback'; }
+  }
+  const weights = {};
+  if (goal === 'rep') weights.Daedalus = 1;
+  else if (goal === 'combat') weights.Tetrads = 1;
+  else if (goal === 'crime') {
+    // Avoid farming an already capped success multiplier; combat stats help unlock harder crimes too.
+    const chance = state.crimeChance;
+    weights['Slum Snakes'] = Number.isFinite(chance) && chance >= 0 && chance <= 1 ? Math.min(1, (1 - chance) / 0.25) : 1;
+    weights.Tetrads = 0.8;
+  } else if (goal === 'money') {
+    const hacknet = positive(state.hacknetCashRate), hacking = positive(state.hackingIncome);
+    // BN8 disables these cash sources. Never prioritize nonexistent/disabled nodes or unspent hashes.
+    const usefulHacknet = reset?.currentNode !== 8 && hacknet > 0 && hacknet >= hacking * 0.1;
+    if (usefulHacknet) {
+      weights.Netburners = 1;
+      reason += '; productive Hacknet cash source';
+    }
+    weights['The Black Hand'] = reset?.currentNode === 8 ? 0 : usefulHacknet ? 0.65 : 1;
+    weights.Illuminati = reset?.currentNode === 8 ? 1 : usefulHacknet ? 0.45 : 0.75;
+  } else {
+    weights['The Black Hand'] = reset?.currentNode === 8 ? 0 : 1;
+    weights.Illuminati = 0.8;
+    if (includeHidden && hasHiddenGoOpponent(reset)) {
+      weights[hiddenOpponent] = 1.4;
+      weights['The Black Hand'] *= 0.5;
+    }
+  }
+  const candidates = Object.entries(weights).filter(([, weight]) => weight > 0).map(([opponent, weight]) => {
+    const size = selectGoBoard({opponent, requested: boardSize, stats, cohort, explore: false}).size;
+    const samples = summarizeGoSamples(stats?._adaptive?.[cohort]?.[`${opponent}:${size}`]);
+    const reliability = samples.games >= 12 ? 0.5 + 0.5 * samples.confidence : 0.9;
+    const bonus = positive(liveStats?.[opponent]?.bonusPercent);
+    return {opponent, score: weight * reliability / (1 + bonus / 100), bonus, samples};
+  }).sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  return {opponent: best.opponent, goal, reason: `${reason}; current bonus +${best.bonus.toFixed(1)}%` +
+    (best.samples.games >= 12 ? `, ${best.samples.wins}/${best.samples.games} recent wins` : '')};
+}
 
 export function goCohort(cheats, threshold, bonus) {
   return `${GO_STRATEGY}:${cheats ? `cheats-${threshold}` : 'no-cheats'}:${bonus ? 'bonus' : 'normal'}`;
