@@ -3,7 +3,7 @@ import {
   getGrowThreads, getServers, serverRun, getServerAvailRam, getPlayerInfo, getHackP,
   doGetServerMinSec, doGetServerCurSec, getReset,
   getActiveSourceFiles, doSCP, getBNMults, stanekRun,
-  getServerMaxRam, getPortCrackers, getConfiguration
+  getPortCrackers, getConfiguration
 } from './utils.js'
 import {createShareController, validShareOptions} from './share-controller.js';
 
@@ -46,7 +46,6 @@ export async function main(ns) {
   let botsSent = 0;
   let botsRequired = -1;
   let threadsLeft = 0;
-  let totalram = await getServerAvailRam(ns, "home");
   const dictSourceFiles = await getActiveSourceFiles(ns);
   if (resetInfo.currentNode == 4) dictSourceFiles[4] = 3;
   const bnMultis = await getBNMults(ns);
@@ -93,12 +92,10 @@ export async function main(ns) {
       baseServers = await getServers(ns);
       const hackTime = ns.getHackTime(target.hostname) + Date.now();
       threadsLeft = 0;
-      totalram = 0;
       //calc total number of threads we can exploit
       for (const server of baseServers) {
         if (server.hasAdminRights && server.maxRam > 0) {
           let tmpramavailable = await getServerAvailRam(ns, server.hostname);
-          totalram += await getServerMaxRam(ns, server.hostname);
           if (server.hostname === "home") {
             tmpramavailable = Math.max(tmpramavailable - reservedRam, 0)
           }
