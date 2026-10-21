@@ -34,8 +34,11 @@ export async function getShareContext(ns, sourceFiles) {
 }
 
 /** Only owns the PIDs it starts. The kernel releases them before its next RAM census. */
-export function createShareController(ns, options, sourceFiles) {
+export function createShareController(ns, options, sourceFiles, currentNode = 0) {
   const jobs = new Map(), copied = new Set();
+  // BN1 progression needs manual faction work before Singularity can report it.
+  // Make spare RAM available by default, including repeat BN1 runs before SF4.
+  const bn1WithoutWorkAccess = currentNode === 1 && !(sourceFiles[4] > 0);
   let nextContext = 0, nextAllocation = 0, context = null, previousStatus = '', nextLog = 0;
   const stopHost = host => {
     const job = jobs.get(host);
@@ -57,14 +60,16 @@ export function createShareController(ns, options, sourceFiles) {
   };
   async function update(servers, batchRunning) {
     if (!batchRunning()) { stop(); return false; }
-    if (options['share-mode'] === 'auto' && Date.now() >= nextContext) {
+    if (options['share-mode'] === 'auto' && !bn1WithoutWorkAccess && Date.now() >= nextContext) {
       context = await getShareContext(ns, sourceFiles);
       nextContext = Date.now() + 5_000;
     }
-    const active = options['share-mode'] === 'on' || options['share-mode'] === 'auto' && context?.active === true;
+    const active = options['share-mode'] === 'on' ||
+      options['share-mode'] === 'auto' && (bn1WithoutWorkAccess || context?.active === true);
     const reason = options['share-mode'] === 'on' ? 'manual faction-work mode' : options['share-mode'] === 'off' ? 'disabled' :
+      bn1WithoutWorkAccess ? 'BN1 before SF4: spare RAM available for manual faction work' :
       context?.active ? context.reason : context ? 'no faction work on player or sleeves' :
-        'work data unavailable (before SF4, use --share-mode on while doing faction work)';
+        'work data unavailable (use --share-mode on while doing faction work)';
     if (!active) { stop(); report(false, reason); return false; }
     if (Date.now() < nextAllocation) return true;
     nextAllocation = Date.now() + 2_000;

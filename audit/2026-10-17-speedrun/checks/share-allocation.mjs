@@ -18,7 +18,7 @@ assert(getRemoteScriptFiles('kernel.js').includes('share-controller.js'));
 const downloader=readFileSync(new URL('../../../git-pull.js',import.meta.url),'utf8');
 assert(downloader.includes("'share-controller.js'"));assert(downloader.includes("'bin/share-context.js'"));
 
-function harness({mode='on',sourceFiles={},home=256,remote=128,work=null,tasks=[],sf4cost=0.5}={}) {
+function harness({mode='on',sourceFiles={},currentNode=0,home=256,remote=128,work=null,tasks=[],sf4cost=0.5}={}) {
   const hosts=new Map([
     ['home',{maxRam:home,base:20,cpuCores:8}],['worker',{maxRam:remote,base:16,cpuCores:1}],
     ['tiny',{maxRam:8,base:0}],['unrooted',{maxRam:1024,base:0,root:false}],['hacknet-server-0',{maxRam:512,base:0}],
@@ -76,7 +76,7 @@ function harness({mode='on',sourceFiles={},home=256,remote=128,work=null,tasks=[
   const servers=()=>[...hosts].map(([hostname,h])=>({hostname,...h,hasAdminRights:h.root!==false}));
   const workers=()=>[...processes.values()].filter(p=>p.file===SHARE_WORKER);
   return {ns,hosts,processes,launches,kills,logs,errors,state,used,servers,workers,options,
-    controller:createShareController(ns,options,sourceFiles)};
+    controller:createShareController(ns,options,sourceFiles,currentNode)};
 }
 
 // No 1.2 TB gate. Pack all usable RAM, preserving buffers, manual jobs, and hash production.
@@ -97,16 +97,36 @@ assert(h.hosts.get('worker').maxRam-h.used('worker')<8+4.1+1e-8,'Expand to use r
 h.controller.stop();assert.equal(h.workers().length,0);assert(h.processes.has(99));assert(!h.kills.includes(99));
 assert.equal(h.errors.length,0);
 
+// BN1 cannot report manual work before SF4. Auto must still offer spare-RAM sharing,
+// even if sleeves are available but idle; an explicit off must always win.
+for(const sourceFiles of [{},{1:1},{1:2,10:1}]) {
+  h=harness({mode:'auto',currentNode:1,sourceFiles});h.state.missing=true;
+  assert(await h.controller.update(h.servers(),()=>true));assert(h.workers().length>0);
+  assert.equal(h.state.helperReads,0,'No unavailable player-work polling or unnecessary sleeve helper');
+  assert(h.logs.some(s=>s.includes('BN1 before SF4')));
+  h.controller.stop();assert.equal(h.workers().length,0);
+}
+for(const currentNode of [0,1,2,4,9,10]) {
+  h=harness({mode:'off',currentNode,sourceFiles:{4:3},work:{type:'FACTION',factionName:'CyberSec'}});
+  assert.equal(await h.controller.update(h.servers(),()=>true),false);assert.equal(h.launches.length,0);
+  if(currentNode!==1) {
+    h=harness({mode:'auto',currentNode});
+    assert.equal(await h.controller.update(h.servers(),()=>true),false);assert.equal(h.launches.length,0);
+  }
+}
+h=harness({mode:'off',currentNode:1});
+assert.equal(await h.controller.update(h.servers(),()=>true),false);assert.equal(h.launches.length,0);
+
 // Work follows current player/sleeve tasks, including partial-benefit security and field work.
-for(const factionWorkType of ['hacking','field','security']){
-  h=harness({mode:'auto',sourceFiles:{4:3},work:{type:'FACTION',factionName:'CyberSec',factionWorkType,nextCompletion:Promise.resolve()}});
+for(const currentNode of [1,4,5])for(const factionWorkType of ['hacking','field','security']){
+  h=harness({mode:'auto',currentNode,sourceFiles:{4:3},work:{type:'FACTION',factionName:'CyberSec',factionWorkType,nextCompletion:Promise.resolve()}});
   assert(await h.controller.update(h.servers(),()=>true));assert(h.workers().length>0);assert.equal(h.state.helperReads,1);
   h.state.work={type:'COMPANY',companyName:'ECorp'};now+=5001;
   assert.equal(await h.controller.update(h.servers(),()=>true),false);assert.equal(h.workers().length,0);
   assert.equal(h.errors.length,0);
 }
-for(const work of [null,{type:'CRIME'},{type:'CLASS'},{type:'COMPANY'}]){
-  h=harness({mode:'auto',sourceFiles:{4:3},work});
+for(const currentNode of [1,4,5])for(const level of [1,2,3])for(const work of [null,{type:'CRIME'},{type:'CLASS'},{type:'COMPANY'}]){
+  h=harness({mode:'auto',currentNode,sourceFiles:{4:level},work});
   assert.equal(await h.controller.update(h.servers(),()=>true),false);assert.equal(h.workers().length,0);
 }
 h=harness({mode:'auto',sourceFiles:{10:1},tasks:[{type:'FACTION',factionName:'NiteSec'},{type:'CRIME'}]});
@@ -149,10 +169,11 @@ shares=0;await shareMain({args:['--owner',7],isRunning:pid=>{assert.equal(pid,7)
 assert.equal(shares,3);
 shares=0;await shareMain({args:['--owner',7],isRunning:()=>false,share:async()=>{shares++;}});assert.equal(shares,0);
 
-// Execute the real kernel through two dispatches. The second census must see no owned sharing.
+// Execute the real kernel in BN1 with default auto through two dispatches.
+// The second census must see no owned sharing, including without Singularity access.
 const source=readFileSync(new URL('../../../kernel.js',import.meta.url),'utf8');
 const transport=`
-  const getConfiguration=()=>({...${JSON.stringify(SHARE_DEFAULTS)},'share-mode':'on'});
+  const getConfiguration=()=>({...${JSON.stringify(SHARE_DEFAULTS)}});
   const log=()=>{},getErrorInfo=String,getReset=async()=>({currentNode:1}),getPlayerInfo=async()=>({skills:{hacking:100}});
   const getOptimalTarget=async()=>({hostname:'n00dles',hackDifficulty:1,minDifficulty:1,moneyAvailable:1e6});
   const getServ=getOptimalTarget,getServers=async ns=>{ns.audit.census();return ns.audit.servers();};
@@ -176,5 +197,5 @@ h.ns.audit={servers:h.servers,census(){assert.equal(h.workers().length,0);census
 await assert.rejects(kernel.main(h.ns),error=>error===STOP);
 assert.equal(dispatches,2);assert.equal(censuses,2);assert(h.launches.some(p=>p.file===SHARE_WORKER));
 assert.equal(h.workers().length,0);onExit();assert.equal(h.errors.length,0);
-console.log('Work/sleeve eligibility, buffers, maximal spare allocation, resize/reclaim, continuous workers, RAM-aware RPC, and actual two-batch kernel cleanup passed.');
+console.log('BN-aware auto/explicit overrides, work/sleeve eligibility, buffers, maximal spare allocation, resize/reclaim, continuous workers, RAM-aware RPC, and actual two-batch kernel cleanup passed.');
 } finally { Date.now=actualNow; }

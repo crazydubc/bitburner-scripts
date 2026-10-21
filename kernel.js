@@ -8,7 +8,7 @@ import {
 import {createShareController, validShareOptions} from './share-controller.js';
 
 const argsSchema = [
-  ['share-mode', 'auto'], // auto follows player/sleeve faction work, on is the manual BN1 option, off disables sharing.
+  ['share-mode', 'auto'], // auto enables spare-RAM sharing in BN1 before SF4; otherwise follows player/sleeve faction work. on/off override it.
   ['share-home-buffer', 64], // Minimum GB left free on home by share workers.
   ['share-host-buffer', 8], // Minimum GB left free on each other host by share workers.
   ['share-buffer-fraction', 0.05], // Also leave this fraction of total host RAM free, using the larger buffer.
@@ -52,7 +52,7 @@ export async function main(ns) {
   const useHacknet = bnMultis.CloudServerLimit == 0 && 9 in dictSourceFiles;
 
   let stanekUnlocked = 13 in dictSourceFiles;
-  const sharing = createShareController(ns, options, dictSourceFiles);
+  const sharing = createShareController(ns, options, dictSourceFiles, resetInfo.currentNode);
   ns.atExit(() => sharing.stop());
 
   /** @param {NS} ns **/

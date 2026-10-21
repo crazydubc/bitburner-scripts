@@ -23,7 +23,7 @@ const factionTargets = {
   BitRunners: [['BitRunners Neurolink', '875k']],
   'Tian Di Hui': [['Neuroreceptor Management Implant', '75k']],
 };
-const shareWorkTip = 'While doing faction work in BN1, set "share-mode": "on" in kernel.js.config.txt, then restart kernel from home (autopilot can relaunch it). Sharing uses spare RAM with buffers. Return the setting to "auto" when you switch to crime/company work or finish the rep goal; before SF4, manual work cannot be detected. With SF4, auto follows player and sleeve faction work.';
+const shareWorkTip = 'The default "share-mode": "auto" enables spare-RAM sharing in BN1 before SF4, with home/host buffers. Do faction work to benefit; sharing does not boost crimes or company work. No manual toggle is needed. In BN4 or with SF4, auto follows player and sleeve faction work. An explicit "off" setting disables sharing.';
 const installReminder = 'Before final purchases/install: leave autopilot running and run stockmaster.js --liquidate on home. Stockmaster sells your positions and stays running without buying. Verify all stock positions are zero; leave the liquidator running until installation.';
 
 /** Returns a status for the panel. Launch attempts never wait for RAM. */
