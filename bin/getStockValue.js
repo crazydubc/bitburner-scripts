@@ -6,8 +6,13 @@ export async function main(ns) {
   try {
     let value = 0;
     if (ns.stock.hasTixApiAccess()) {
-      for (const symbol of ns.stock.getSymbols()) {
-        const [long, , short, shortPrice] = ns.stock.getPosition(symbol);
+      const symbols = ns.stock.getSymbols();
+      if (!Array.isArray(symbols)) throw new Error('Invalid stock symbols');
+      for (const symbol of symbols) {
+        const position = ns.stock.getPosition(symbol);
+        if (!Array.isArray(position) || position.length !== 4 || !position.every(Number.isFinite))
+          throw new Error(`Invalid position for ${symbol}`);
+        const [long, , short, shortPrice] = position;
         if (long > 0) value += long * ns.stock.getBidPrice(symbol) - 100_000;
         if (short > 0) value += short * (2 * shortPrice - ns.stock.getAskPrice(symbol)) - 100_000;
       }

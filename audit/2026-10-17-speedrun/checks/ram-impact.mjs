@@ -76,7 +76,7 @@ function cost(files,name,ignoreOverride=false) {
   assert.equal(result.errorCode,undefined,`${name}: ${result.errorMessage}`);
   return result.cost;
 }
-const targets=['autopilot.js','kernel.js','bn1-guide.js','go.js','host-manager.js','stockmaster.js','sleeve.js',
+const targets=['autopilot.js','kernel.js','bn1-guide.js','go.js','host-manager.js','stockmaster.js','stats.js','sleeve.js',
   'hacknet-upgrade-manager.js','spend-hashes.js','gangs.js','ascend.js','corporation.js','faction-manager.js',
   'bladeburner.js','work-for-faction2.js','farm-intel.js','bin/intel-farm-state.js',
   'bin/getHackP.js','bin/getGrowThreads.js','bin/serverRun.js','bin/getbnmultis.js','bin/singRun.js','bin/singReadMany.js','bin/reserve.js',
@@ -93,7 +93,7 @@ for(const file of targets) {
     const beforeRaw=cost(baseline,file,true);
     // Overrides may intentionally omit static-only costs (such as DOM). Preserve their prior
     // headroom and cover every new API charge, or cover the full static cost if that is lower.
-    assert(Number(declared)+1e-8>=Math.min(raw,before+Math.max(0,raw-beforeRaw)), `${file}: override does not cover added API costs`);
+    assert(Number(declared)+1e-8>=Math.min(raw,before+Math.max(0,raw-beforeRaw)), `${file}: override ${declared} does not cover added API costs (static ${beforeRaw} -> ${raw})`);
   }
   console.log(JSON.stringify({file,before,after,...(raw===null?{}:{withoutOverride:raw,
     baselineWithoutOverride:baseline?cost(baseline,file,true):null})}));

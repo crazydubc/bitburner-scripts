@@ -760,7 +760,21 @@ export async function buildLib(ns, items, cmd) {
  *  @param {NS} ns The nestcript instance passed to your script's main entry point
  * @returns {Promise<number>} The current total dollar value of all owned stocks */
 export async function getStocksValue(ns) {
-  if (!await hasTixApi(ns)) return 0;
+  // getSymbols() can list a valid ticker before its position data is readable.
+  // Retry the entire valuation, never a partial sum or a fabricated zero balance.
+  for (let retryIndex = 0; ; retryIndex++) {
+    try { return await readStocksValue(ns); }
+    catch (error) {
+      if (retryIndex >= 2 || !/\bstock\.(?:getPosition|getBidPrice|getAskPrice)\b[\s\S]*Invalid stock symbol:/.test(String(error))) throw error;
+      await ns.sleep(250);
+    }
+  }
+}
+
+async function readStocksValue(ns) {
+  const tixAccess = await hasTixApi(ns);
+  if (tixAccess === false) return 0;
+  if (tixAccess !== true) throw new Error(`Invalid stock access result: ${String(tixAccess)}`);
   const required = ns.getScriptRam('bin/getStockValue.js', 'home');
   let value = 0;
   if (required > 0 && await getServerAvailRam(ns, 'home') >= required) {
