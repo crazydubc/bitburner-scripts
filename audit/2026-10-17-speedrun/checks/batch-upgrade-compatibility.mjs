@@ -107,6 +107,7 @@ const h = harness();
 const bindings = {getOptimalTarget: async () => ({...target}), getServ: async () => ({...target}), getPlayerInfo: async () => player,
   getServers: async () => [{hostname: 'worker', hasAdminRights: true, maxRam: 32768}],
   getServerAvailRam: async () => 32768, getServerMaxRam: async () => 32768,
+  sharing: {update: async () => false, reclaimableRam: () => 0, handoff: () => ''},
   getHackP: old.getHackP, getGrowThreads: old.getGrowThreads, validateBatchPlan, log: noop,
   serverRun: async (...args) => {await old.serverRun(...args); throw STOP;}, initialPlayer: player};
 const run = Function(...Object.keys(bindings), `

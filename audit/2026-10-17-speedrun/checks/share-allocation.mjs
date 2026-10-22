@@ -114,6 +114,33 @@ for(let tick=0;tick<36;tick++) {
 h.state.work={type:'COMPANY'};now+=5001;
 assert.equal(await h.controller.update(h.servers(),()=>true),false);assert.equal(h.workers().length,0);
 
+// A transient context helper failure preserves known work for at most 15s. A real
+// idle result stops immediately; unknown initial work never turns sharing on.
+h=harness({mode:'auto',sourceFiles:{4:3},work:{type:'FACTION',factionName:'CyberSec'}});
+await h.controller.update(h.servers());const beforeMissing=h.workers().map(p=>p.pid);
+h.state.missing=true;
+for(let tick=0;tick<2;tick++) {
+  now+=5001;assert(await h.controller.update(h.servers()));
+  assert.deepEqual(h.workers().map(p=>p.pid),beforeMissing);
+}
+now+=5001;assert.equal(await h.controller.update(h.servers()),false);assert.equal(h.workers().length,0);
+h.state.missing=false;now+=5001;assert(await h.controller.update(h.servers()));
+h.state.work=null;now+=5001;assert.equal(await h.controller.update(h.servers()),false);
+h=harness({mode:'auto',sourceFiles:{4:3}});h.state.missing=true;
+assert.equal(await h.controller.update(h.servers()),false);assert.equal(h.workers().length,0);
+
+// A handoff retains live workers, excludes dead/manual PIDs, accounts for their
+// actual allocation, and bypasses the 2s allocation throttle after preemption.
+h=harness();await h.controller.update(h.servers());
+const owned=h.workers().map(p=>p.pid),worker=h.workers().find(p=>p.host==='worker');
+assert.deepEqual(JSON.parse(h.controller.handoff()),{owner:7,pids:owned});
+assert.equal(h.controller.reclaimableRam('worker'),Math.round(worker.ram*worker.threads*100)/100);
+assert.equal(h.controller.reclaimableRam('unknown'),0);
+h.ns.kill(worker.pid);assert.equal(h.controller.reclaimableRam('worker'),0);
+assert(!JSON.parse(h.controller.handoff()).pids.includes(worker.pid));
+await h.controller.update(h.servers());assert(h.workers().some(p=>p.host==='worker'));
+assert.equal(h.workers().find(p=>p.host==='home').pid,owned[0]);h.controller.stop();
+
 // The percentage cushion scales with the reclaimable spare pool, including our own workers.
 // Repeated sweeps must neither gradually consume the buffer nor resize stable allocations.
 for(const fraction of [0.05,0.25,1]) {
@@ -204,33 +231,77 @@ shares=0;await shareMain({args:['--owner',7],isRunning:pid=>{assert.equal(pid,7)
 assert.equal(shares,3);
 shares=0;await shareMain({args:['--owner',7],isRunning:()=>false,share:async()=>{shares++;}});assert.equal(shares,0);
 
-// Execute the real kernel in BN1 with default auto through two dispatches.
-// The second census must see no owned sharing, including without Singularity access.
+// Execute the real kernel through two dispatches in BN1 and BN4. A ten-second
+// calculator delay and the next census must retain sharing; planning capacity
+// includes reclaimable RAM, and dispatcher preemption refills immediately.
 const source=readFileSync(new URL('../../../kernel.js',import.meta.url),'utf8');
 const transport=`
-  const getConfiguration=()=>({...${JSON.stringify(SHARE_DEFAULTS)}});
-  const log=()=>{},getErrorInfo=String,getReset=async()=>({currentNode:1}),getPlayerInfo=async()=>({skills:{hacking:100}});
+  const getConfiguration=ns=>({...${JSON.stringify(SHARE_DEFAULTS)},'share-mode':ns.audit.mode??'auto'});
+  const log=()=>{},getErrorInfo=String,getReset=async ns=>({currentNode:ns.audit.node}),getPlayerInfo=async()=>({skills:{hacking:100}});
   const getOptimalTarget=async()=>({hostname:'n00dles',hackDifficulty:1,minDifficulty:1,moneyAvailable:1e6});
   const getServ=getOptimalTarget,getServers=async ns=>{ns.audit.census();return ns.audit.servers();};
   const getServerAvailRam=async(ns,host)=>ns.getServerMaxRam(host)-ns.getServerUsedRam(host),getServerMaxRam=async(ns,host)=>ns.getServerMaxRam(host);
-  const getHackP=async()=>({H1:1,W1:1,G1:1,W2:1}),getGrowThreads=async()=>0,getActiveSourceFiles=async()=>({13:1});
+  const getHackP=async ns=>{ns.audit.calculate();return {H1:1,W1:1,G1:1,W2:1};};
+  const getGrowThreads=async ns=>{ns.audit.calculate();return 0;},getActiveSourceFiles=async()=>({13:1});
   const getBNMults=async()=>({CloudServerLimit:1}),getPortCrackers=()=>{};
-  const serverRun=async ns=>ns.audit.dispatch(),stanekRun=()=>{throw Error('Stanek must not take RAM before useful sharing');};
+  const serverRun=async(ns,...args)=>ns.audit.dispatch(args),stanekRun=ns=>ns.audit.stanek();
   const doSCP=()=>{throw Error('No Stanek workers expected');},doGetServerMinSec=async()=>1,doGetServerCurSec=async()=>1;
 `;
 const kernel=await import('data:text/javascript;base64,'+Buffer.from(source.replace(/import \{[\s\S]*?\} from '\.\/utils.js'/,transport)
   .replace("'./share-controller.js'",JSON.stringify(new URL('../../../share-controller.js',import.meta.url).href))).toString('base64'));
-h=harness();let dispatches=0,censuses=0,sleeps=0,batchAlive=false,onExit;
+for(const node of [1,4])for(const saturated of [false,true]) {
+h=harness({work:{type:'FACTION',factionName:'CyberSec'}});
+let dispatches=0,censuses=0,sleeps=0,calculations=0,batchAlive=false,onExit,homePid,needsRefill=false;
 const STOP=new Error('kernel observed');
 const inheritedIsRunning=h.ns.isRunning;
 h.ns.isRunning=pid=>pid===500?batchAlive:inheritedIsRunning(pid);
 h.ns.getMoneySources=()=>({sinceInstall:{}});h.ns.weakenAnalyze=()=>0.05;h.ns.getHackTime=()=>1000;
 h.ns.atExit=fn=>onExit=fn;
-h.ns.sleep=async ms=>{now+=ms;if(ms===5000)throw STOP;if(ms===100&&++sleeps>=3)batchAlive=false;};
-h.ns.audit={servers:h.servers,census(){assert.equal(h.workers().length,0);censuses++;},dispatch(){
-  assert.equal(h.workers().length,0);if(++dispatches===2)throw STOP;batchAlive=true;return {batches:0,lastpid:500,recalc:false};}};
+h.ns.sleep=async ms=>{
+  now+=ms;if(ms===5000)throw STOP;
+  if(ms===100) {
+    if(saturated)assert.equal(h.workers().length,0,'A full batch genuinely leaves no sharing capacity');
+    if(++sleeps>=3){batchAlive=false;h.hosts.get('home').base=20;h.hosts.get('worker').base=16;needsRefill=saturated;}
+  }
+};
+h.ns.audit={node,servers:h.servers,stanek(){throw Error('Stanek must not take RAM before useful sharing');},census(){
+  if(censuses++)assert.equal(h.workers().find(p=>p.host==='home').pid,homePid,'No stop between batch completion and next census');
+},calculate(){
+  now+=10_000;calculations++;
+  if(needsRefill){homePid=h.workers().find(p=>p.host==='home')?.pid;assert(homePid,'Refill released RAM before the next calculator, even within the 2s throttle');needsRefill=false;}
+  if(dispatches)assert.equal(h.workers().find(p=>p.host==='home').pid,homePid,'No 10s gap during slow calculations');
+},dispatch(args){
+  const handed=JSON.parse(args[15]);assert.equal(handed.owner,7);
+  assert.deepEqual(handed.pids,h.workers().map(p=>p.pid));
+  // The same prep/batch counts as a share-free census (home keeps the original 32GB reserve).
+  const total=h.servers().filter(s=>s.hasAdminRights&&s.maxRam>0).reduce((sum,s)=>
+    sum+Math.floor(Math.max(0,s.maxRam-h.hosts.get(s.hostname).base-(s.hostname==='home'?32:0))/1.75),0);
+  assert.equal(args[13],Math.floor((total-4)/4));
+  if(++dispatches===2)throw STOP;
+  homePid=h.workers().find(p=>p.host==='home').pid;
+  if(saturated) {
+    for(const p of h.workers())h.ns.kill(p.pid);
+    h.hosts.get('home').base=192;h.hosts.get('worker').base=120;
+  } else {h.ns.kill(h.workers().find(p=>p.host==='worker').pid);h.hosts.get('worker').base+=70;}
+  batchAlive=true;return {batches:0,lastpid:500,recalc:false};
+}};
 await assert.rejects(kernel.main(h.ns),error=>error===STOP);
 assert.equal(dispatches,2);assert.equal(censuses,2);assert(h.launches.some(p=>p.file===SHARE_WORKER));
+assert(calculations>=4);assert(h.launches.filter(p=>p.file===SHARE_WORKER&&p.host==='worker').length>=2,'Preempted host refills');
 assert.equal(h.workers().length,0);onExit();assert.equal(h.errors.length,0);
-console.log('BN-aware auto/explicit overrides, work/sleeve eligibility, buffers, maximal spare allocation, resize/reclaim, continuous workers, RAM-aware RPC, and actual two-batch kernel cleanup passed.');
+}
+
+// With sharing disabled and an empty Stanek gift, keep waiting for the batch;
+// otherwise the empty-fragments branch prematurely starts the next dispatch.
+h=harness();let dispatches=0,waits=0,batchAlive=false,onExit;
+const STOP=new Error('empty Stanek observed'),inheritedIsRunning=h.ns.isRunning;
+h.ns.isRunning=pid=>pid===500?batchAlive:inheritedIsRunning(pid);
+h.ns.getMoneySources=()=>({sinceInstall:{}});h.ns.weakenAnalyze=()=>0.05;h.ns.getHackTime=()=>1000;h.ns.atExit=fn=>onExit=fn;
+h.ns.sleep=async ms=>{now+=ms;if(ms===5000)throw STOP;if(ms===100&&++waits===3)batchAlive=false;};
+h.ns.audit={node:4,mode:'off',servers:h.servers,census(){},calculate(){},stanek:async()=>[],dispatch(){
+  if(++dispatches===2){assert.equal(waits,3);throw STOP;}batchAlive=true;return {batches:0,lastpid:500,recalc:false};
+}};
+await assert.rejects(kernel.main(h.ns),error=>error===STOP);assert.equal(dispatches,2);onExit();
+assert.equal(h.workers().length,0);assert.equal(h.errors.length,0);
+console.log('BN-aware sharing, eligibility, buffers, continuous workers, bounded context grace, handoff/refill, and BN1/BN4 two-batch continuity through slow calculators passed.');
 } finally { Date.now=actualNow; }

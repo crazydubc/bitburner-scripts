@@ -5,6 +5,7 @@ Reviewed the combined testing branch at `6153dd3`, then reproduced and corrected
 | Finding | Status | Effect |
 | --- | --- | --- |
 | Sharing percentage uses installed RAM | Fixed in this follow-up | Large, busy hosts can have usable spare RAM but no sharing. |
+| Sharing stops throughout calculations between batches | Fixed in the continuity follow-up | Stop-all cleanup introduced gaps despite spare RAM; selective dispatcher reclamation now retains unaffected workers. |
 | NeuroFlux prefers donation access over existing reputation | Open | Unnecessary donations can reduce the number of affordable NF levels. |
 | Faction-manager's fixed allocation misses partial-SF4 purchase costs outside BN4 | Open | Direct donation/purchase calls can exceed its 24 GB allocation. |
 
@@ -15,6 +16,8 @@ The user reported BN4.1, 97 GB free, a roughly $32b next home upgrade, and a bri
 The old buffer reserved `max(64, 4096 * 0.05) = 204.8 GB`. The controller therefore allocated zero threads with 97 GB free, and could share only when enough batch RAM temporarily became free. This reproduced exactly in the real controller fixture. The change bases the percentage on the reclaimable spare pool: free RAM plus RAM occupied by this controller's workers. The same fixture now allocates eight 4.1 GB threads and leaves 64.2 GB free through three minutes of repeated polling. Whole-thread packing, helper buffers, work detection, explicit overrides and batch-boundary reclamation remain covered.
 
 Cash and the next home purchase are not inputs to the share allocator. No purchase is needed to use those eight threads. Sharing can still vary when batch demand or faction work changes; this correction does not promise a constant 1.5 multiplier.
+
+The user's next test confirmed improvement but reported approximately ten-second gaps. That exposed a second cause: the kernel stopped every worker before the next calculations/census/dispatch. The [continuity correction](2026-10-20-sharing.md) keeps workers alive, counts their capacity as reclaimable and passes ownership to the dispatcher for selective reclamation. The two faction-manager findings below remain open.
 
 ## Open: NeuroFlux provider selection
 

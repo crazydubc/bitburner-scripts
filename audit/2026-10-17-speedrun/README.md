@@ -6,7 +6,7 @@ The highest-value work is fixing progression stalls and making the early-game la
 
 **October 22 review:** [Current outstanding findings](2026-10-22-outstanding-review.md) records the corrected sharing-buffer regression and two further faction-manager issues: unnecessary NeuroFlux donations and partial-SF4 purchase RAM outside BN4. Those two findings remain open. All 22 current positive suites pass; passing fixtures do not cover every gameplay state.
 
-**BitNode-aware sharing:** [Share allocation and controls](2026-10-20-sharing.md) enables spare-RAM sharing automatically in BN1 before SF4, then follows player/sleeve faction work in BN4 or with SF4. Explicit `on`/`off` settings still override the default. It prioritizes sharing over optional Stanek charging, applies home/host buffers, and reclaims workers before the next batch RAM census. The old 1.2 TB gate and 6 GB divisor are gone. Five relevant regression suites and the official RAM comparison pass. Kernel is 5.85 GB; managed share workers are 4.1 GB. Pull and restart both autopilot and kernel from home for the new dependency bundle. The BN1 panel now explains the automatic behavior; no manual toggle is required.
+**BitNode-aware sharing:** [Share allocation and controls](2026-10-20-sharing.md) enables spare-RAM sharing automatically in BN1 before SF4, then follows player/sleeve faction work in BN4 or with SF4. Explicit `on`/`off` settings still override the default. It prioritizes sharing over optional Stanek charging and applies home/host buffers. The continuity follow-up keeps workers through batch boundaries and calculations; the planner counts their RAM as reclaimable, and the dispatcher stops them only where a hacking launch needs that RAM. Both main-target and botnet dispatches support the handoff. The old 1.2 TB gate and 6 GB divisor are gone. All 23 current positive suites pass, including delayed BN1/BN4 calculations and 24 dispatcher comparisons. Kernel remains 5.85 GB and workers 4.1 GB; the temporary dispatcher grows from 4.0 to 4.9 GB. Pull the complete branch and restart kernel from home to load the new handoff together. Autopilot can relaunch it; no separate sharing manager is needed. The BN1 panel explains automatic sharing; no manual toggle is required.
 
 The percentage buffer now uses **available capacity, including owned share workers**, rather than total installed RAM. With 4 TB home and 97 GB free, default settings allocate 32.8 GB to sharing and retain 64.2 GB. Pull and restart kernel from the updated home copy to load this correction.
 
@@ -67,6 +67,7 @@ node audit/2026-10-17-speedrun/checks/speedrun-improvements.mjs
 node audit/2026-10-17-speedrun/checks/infiltration.mjs
 node audit/2026-10-17-speedrun/checks/go-adaptation.mjs
 node audit/2026-10-17-speedrun/checks/share-allocation.mjs
+node audit/2026-10-17-speedrun/checks/share-handoff.mjs
 node audit/2026-10-17-speedrun/checks/go-goals.mjs
 node audit/2026-10-17-speedrun/checks/soa-progression.mjs /path/to/bitburner-src
 node audit/2026-10-17-speedrun/checks/progression-throughput.mjs /path/to/bitburner-src

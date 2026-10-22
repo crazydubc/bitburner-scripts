@@ -90,12 +90,15 @@ export async function main(ns) {
       player = await getPlayerInfo(ns);
       target = await getServ(ns, target.hostname);
       baseServers = await getServers(ns);
+      await sharing.update(baseServers);
       const hackTime = ns.getHackTime(target.hostname) + Date.now();
       threadsLeft = 0;
       //calc total number of threads we can exploit
       for (const server of baseServers) {
         if (server.hasAdminRights && server.maxRam > 0) {
-          let tmpramavailable = await getServerAvailRam(ns, server.hostname);
+          // Sharing is preemptible. Count it as capacity without stopping workers
+          // throughout the census/calculators; dispatch reclaims only hosts it uses.
+          let tmpramavailable = await getServerAvailRam(ns, server.hostname) + sharing.reclaimableRam(server.hostname);
           if (server.hostname === "home") {
             tmpramavailable = Math.max(tmpramavailable - reservedRam, 0)
           }
@@ -189,16 +192,18 @@ export async function main(ns) {
       if (botnetStatus && botsRequired !== botsSent) batchesTotal = Math.max(batchesTotal - 2, 0)
 
       let results = await serverRun(ns, false, target.hostname, prepWeaken1, prepGrow1, prepWeaken2, prepHack1, prepWeaken3,
-        prepGrow2, prepWeaken4, batchInfo.H1, batchInfo.W1, batchInfo.G1, batchInfo.W2, batchesTotal, useHacknet);
+        prepGrow2, prepWeaken4, batchInfo.H1, batchInfo.W1, batchInfo.G1, batchInfo.W2, batchesTotal, useHacknet, sharing.handoff());
 
       threadsLeft -= ((batchInfo.H1 + batchInfo.W1 + batchInfo.G1 + batchInfo.W2) * results.batches);
       await ns.sleep(10);
       if (botnetStatus && botsRequired !== botsSent) await runbotnet(ns, threadsLeft);
+      // Refill immediately after both dispatchers, even if the last batch PID already ended.
+      await sharing.update(baseServers);
       loopCount++;
       let pids = [];
       try {
         while (ns.isRunning(results.lastpid, "home")) {
-          const shareActive = await sharing.update(baseServers, () => ns.isRunning(results.lastpid, 'home'));
+          const shareActive = await sharing.update(baseServers);
           if (!ns.isRunning(results.lastpid, 'home')) break;
           if (shareActive) {
             // Only reclaim this kernel's optional charges; active faction work gets spare RAM first.
@@ -208,7 +213,7 @@ export async function main(ns) {
             if (!pids.some(pid => ns.isRunning(pid))) {
               pids = [];
               const frags = await stanekRun(ns, 'activeFragments');
-              if (frags.length == 0) break;
+              if (frags.length == 0) { await ns.sleep(100); continue; }
               for (const server of baseServers) {
                 if (server.hostname == 'home') continue;
                 const mult = server.hostname.startsWith('hacknet') ? 10 : 2.1;
@@ -224,9 +229,11 @@ export async function main(ns) {
           await ns.sleep(100);
         }
       } finally {
-        sharing.stop();
         for (const pid of pids) if (ns.isRunning(pid)) ns.kill(pid);
       }
+      // A full batch may have left no sharing at all. Fill its released RAM now,
+      // bypassing the sweep throttle, before potentially slow target calculations.
+      await sharing.refresh(baseServers);
       player = await getPlayerInfo(ns);
       if (hacking < player.skills.hacking) {
         hacking = player.skills.hacking;
@@ -288,7 +295,7 @@ export async function main(ns) {
     if (threadsthisround > 0) {
       botsSent += threadsthisround;
       threadsLeft -= threadsthisround;
-      await serverRun(ns, false, nextTarget.hostname, threadsthisround, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, useHacknet);
+      await serverRun(ns, false, nextTarget.hostname, threadsthisround, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, useHacknet, sharing.handoff());
     }
   }
 
@@ -314,6 +321,7 @@ export async function main(ns) {
       try {
         await startup(ns);
       } catch (err) {
+        sharing.stop();
         if (startupAttempts == 5)
           log(ns, `ERROR: kernel.js Keeps catching a fatal error during startup: ${getErrorInfo(err)}`, true, 'error');
         else {

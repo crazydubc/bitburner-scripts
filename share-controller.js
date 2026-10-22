@@ -33,13 +33,13 @@ export async function getShareContext(ns, sourceFiles) {
   } catch { return null; }
 }
 
-/** Only owns the PIDs it starts. The kernel releases them before its next RAM census. */
+/** Owns its PIDs across batches; the dispatcher may reclaim them when hacking needs RAM. */
 export function createShareController(ns, options, sourceFiles, currentNode = 0) {
   const jobs = new Map(), copied = new Set();
   // BN1 progression needs manual faction work before Singularity can report it.
   // Make spare RAM available by default, including repeat BN1 runs before SF4.
   const bn1WithoutWorkAccess = currentNode === 1 && !(sourceFiles[4] > 0);
-  let nextContext = 0, nextAllocation = 0, context = null, previousStatus = '', nextLog = 0;
+  let nextContext = 0, contextTime = 0, nextAllocation = 0, context = null, previousStatus = '', nextLog = 0;
   const stopHost = host => {
     const job = jobs.get(host);
     if (job && ns.isRunning(job.pid)) ns.kill(job.pid);
@@ -48,6 +48,15 @@ export function createShareController(ns, options, sourceFiles, currentNode = 0)
   const stop = () => {
     for (const host of jobs.keys()) stopHost(host);
     nextAllocation = 0;
+  };
+  const reclaimableRam = host => {
+    const job = jobs.get(host);
+    return job && ns.isRunning(job.pid) ? Math.round(job.threads * job.ram * 100) / 100 : 0;
+  };
+  const handoff = () => {
+    // Allocation can resume immediately after dispatch, even within the usual 2s sweep interval.
+    nextAllocation = 0;
+    return JSON.stringify({owner: ns.pid, pids: [...jobs.values()].filter(job => ns.isRunning(job.pid)).map(job => job.pid)});
   };
   const report = (active, reason) => {
     const key = `${active}:${reason}`;
@@ -58,10 +67,14 @@ export function createShareController(ns, options, sourceFiles, currentNode = 0)
     ns.print(`INFO: Share ${active ? 'active' : 'idle'}: ${reason}. ${threads} threads / ${ram.toFixed(1)} GB; ` +
       `buffers home ${options['share-home-buffer']} GB, other hosts ${options['share-host-buffer']} GB, or ${(options['share-buffer-fraction'] * 100).toFixed(0)}% of available RAM (whichever is larger).`);
   };
-  async function update(servers, batchRunning) {
-    if (!batchRunning()) { stop(); return false; }
+  async function update(servers, canAllocate = () => true) {
+    if (!canAllocate()) { stop(); return false; }
     if (options['share-mode'] === 'auto' && !bn1WithoutWorkAccess && Date.now() >= nextContext) {
-      context = await getShareContext(ns, sourceFiles);
+      const latest = await getShareContext(ns, sourceFiles);
+      if (latest) { context = latest; contextTime = Date.now(); }
+      // One busy/missing helper must not tear down otherwise useful sharing. Never
+      // retain unknown work indefinitely; a successful idle snapshot still stops immediately.
+      else if (Date.now() - contextTime >= 15_000) context = null;
       nextContext = Date.now() + 5_000;
     }
     const active = options['share-mode'] === 'on' ||
@@ -79,7 +92,7 @@ export function createShareController(ns, options, sourceFiles, currentNode = 0)
     // Core bonuses make home/high-core hosts useful too; never spend their helper buffer.
     eligible.sort((a, b) => (b.cpuCores ?? 1) - (a.cpuCores ?? 1));
     for (const server of eligible) {
-      if (!batchRunning()) { stop(); return false; }
+      if (!canAllocate()) { stop(); return false; }
       const host = server.hostname;
       try {
         let job = jobs.get(host);
@@ -101,8 +114,8 @@ export function createShareController(ns, options, sourceFiles, currentNode = 0)
           if (!await doSCP(ns, SHARE_WORKER, host)) continue;
           copied.add(host);
         }
-        // SCP/helper waits allow other scripts to allocate RAM or finish the batch. Recheck both.
-        if (!batchRunning()) { stop(); return false; }
+        // SCP/helper waits allow other scripts to allocate RAM or cancel this sweep. Recheck both.
+        if (!canAllocate()) { stop(); return false; }
         threads = budget();
         stopHost(host); job = null;
         if (threads > 0) {
@@ -117,5 +130,6 @@ export function createShareController(ns, options, sourceFiles, currentNode = 0)
     report(true, reason);
     return true;
   }
-  return {update, stop};
+  const refresh = servers => { nextAllocation = 0; return update(servers); };
+  return {update, refresh, stop, reclaimableRam, handoff};
 }
