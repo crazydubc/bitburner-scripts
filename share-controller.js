@@ -9,9 +9,9 @@ export function validShareOptions(options) {
     options['share-buffer-fraction'] <= 1;
 }
 
-/** Keep an absolute helper cushion as well as a fraction of each host's total RAM. */
-export function shareBuffer(host, maxRam, options = SHARE_DEFAULTS) {
-  return Math.max(host === 'home' ? options['share-home-buffer'] : options['share-host-buffer'], maxRam * options['share-buffer-fraction']);
+/** Keep the larger of a helper cushion and a fraction of spare capacity, including our workers. */
+export function shareBuffer(host, availableRam, options = SHARE_DEFAULTS) {
+  return Math.max(host === 'home' ? options['share-home-buffer'] : options['share-host-buffer'], availableRam * options['share-buffer-fraction']);
 }
 
 export function shareContextRam(ns, workAccess, sleeveAccess) {
@@ -56,7 +56,7 @@ export function createShareController(ns, options, sourceFiles, currentNode = 0)
     const live = [...jobs.values()].filter(job => ns.isRunning(job.pid));
     const threads = live.reduce((sum, job) => sum + job.threads, 0), ram = live.reduce((sum, job) => sum + job.threads * job.ram, 0);
     ns.print(`INFO: Share ${active ? 'active' : 'idle'}: ${reason}. ${threads} threads / ${ram.toFixed(1)} GB; ` +
-      `buffers home ${options['share-home-buffer']} GB, other hosts ${options['share-host-buffer']} GB, or ${(options['share-buffer-fraction'] * 100).toFixed(0)}% (whichever is larger).`);
+      `buffers home ${options['share-home-buffer']} GB, other hosts ${options['share-host-buffer']} GB, or ${(options['share-buffer-fraction'] * 100).toFixed(0)}% of available RAM (whichever is larger).`);
   };
   async function update(servers, batchRunning) {
     if (!batchRunning()) { stop(); return false; }
@@ -88,7 +88,10 @@ export function createShareController(ns, options, sourceFiles, currentNode = 0)
         if (!(ram > 0) || !Number.isFinite(ram)) { stopHost(host); continue; }
         const budget = () => {
           const max = ns.getServerMaxRam(host), used = ns.getServerUsedRam(host);
-          const free = max - used + (job ? job.threads * job.ram : 0) - shareBuffer(host, max, options);
+          // Total installed RAM can be mostly occupied by hacking. Reserve from the spare
+          // pool; count our workers back in so stable allocations keep a stable buffer.
+          const available = Math.max(0, max - used + (job ? job.threads * job.ram : 0));
+          const free = available - shareBuffer(host, available, options);
           return Number.isFinite(free) ? Math.max(0, Math.floor(free / ram)) : 0;
         };
         let threads = budget();

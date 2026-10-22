@@ -48,7 +48,8 @@ function harness({mode='on',sourceFiles={},currentNode=0,home=256,remote=128,wor
       const pid=++nextPid,process={pid,file,host,ram,threads,args};processes.set(pid,process);launches.push(process);
       if(file===SHARE_WORKER){
         assert.deepEqual(args,['--owner',7]);
-        assert(hosts.get(host).maxRam-used(host)>=shareBuffer(host,hosts.get(host).maxRam,options)-1e-8);
+        const availableBeforeLaunch=hosts.get(host).maxRam-used(host)+ram*threads;
+        assert(hosts.get(host).maxRam-used(host)>=shareBuffer(host,availableBeforeLaunch,options)-1e-8);
         return pid;
       }
       queueMicrotask(async()=>{
@@ -96,6 +97,40 @@ h.hosts.get('worker').base-=8;now+=2100;await h.controller.update(h.servers(),()
 assert(h.hosts.get('worker').maxRam-h.used('worker')<8+4.1+1e-8,'Expand to use released RAM');
 h.controller.stop();assert.equal(h.workers().length,0);assert(h.processes.has(99));assert(!h.kills.includes(99));
 assert.equal(h.errors.length,0);
+
+// Reported BN4.1 case: 4 TB home (next upgrade ~$32b), 97 GB free during faction work.
+// A percentage of installed RAM must not reserve all free RAM on a busy large host.
+h=harness({mode:'auto',currentNode:4,sourceFiles:{4:3},home:4096,remote:0,
+  work:{type:'FACTION',factionName:'CyberSec'}});
+h.hosts.get('home').base=4096-97;
+assert(await h.controller.update(h.servers(),()=>true));
+assert.equal(h.workers().length,1);assert.equal(h.workers()[0].threads,8);
+assert(Math.abs((h.hosts.get('home').maxRam-h.used('home'))-64.2)<1e-8);
+const steadyPid=h.workers()[0].pid;
+for(let tick=0;tick<36;tick++) {
+  now+=5001;assert(await h.controller.update(h.servers(),()=>true));
+  assert.equal(h.workers()[0].pid,steadyPid,'Keep sharing beyond one 10s cycle while faction work and capacity remain');
+}
+h.state.work={type:'COMPANY'};now+=5001;
+assert.equal(await h.controller.update(h.servers(),()=>true),false);assert.equal(h.workers().length,0);
+
+// The percentage cushion scales with the reclaimable spare pool, including our own workers.
+// Repeated sweeps must neither gradually consume the buffer nor resize stable allocations.
+for(const fraction of [0.05,0.25,1]) {
+  h=harness({home:8192,remote:4096});h.options['share-buffer-fraction']=fraction;
+  const available=new Map([...h.hosts].map(([host,data])=>[host,data.maxRam-h.used(host)]));
+  await h.controller.update(h.servers(),()=>true);
+  const pids=h.workers().map(worker=>worker.pid);
+  for(const host of ['home','worker']) {
+    const free=h.hosts.get(host).maxRam-h.used(host),buffer=shareBuffer(host,available.get(host),h.options);
+    assert(free>=buffer-1e-8);assert(free-buffer<4.1+1e-8);
+  }
+  for(let tick=0;tick<5;tick++) {
+    now+=2100;await h.controller.update(h.servers(),()=>true);
+    assert.deepEqual(h.workers().map(worker=>worker.pid),pids);
+  }
+  h.controller.stop();
+}
 
 // BN1 cannot report manual work before SF4. Auto must still offer spare-RAM sharing,
 // even if sleeves are available but idle; an explicit off must always win.

@@ -11,7 +11,7 @@ const argsSchema = [
   ['share-mode', 'auto'], // auto enables spare-RAM sharing in BN1 before SF4; otherwise follows player/sleeve faction work. on/off override it.
   ['share-home-buffer', 64], // Minimum GB left free on home by share workers.
   ['share-host-buffer', 8], // Minimum GB left free on each other host by share workers.
-  ['share-buffer-fraction', 0.05], // Also leave this fraction of total host RAM free, using the larger buffer.
+  ['share-buffer-fraction', 0.05], // Also leave this fraction of available host RAM free (including owned share workers), using the larger buffer.
 ];
 
 export function autocomplete(data) { data.flags(argsSchema); return []; }
