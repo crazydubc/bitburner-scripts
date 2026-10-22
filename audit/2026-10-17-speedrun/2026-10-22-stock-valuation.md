@@ -1,5 +1,7 @@
 # Stock valuation availability and HUD recovery
 
+**Follow-up:** [Faction planning during a stock outage](2026-10-22-stock-planning.md) addresses the subsequent faction-manager failure after these retries expire. It adds cash-only planning, explicit unavailable-portfolio metadata, and automatic installation/purchase protection with recovery. The original changes and evidence below remain applicable.
+
 The reported warning was `stock.getPosition: Invalid stock symbol: ECP` from `bin/getStockValue.js`. The helper already obtains its symbols from `ns.stock.getSymbols()`; it does not hardcode ECP or reuse an old symbol list.
 
 In the official v3.0.1 implementation, `getSymbols()` returns the static `StockSymbol` values, while `getPosition()` reads `SymbolToStockMap`. ECP belongs to the enum, but an absent map entry produces exactly this error. The regression executes those actual API functions with an empty/incomplete map and reproduces it. The user's live save was not inspected, so the event that made that entry unavailable is **not established**. Loading/resetting the market involves separate initialization code; this patch does not call those internal functions or reset a market.

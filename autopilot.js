@@ -376,10 +376,10 @@ export async function main(ns) {
       if (server.hasAdminRights && server.maxRam > 0)
         maxRam += server.maxRam
     }
-    let stocksValue = 0;
-    try { stocksValue = await getStocksValue(ns); } catch { /* Assume if this fails (insufficient ram) we also have no stocks */ }
+    let stocksValue = null;
+    try { stocksValue = await getStocksValue(ns); } catch { /* Keep unreadable holdings distinct from an empty portfolio. */ }
 
-    await manageReservedMoney(ns, player, stocksValue);
+    await manageReservedMoney(ns, player, stocksValue ?? 0); // Reserve conservatively using only confirmed cash during a stock outage.
     await checkOnDaedalusStatus(ns, player, stocksValue);
     await checkIfBnIsComplete(ns);
     await maybeAcceptStaneksGift(ns);
@@ -391,7 +391,7 @@ export async function main(ns) {
       ...(runningScripts.has('kernel.js') ? [{kind: 'hacking-automation-running'}] : []),
       ...(stocksValue > 0 ? [{kind: 'stock-position-observed'}] : []),
     ]);
-    await maybeInstallAugmentations(ns, player);
+    await maybeInstallAugmentations(ns, player, stocksValue !== null);
     return shouldWeKeepRunning(ns); // Return false to shut down autopilot.js if we installed augs, or don't have enough home RAM
   }
 
@@ -688,13 +688,21 @@ export async function main(ns) {
   /** Logic to detect if it's a goo    me to install augmentations, and if  so, do so    
    * * @param {NS} ns    
    * * @p     {Player} player */
-  async function maybeInstallAugmentations(ns, player) {
+  async function maybeInstallAugmentations(ns, player, stockValueKnown = true) {
     if (!(4 in unlockedSFs))
       return;
     await doSCP(ns, factionManagerOutputFile, ns.getHostname(), "home");
     resetAugTrackersIfNeeded();
     const timeSinceAug = getTimeInAug();
     const facman = getFactionManagerOutput(ns);
+    if (!stockValueKnown || facman?.stock_value_known === false) {
+      // Exclude cash-only samples from wealth/ETA estimates, including the jump when valuation recovers.
+      resetDecisionState.samples = [];
+      resetDecisionState.wait = null;
+      warnAboutFactionManagerOutput(ns, `Automatic installation is waiting for stock holdings to become readable. ` +
+        `Faction planning continues using cash. If this persists, save and reload the game.`);
+      return;
+    }
     if (!facman) return;
 
     const queue = getPendingAugmentationCounts(facman);
@@ -858,6 +866,8 @@ export async function main(ns) {
       return joined === true ? markDaedalusJoined() : false;
     }
 
+    // Preserve an existing invite reservation when a missing stock valuation cannot prove a wealth drop.
+    if (stocksValue === null) return;
     // Remaining logic below is for rushing a Daedalus invite in the current reset
     const totalWorth = player.money + stocksValue;
     // Check for sufficient hacking level before attempting to reserve money
@@ -908,7 +918,13 @@ export async function main(ns) {
     // A completed donation milestone or the four-hour hard cap must not be postponed by 4S/BN8
     // optimization. Daedalus and active BlackOps remain higher-priority safety safeguards.
     if (!bypassOptimizationDelays && !goalTimingAvailable && !have4sApi) {
-      const totalWorth = player.money + await getStocksValue(ns);
+      let stockWorth;
+      try { stockWorth = await getStocksValue(ns); }
+      catch {
+        warnAboutFactionManagerOutput(ns, `Stock holdings became unreadable during installation planning; retrying next cycle.`);
+        return true;
+      }
+      const totalWorth = player.money + stockWorth;
       const has4S = ns.stock.has4SData();
       const totalCost = 25E9 * bitNodeMults.FourSigmaMarketDataApiCost +
         (has4S ? 0 : 1E9 * bitNodeMults.FourSigmaMarketDataCost);

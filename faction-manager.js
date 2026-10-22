@@ -28,6 +28,7 @@ let favorToDonate = 0; // Based on the current BitNode Multipliers, the favour r
 // Various globals because this script does not do modularity well. Assigned values are all ignored, just used to get type hints
 let playerData = (/**@returns{Player}*/() => null)(), bitNode = 0, gangFaction = "";
 let numAugsAwaitingInstall = 0, nfLevelPurchased = 0, startingPlayerMoney = 0, stockValue = 0; // If the player holds stocks, their liquidation value will be determined
+let stockValueKnown = false; // Cash-only planning must not imply that an unreadable portfolio is empty.
 let numPriceScalingAugsAwaitingInstall = 0; // Queued SoA augs count toward installs but do not inflate ordinary aug prices.
 let factionNames = [""], joinedFactions = [""], desiredAugs = [""], desiredStatsFilters = [""], purchaseFactionDonations = [];
 let ownedAugmentations = [""], simulatedOwnedAugmentations = [""], allAugStats = [""], priorityAugs = [""];
@@ -108,6 +109,7 @@ export async function main(ns) {
 
   // Ensure all globals are reset before we proceed with the script, in case we've done things out of order
   augCountMult = favorToDonate = playerData = gangFaction = nfLevelPurchased = startingPlayerMoney = stockValue = null;
+  stockValueKnown = false;
   factionNames = [], joinedFactions = [], desiredAugs = [], desiredStatsFilters = [], purchaseFactionDonations = [];
   ownedAugmentations = [], simulatedOwnedAugmentations = [], effectiveSourceFiles = {}, allAugStats = [], priorityAugs = [], purchaseableAugs = [];
   factionData = {}, augmentationData = {}, bitNodeMults = {};
@@ -147,7 +149,16 @@ export async function main(ns) {
   gangFaction = gangInfo ? gangInfo.faction : null;
   favorToDonate = ns.getFavorToDonate();
   startingPlayerMoney = playerData.money;
-  stockValue = options['ignore-stocks'] ? 0 : await getStocksValue(ns);
+  stockValue = 0;
+  if (!options['ignore-stocks']) {
+    try {
+      stockValue = await getStocksValue(ns);
+      stockValueKnown = true;
+    } catch (error) {
+      log(ns, `WARNING: Stock value unavailable; planning augmentations using cash only. ` +
+        `Automatic installation will wait for readable holdings. If this persists, save and reload the game. ${String(error)}`);
+    }
+  }
   joinedFactions = ignorePlayerData ? [] : playerData.factions;
   log(ns, 'In factions: ' + joinedFactions);
   // Get owned augmentations (whether they've been installed or not). Ignore strNF because you can always buy more.
@@ -240,6 +251,8 @@ export async function main(ns) {
       generated_at: Date.now(),
       current_node: resetInfo.currentNode,
       last_aug_reset: resetInfo.lastAugReset,
+      stock_value_known: stockValueKnown,
+      stock_value: stockValueKnown ? stockValue : null,
       favor_to_donate: favorToDonate,
       donation_favor_progress: donationFavorProgress,
       go_favor_targets: getGoFavorTargets(omitAugs),
@@ -997,6 +1010,9 @@ async function purchaseDesiredAugs(ns) {
   let totalAugCost = getTotalCost(purchaseableAugs);
   // Refresh player data to get an accurate read of current money
   playerData = await getPlayerInfo(ns);
+  if (!stockValueKnown && !options['ignore-stocks'])
+    return log(ns, `ERROR: Cannot verify stock holdings; --purchase is paused. ` +
+      `Retry after stock reads recover, or use --ignore-stocks to explicitly buy using cash only.`, printToTerminal, 'error');
   if (stockValue > 0)
     return log(ns, `ERROR: For your own protection, --purchase will not run while you are holding stocks (current stock value: ${formatMoney(stockValue)}). ` +
       `Liquidate your shares before running (run stockmaster.js --liquidate) or run this script with --ignore-stocks to override this.`, printToTerminal, 'error')
