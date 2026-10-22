@@ -6,6 +6,8 @@ The highest-value work is fixing progression stalls and making the early-game la
 
 **October 22 review:** [Current outstanding findings](2026-10-22-outstanding-review.md) records the corrected sharing-buffer regression and two further faction-manager issues: unnecessary NeuroFlux donations and partial-SF4 purchase RAM outside BN4. Those two findings remain open. All 22 current positive suites pass; passing fixtures do not cover every gameplay state.
 
+**Persistent stock unavailability is not resolved:** the following stock patches contain failures; they do not establish or repair the live cause. [The diagnosis notes](2026-10-22-stock-diagnosis.md) distinguish confirmed PR regressions from the unconfirmed ECP lookup failure. After pulling, run `stock-diagnostic.js` on home and paste its terminal report. It compares direct game reads with the real helpers, includes access/RAM/version details, and does not trade. The diagnostic and official RAM checks pass; live evidence is still needed.
+
 **Stock valuation recovery:** [ECP lookup and HUD availability](2026-10-22-stock-valuation.md) reproduces a valid listed symbol whose position is unreadable in the official API. Whole valuations retry up to three times on that error; persistent failure stays unknown. The HUD displays `Unavailable` for stocks while continuing to refresh share power and other stats, with warnings limited to once per minute. The [faction-planning follow-up](2026-10-22-stock-planning.md) now continues planning using cash and explicitly marks stock holdings as unknown. Automatic installation waits for readable holdings, then resumes automatically; an existing Daedalus reserve is preserved. Six targeted suites and the official RAM comparison pass with no RAM increases. Pull and restart autopilot; subsequent faction-manager launches load the fix. Restart stats if the preceding HUD fix is not yet loaded. For a persistently unreadable market, try saving, fully closing and reopening the game.
 
 **Stockmaster market recovery:** [Startup, trading and liquidation](2026-10-22-stockmaster-recovery.md) now wait through invalid-symbol errors with five-second retries and throttled warnings. Recovery rereads the market and rebuilds forecasts before trading; liquidation rereads remaining positions after partial sales. Eight focused suites pass, including healthy-market trade comparisons, with stockmaster unchanged at 6.05 GB. Pull and restart stockmaster to load this follow-up.
@@ -57,6 +59,7 @@ node audit/2026-10-17-speedrun/checks/augmentation-reset.mjs
 node audit/2026-10-17-speedrun/checks/stock-liquidation.mjs
 node audit/2026-10-17-speedrun/checks/stock-valuation.mjs /path/to/bitburner-src
 node audit/2026-10-17-speedrun/checks/stockmaster-recovery.mjs /path/to/bitburner-src
+node audit/2026-10-17-speedrun/checks/stock-diagnostic.mjs /path/to/bitburner-src
 node audit/2026-10-17-speedrun/checks/resource-purchases.mjs
 node audit/2026-10-17-speedrun/checks/darknet-lifecycle.mjs
 node audit/2026-10-17-speedrun/checks/rpc-reserve.mjs

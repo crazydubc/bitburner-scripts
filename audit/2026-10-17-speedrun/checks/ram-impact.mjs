@@ -76,7 +76,7 @@ function cost(files,name,ignoreOverride=false) {
   assert.equal(result.errorCode,undefined,`${name}: ${result.errorMessage}`);
   return result.cost;
 }
-const targets=['autopilot.js','kernel.js','bn1-guide.js','go.js','host-manager.js','stockmaster.js','stats.js','sleeve.js',
+const targets=['autopilot.js','kernel.js','bn1-guide.js','go.js','host-manager.js','stockmaster.js','stock-diagnostic.js','stats.js','sleeve.js',
   'hacknet-upgrade-manager.js','spend-hashes.js','gangs.js','ascend.js','corporation.js','faction-manager.js',
   'bladeburner.js','work-for-faction2.js','farm-intel.js','bin/intel-farm-state.js',
   'bin/getHackP.js','bin/getGrowThreads.js','bin/serverRun.js','bin/getbnmultis.js','bin/singRun.js','bin/singReadMany.js','bin/reserve.js',
