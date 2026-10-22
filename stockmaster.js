@@ -72,6 +72,7 @@ export function autocomplete(data, args) {
 export async function main(ns) {
   const runOptions = getConfiguration(ns, argsSchema);
   if (!runOptions) return; // Invalid options, or ran in --help mode.
+  const marketStatus = { unavailable: false, nextWarning: 0 };
 
   // If given the "liquidate" command, try to kill any versions of this script trading in stocks
   // NOTE: We must do this immediately before we start resetting / overwriting global state below (which is shared between script instances)
@@ -86,7 +87,14 @@ export async function main(ns) {
     mock = false; // Another instance may have left shared mock state behind.
     if (hasTixApiAccess) {
       log(ns, 'INFO: Checking for and liquidating any stocks...', true, 'info');
-      await liquidate(ns); // Sell all stocks
+      while (true) {
+        try {
+          await liquidate(ns); // Every pass rereads positions, including after a partially completed sale.
+          break;
+        } catch (error) {
+          await pauseForStockMarket(ns, error, marketStatus);
+        }
+      }
     } else {
       log(ns, 'WARN: No TIX API access. Sell any positions manually on the Stock Market screen.', true, 'warning');
     }
@@ -145,8 +153,6 @@ export async function main(ns) {
     disableShorts = true;
   }
 
-  allStockSymbols = await stockRun(ns, 'getSymbols')
-  allStocks = await initAllStocks(ns);
   bitNodeMults = await getBNMults(ns);
 
   if (showMarketSummary) await launchSummaryTail(ns); // Opens a separate script / window to continuously display the Pre4S forecast
@@ -162,92 +168,125 @@ export async function main(ns) {
     `If you choose to stop the script, make sure you SELL all your stocks (can go 'run ${ns.getScriptName()} --liquidate') to get your money back.`)
 
   let pre4s = true;
+  let marketReady = false;
   while (true) {
-    //try {
-    const playerStats = await getPlayerInfo(ns);
-    const reserve = options['reserve'] != null ? options['reserve'] : await getReserve(ns);
-    // Check whether we have 4s access yes (once we do, we can stop checking)
-    if (pre4s) pre4s = !ns.stock.has4SDataTixApi();
-    const holdings = await refresh(ns, !pre4s, allStocks, myStocks); // Returns total stock value
-    const corpus = holdings + playerStats.money; // Corpus means total stocks + cash
-    const maxHoldings = (1 - fracH) * corpus; // The largest value of stock we could hold without violiating fracH (Fraction to keep as cash)
-    if (pre4s && !mock && await tryGet4SApi(ns, playerStats, corpus * (options['buy-4s-budget'] - fracH) - reserve))
-      continue; // Start the loop over if we just bought 4S API access
-    // Be more conservative with our decisions if we don't have 4S data
-    const thresholdToBuy = pre4s ? options['pre-4s-buy-threshold-return'] : options['buy-threshold'];
-    const thresholdToSell = pre4s ? options['pre-4s-sell-threshold-return'] : options['sell-threshold'];
-    if (myStocks.length > 0)
-      doStatusUpdate(ns, allStocks, myStocks, hudElement);
-    else if (hudElement) hudElement.innerText = "$0.000 ";
-    if (pre4s && allStocks[0].priceHistory.length < minTickHistory) {
-      log(ns, `Building a history of stock prices (${allStocks[0].priceHistory.length}/${minTickHistory})...`);
-      await ns.sleep(sleepInterval);
-      continue;
-    }
+    try {
+      if (!marketReady) {
+        allStockSymbols = await stockRun(ns, 'getSymbols');
+        const freshStocks = await initAllStocks(ns);
+        // Keep simulated holdings in --mock mode while discarding forecasts spanning unreadable ticks.
+        if (mock) for (const stk of freshStocks) {
+          const previous = allStocks.find(old => old.sym === stk.sym);
+          if (previous) for (const field of ['sharesLong', 'boughtPrice', 'sharesShort', 'boughtPriceShort'])
+            stk[field] = previous[field];
+        }
+        allStocks = freshStocks;
+        lastTick = 0, marketCycleDetected = false, detectedCycleTick = 0, inversionAgreementThreshold = 6;
+        marketReady = true;
+      }
+      const playerStats = await getPlayerInfo(ns);
+      const reserve = options['reserve'] != null ? options['reserve'] : await getReserve(ns);
+      // Check whether we have 4s access yes (once we do, we can stop checking)
+      if (pre4s) pre4s = !ns.stock.has4SDataTixApi();
+      const holdings = await refresh(ns, !pre4s, allStocks, myStocks); // Returns total stock value
+      if (marketStatus.unavailable) {
+        marketStatus.unavailable = false;
+        log(ns, 'INFO: Stock data is readable again. Resuming with fresh positions and forecasts.', true);
+      }
+      const corpus = holdings + playerStats.money; // Corpus means total stocks + cash
+      const maxHoldings = (1 - fracH) * corpus; // The largest value of stock we could hold without violiating fracH (Fraction to keep as cash)
+      if (pre4s && !mock && await tryGet4SApi(ns, playerStats, corpus * (options['buy-4s-budget'] - fracH) - reserve))
+        continue; // Start the loop over if we just bought 4S API access
+      // Be more conservative with our decisions if we don't have 4S data
+      const thresholdToBuy = pre4s ? options['pre-4s-buy-threshold-return'] : options['buy-threshold'];
+      const thresholdToSell = pre4s ? options['pre-4s-sell-threshold-return'] : options['sell-threshold'];
+      if (myStocks.length > 0)
+        doStatusUpdate(ns, allStocks, myStocks, hudElement);
+      else if (hudElement) hudElement.innerText = "$0.000 ";
+      if (pre4s && allStocks[0].priceHistory.length < minTickHistory) {
+        log(ns, `Building a history of stock prices (${allStocks[0].priceHistory.length}/${minTickHistory})...`);
+        await ns.sleep(sleepInterval);
+        continue;
+      }
 
-    // Sell forecasted-to-underperform shares (worse than some expected return threshold)
-    let sales = 0;
-    for (let stk of myStocks) {
-      if (stk.absReturn() <= thresholdToSell || stk.bullish() && stk.sharesShort > 0 || stk.bearish() && stk.sharesLong > 0) {
-        if (pre4s && stk.ticksHeld < pre4sMinHoldTime) {
-          if (!stk.warnedBadPurchase) log(ns, `WARNING: Thinking of selling ${stk.sym} with ER ${formatBP(stk.absReturn())}, but holding out as it was purchased just ${stk.ticksHeld} ticks ago...`);
-          stk.warnedBadPurchase = true; // Hack to ensure we don't spam this warning
-        } else {
-          sales += await doSellAll(ns, stk);
-          stk.warnedBadPurchase = false;
+      // Sell forecasted-to-underperform shares (worse than some expected return threshold)
+      let sales = 0;
+      for (let stk of myStocks) {
+        if (stk.absReturn() <= thresholdToSell || stk.bullish() && stk.sharesShort > 0 || stk.bearish() && stk.sharesLong > 0) {
+          if (pre4s && stk.ticksHeld < pre4sMinHoldTime) {
+            if (!stk.warnedBadPurchase) log(ns, `WARNING: Thinking of selling ${stk.sym} with ER ${formatBP(stk.absReturn())}, but holding out as it was purchased just ${stk.ticksHeld} ticks ago...`);
+            stk.warnedBadPurchase = true; // Hack to ensure we don't spam this warning
+          } else {
+            sales += await doSellAll(ns, stk);
+            stk.warnedBadPurchase = false;
+          }
         }
       }
-    }
-    if (sales > 0) continue; // If we sold anything, loop immediately (no need to sleep) and refresh stats immediately before making purchasing decisions.
+      if (sales > 0) continue; // If we sold anything, loop immediately (no need to sleep) and refresh stats immediately before making purchasing decisions.
 
-    // If we haven't gone above a certain liquidity threshold, don't attempt to buy more stock
-    // Avoids death-by-a-thousand-commissions before we get super-rich, stocks are capped, and this is no longer an issue
-    // BUT may mean we miss striking while the iron is hot while waiting to build up more funds.
-    if (playerStats.money / corpus > fracB && ns.getMoneySources().sinceInstall?.casino >= 10e9) {
-      // Compute the cash we have to spend (such that spending it all on stock would bring us down to a liquidity of fracH)
-      let cash = Math.min(playerStats.money - reserve, maxHoldings - holdings);
-      // If we haven't detected the market cycle (or haven't detected it reliably), assume it might be quite soon and restrict bets to those that can turn a profit in the very-near term.
-      const estTick = Math.max(detectedCycleTick, marketCycleLength - (!marketCycleDetected ? 10 : inversionAgreementThreshold <= 8 ? 20 : inversionAgreementThreshold <= 10 ? 30 : marketCycleLength));
-      // Buy shares with cash remaining in hand if exceeding some buy threshold. Prioritize targets whose expected return will cover the ask/bit spread the soonest
-      for (const stk of allStocks.sort(purchaseOrder)) {
-        if (cash <= 0) break; // Break if we are out of money (i.e. from prior purchases)
-        // Do not purchase a stock if it is not forecasted to recover from the ask/bid spread before the next market cycle and potential probability inversion
-        if (stk.blackoutWindow() >= marketCycleLength - estTick) continue;
-        if (pre4s && (Math.max(pre4sMinHoldTime, pre4sMinBlackoutWindow) >= marketCycleLength - estTick)) continue;
-        // Skip if we already own all possible shares in this stock, or if the expected return is below our threshold, or if shorts are disabled and stock is bearish
-        if (stk.ownedShares() == stk.maxShares || stk.absReturn() <= thresholdToBuy || (disableShorts && stk.bearish())) continue;
-        // If pre-4s, do not purchase any stock whose last inversion was too recent, or whose probability is too close to 0.5
-        if (pre4s && (stk.lastInversion < minTickHistory || Math.abs(stk.prob - 0.5) < pre4sBuyThresholdProbability)) continue;
+      // If we haven't gone above a certain liquidity threshold, don't attempt to buy more stock
+      // Avoids death-by-a-thousand-commissions before we get super-rich, stocks are capped, and this is no longer an issue
+      // BUT may mean we miss striking while the iron is hot while waiting to build up more funds.
+      if (playerStats.money / corpus > fracB && ns.getMoneySources().sinceInstall?.casino >= 10e9) {
+        // Compute the cash we have to spend (such that spending it all on stock would bring us down to a liquidity of fracH)
+        let cash = Math.min(playerStats.money - reserve, maxHoldings - holdings);
+        // If we haven't detected the market cycle (or haven't detected it reliably), assume it might be quite soon and restrict bets to those that can turn a profit in the very-near term.
+        const estTick = Math.max(detectedCycleTick, marketCycleLength - (!marketCycleDetected ? 10 : inversionAgreementThreshold <= 8 ? 20 : inversionAgreementThreshold <= 10 ? 30 : marketCycleLength));
+        // Buy shares with cash remaining in hand if exceeding some buy threshold. Prioritize targets whose expected return will cover the ask/bit spread the soonest
+        for (const stk of allStocks.sort(purchaseOrder)) {
+          if (cash <= 0) break; // Break if we are out of money (i.e. from prior purchases)
+          // Do not purchase a stock if it is not forecasted to recover from the ask/bid spread before the next market cycle and potential probability inversion
+          if (stk.blackoutWindow() >= marketCycleLength - estTick) continue;
+          if (pre4s && (Math.max(pre4sMinHoldTime, pre4sMinBlackoutWindow) >= marketCycleLength - estTick)) continue;
+          // Skip if we already own all possible shares in this stock, or if the expected return is below our threshold, or if shorts are disabled and stock is bearish
+          if (stk.ownedShares() == stk.maxShares || stk.absReturn() <= thresholdToBuy || (disableShorts && stk.bearish())) continue;
+          // If pre-4s, do not purchase any stock whose last inversion was too recent, or whose probability is too close to 0.5
+          if (pre4s && (stk.lastInversion < minTickHistory || Math.abs(stk.prob - 0.5) < pre4sBuyThresholdProbability)) continue;
 
-        // Enforce diversification: Don't hold more than x% of our portfolio as a single stock (as corpus increases, this naturally stops being a limiter)
-        // Inflate our budget / current position value by a factor of stk.spread_pct to avoid repeated micro-buys of a stock due to the buy/ask spread making holdings appear more diversified after purchase
-        let budget = Math.min(cash, maxHoldings * (diversification + stk.spread_pct) - stk.positionValue() * (1.01 + stk.spread_pct))
-        let purchasePrice = stk.bullish() ? stk.ask_price : stk.bid_price; // Depends on whether we will be buying a long or short position
-        let affordableShares = Math.floor((budget - commission) / purchasePrice);
-        let numShares = Math.min(stk.maxShares - stk.ownedShares(), affordableShares);
-        if (numShares <= 0) continue;
-        // Don't buy fewer shares than can beat the comission before the next stock market cycle (after covering the spread), lest the position reverse before we break-even.
-        let ticksBeforeCycleEnd = marketCycleLength - estTick - stk.timeToCoverTheSpread();
-        if (ticksBeforeCycleEnd < 1) continue; // We're cutting it too close to the market cycle, position might reverse before we break-even on commission
-        let estEndOfCycleValue = numShares * purchasePrice * ((stk.absReturn() + 1) ** ticksBeforeCycleEnd - 1); // Expected difference in purchase price and value at next market cycle end
-        let owned = stk.ownedShares() > 0;
-        if (estEndOfCycleValue <= 2 * commission)
-          log(ns, (owned ? '' : `We currently have ${formatNumberShort(stk.ownedShares(), 3, 1)} shares in ${stk.sym} valued at ${formatMoney(stk.positionValue())} ` +
-            `(${(100 * stk.positionValue() / maxHoldings).toFixed(1)}% of corpus, capped at ${(diversification * 100).toFixed(1)}% by --diversification).\n`) +
-            `Despite attractive ER of ${formatBP(stk.absReturn())}, ${owned ? 'more ' : ''}${stk.sym} was not bought. ` +
-            `\nBudget: ${formatMoney(budget)} can only buy ${numShares.toLocaleString('en')} ${owned ? 'more ' : ''}shares @ ${formatMoney(purchasePrice)}. ` +
-            `\nGiven an estimated ${marketCycleLength - estTick} ticks left in market cycle, less ${stk.timeToCoverTheSpread().toFixed(1)} ticks to cover the spread (${(stk.spread_pct * 100).toFixed(2)}%), ` +
-            `remaining ${ticksBeforeCycleEnd.toFixed(1)} ticks would only generate ${formatMoney(estEndOfCycleValue)}, which is less than 2x commission (${formatMoney(2 * commission, 3)})`);
-        else
-          cash -= await doBuy(ns, stk, numShares);
+          // Enforce diversification: Don't hold more than x% of our portfolio as a single stock (as corpus increases, this naturally stops being a limiter)
+          // Inflate our budget / current position value by a factor of stk.spread_pct to avoid repeated micro-buys of a stock due to the buy/ask spread making holdings appear more diversified after purchase
+          let budget = Math.min(cash, maxHoldings * (diversification + stk.spread_pct) - stk.positionValue() * (1.01 + stk.spread_pct))
+          let purchasePrice = stk.bullish() ? stk.ask_price : stk.bid_price; // Depends on whether we will be buying a long or short position
+          let affordableShares = Math.floor((budget - commission) / purchasePrice);
+          let numShares = Math.min(stk.maxShares - stk.ownedShares(), affordableShares);
+          if (numShares <= 0) continue;
+          // Don't buy fewer shares than can beat the comission before the next stock market cycle (after covering the spread), lest the position reverse before we break-even.
+          let ticksBeforeCycleEnd = marketCycleLength - estTick - stk.timeToCoverTheSpread();
+          if (ticksBeforeCycleEnd < 1) continue; // We're cutting it too close to the market cycle, position might reverse before we break-even on commission
+          let estEndOfCycleValue = numShares * purchasePrice * ((stk.absReturn() + 1) ** ticksBeforeCycleEnd - 1); // Expected difference in purchase price and value at next market cycle end
+          let owned = stk.ownedShares() > 0;
+          if (estEndOfCycleValue <= 2 * commission)
+            log(ns, (owned ? '' : `We currently have ${formatNumberShort(stk.ownedShares(), 3, 1)} shares in ${stk.sym} valued at ${formatMoney(stk.positionValue())} ` +
+              `(${(100 * stk.positionValue() / maxHoldings).toFixed(1)}% of corpus, capped at ${(diversification * 100).toFixed(1)}% by --diversification).\n`) +
+              `Despite attractive ER of ${formatBP(stk.absReturn())}, ${owned ? 'more ' : ''}${stk.sym} was not bought. ` +
+              `\nBudget: ${formatMoney(budget)} can only buy ${numShares.toLocaleString('en')} ${owned ? 'more ' : ''}shares @ ${formatMoney(purchasePrice)}. ` +
+              `\nGiven an estimated ${marketCycleLength - estTick} ticks left in market cycle, less ${stk.timeToCoverTheSpread().toFixed(1)} ticks to cover the spread (${(stk.spread_pct * 100).toFixed(2)}%), ` +
+              `remaining ${ticksBeforeCycleEnd.toFixed(1)} ticks would only generate ${formatMoney(estEndOfCycleValue)}, which is less than 2x commission (${formatMoney(2 * commission, 3)})`);
+          else
+            cash -= await doBuy(ns, stk, numShares);
+        }
       }
+    } catch (error) {
+      marketReady = false;
+      await pauseForStockMarket(ns, error, marketStatus, hudElement);
+      continue;
     }
-    /*} catch (err) {
-      log(ns, `WARNING: stockmaster.js Caught (and suppressed) an unexpected error in the main loop:\n` +
-        (typeof err === 'string' ? err : err.message || JSON.stringify(err)), false, 'warning');
-    }*/
     await ns.sleep(sleepInterval);
   }
+}
+
+/** A failed stock lookup invalidates the whole trading pass; never substitute zero or retry a stale order. */
+async function pauseForStockMarket(ns, error, status, hudElement = null) {
+  if (!/\bstock\.\w+\b[\s\S]*Invalid stock symbol:/.test(String(error))) throw error;
+  status.unavailable = true;
+  allStockSymbols = null;
+  if (hudElement) hudElement.innerText = 'Unavailable';
+  if (Date.now() >= status.nextWarning) {
+    status.nextWarning = Date.now() + 60_000;
+    log(ns, `WARNING: Stock market data is unavailable; stock actions paused. Retrying in 5 seconds. ` +
+      `If this persists, save, fully close and reopen Bitburner. ${String(error)}`, true, 'warning');
+  }
+  await ns.sleep(5_000);
 }
 
 function getTimeInBitnode() { return Date.now() - resetInfo.lastNodeReset; }
@@ -267,14 +306,11 @@ export async function buildLib(ns, items, cmd) {
 /** @param {NS} ns
  * Generic helper for dodging the hefty RAM requirements of stock functions by spawning a temporary script to collect info for us. */
 async function getStockInfoDict(ns, stockFunction) {
-  allStockSymbols ??= await stockRun(ns, 'getSymbols');//ns.stock.getSymbols();
-  if (allStockSymbols == null) throw new Error(`No WSE API Access yet, this call to ns.stock.${stockFunction} is premature.`);
+  allStockSymbols ??= await stockRun(ns, 'getSymbols');
+  if (!Array.isArray(allStockSymbols) || !allStockSymbols.length ||
+    !allStockSymbols.every(sym => typeof sym === 'string' && sym.length > 0))
+    throw new Error('Invalid stock symbol list');
   return buildLib(ns, allStockSymbols, stockFunction);
-  const entries = await Promise.all(
-    allStockSymbols.map(async (sym) => [sym, await stockRun(ns, stockFunction, sym)])
-  );
-
-  return Object.fromEntries(entries);
 };
 
 /** @param {NS} ns **/
@@ -349,8 +385,8 @@ async function refresh(ns, has4s, allStocks, myStocks) {
     stk.position = mock ? null : dictPositions[sym];
     stk.sharesLong = mock ? (stk.sharesLong || 0) : stk.position[0];
     stk.boughtPrice = mock ? (stk.boughtPrice || 0) : stk.position[1];
-    stk.sharesShort = mock ? (stk.shares_short || 0) : stk.position[2];
-    stk.boughtPriceShort = mock ? (stk.boughtPrice_short || 0) : stk.position[3];
+    stk.sharesShort = mock ? (stk.sharesShort || 0) : stk.position[2];
+    stk.boughtPriceShort = mock ? (stk.boughtPriceShort || 0) : stk.position[3];
     holdings += stk.positionValue();
     if (stk.owned()) myStocks.push(stk); else stk.ticksHeld = 0;
     if (ticked) // Increment ticksHeld, or reset it if we have no position in this stock or reversed our position last tick.
@@ -471,8 +507,7 @@ let sellShortWrapper = async (ns, sym, numShares) => await stockRun(ns, 'sellSho
 async function doBuy(ns, stk, sharesToBuy) {
   // We include -2*commission in the "holdings value" of our stock, but if we make repeated purchases of the same stock, we have to track
   // the additional commission somewhere. So only subtract it from our running profit if this isn't our first purchase of this symbol
-  if (stk.owned())
-    totalProfit -= commission;
+  const alreadyOwned = stk.owned();
   let long = stk.bullish();
   let expectedPrice = long ? stk.ask_price : stk.bid_price; // Depends on whether we will be buying a long or short position
   log(ns, `INFO: ${long ? 'Buying  ' : 'Shorting'} ${formatNumberShort(sharesToBuy, 3, 3).padStart(5)} (` +
@@ -492,6 +527,7 @@ async function doBuy(ns, stk, sharesToBuy) {
     log(ns, `WARNING: ${long ? 'Bought' : 'Shorted'} ${stk.sym} @ ${formatMoney(price)} but expected ${formatMoney(expectedPrice)} (spread: ${formatMoney(stk.spread)})`, false, 'warning');
     price = expectedPrice; // Known Bitburner bug for now, short returns "price" instead of "bid_price". Correct this so running profit calcs are correct.
   }
+  if (alreadyOwned) totalProfit -= commission; // Book the extra commission only after a successful buy.
   if (mock && long) stk.boughtPrice = (stk.boughtPrice * stk.sharesLong + price * sharesToBuy) / (stk.sharesLong + sharesToBuy);
   if (mock && !long) stk.boughtPriceShort = (stk.boughtPriceShort * stk.sharesShort + price * sharesToBuy) / (stk.sharesShort + sharesToBuy);
   if (long) stk.sharesLong += sharesToBuy; else stk.sharesShort += sharesToBuy; // Maintained for mock mode, otherwise, redundant (overwritten at next refresh)
@@ -551,8 +587,7 @@ function doStatusUpdate(ns, stocks, myStocks, hudElement = null) {
 
 /** @param {NS} ns **/
 async function liquidate(ns) {
-  allStockSymbols ??= await stockRun(ns, 'getSymbols');
-  if (allStockSymbols == null) return; // Nothing to liquidate, no API Access
+  allStockSymbols = await stockRun(ns, 'getSymbols');
   let totalStocks = 0, totalSharesLong = 0, totalSharesShort = 0, totalRevenue = 0;
   const dictPositions = mock ? null : await getStockInfoDict(ns, 'getPosition');
   for (const sym of allStockSymbols) {
