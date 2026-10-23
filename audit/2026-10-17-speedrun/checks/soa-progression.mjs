@@ -105,7 +105,7 @@ for(const suppressConfirmation of [false,true]) {
   const f=fixture({suppressConfirmation});const state=await f.run();
   assert.deepEqual(f.purchases,[SOA_WKS]);assert.equal(state.joined,true);assert.equal(f.screen,'terminal');
   assert.equal(f.money,10e9-1e6);assert.equal(state.goal.augmentation,SOA_AUGS[1]);
-  assert.match(getSoaGuidance({...state,lastAugReset:10,lastNodeReset:5,updatedAt:100000},f.reset,100001),/only after installation/);
+  assert.ok(getSoaGuidance({...state,lastAugReset:10,lastNodeReset:5,updatedAt:100000},f.reset,100001).includes(`Install ${SOA_WKS} to improve infiltration rewards`));
 }
 {
   const f=fixture({invited:false});const state=await f.run();assert.equal(state.goal.needsInvite,true);assert.deepEqual(f.purchases,[]);

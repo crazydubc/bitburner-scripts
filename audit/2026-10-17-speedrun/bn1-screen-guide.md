@@ -1,5 +1,7 @@
 # BN1.1 in-game prompts
 
+The panel now uses numbered clicks and terminal commands, for example `City > Slums > Mug` and `run scan.js`, then click `backdoor` beside `CSEC`. It names the current city's shop or university and keeps the longer faction/install instructions in their own views. See [the October 23 update](2026-10-23-bn1-guidance-automation.md) for the scan-link fix and full-automation assessment.
+
 On a fresh first BN1 run, start with:
 
 ```text
@@ -16,7 +18,7 @@ There is no once-per-cycle restriction and no persistent startup latch. Existing
 
 Autopilot also opens the guide during first-BN1 startup when possible. Starting `autopilot.js` directly on an 8 GB home is still subject to the audited RPC bootstrap problem; use the guide first. The optional guide launch never waits for RAM.
 
-The guide uses `isScriptRunning` from `utils.js` to recognize autopilot on any server, including offloaded instances. Below 64 GB, it skips that helper lookup because casino and home-RAM prompts take priority. At higher capacities it also skips the lookup when less than 4 GB is free, reports the unknown status, and asks for helper headroom instead of starting a possible duplicate. These checks reduce home-RAM stalls; they do not repair the suite's general RPC transport.
+The guide uses `isScriptRunning` from `utils.js` to recognize autopilot on any server, including offloaded instances. That lookup scans processes directly and needs no home helper. Below 64 GB it skips the lookup because casino and home-RAM prompts take priority.
 
 ## Early darknet setup
 
@@ -32,7 +34,7 @@ run bn1-guide.js --roadmap
 
 This opens an on-screen route through CyberSec, NiteSec, The Black Hand, BitRunners, and Daedalus, with actual faction-server hacking/port requirements, invitation steps, and example augmentation/reputation targets. Sector-12/CashRoot and Tian Di Hui/Neuroreceptor are explained as side stops, including city-faction conflicts. It tells the player how to select Hacking Contracts, when to focus, and how to build toward 30 distinct installed augmentations. The normal panel suggests work among joined factions and skips installed example targets.
 
-These are suggestions, not a requirement to exhaust every faction or grind every named augmentation. Reputation and queued purchases are unavailable without Singularity; check the game screens and skip already purchased targets. The reference view exits after rendering and leaves its log available. Rerun it to refresh requirements/status after progress; it can open alongside the normal guide and does not launch the server-lookup helper.
+These are suggestions, not a requirement to exhaust every faction or grind every named augmentation. This guide does not read faction reputation or queued purchases; check the game screens and skip already purchased targets. These values can be read through the UI by other automation, as the existing SoA adapter demonstrates. The reference view exits after rendering and leaves its log available. Rerun it to refresh requirements/status after progress; it can open alongside the normal guide and does not launch the server-lookup helper.
 
 ## Before buying the final bundle or installing
 
@@ -51,7 +53,7 @@ This opens a separate, one-shot checklist that remains available after exiting. 
 
 Opening the static checklist does not pause automatic startup or change running processes. The guide never executes the liquidation command, kills processes, buys augmentations, or installs them. Internal reset/Daedalus callers use `--liquidate-once` to preserve their wait-for-exit/resume behavior; use the persistent `--liquidate` command for this manual checklist.
 
-Your $8b reserve remains intact. The panel checks casino earnings this installation, not total cash, sampling completion, or whether coinflip exited. It uses a read-only view of installed augmentations; without Singularity it cannot inspect queued purchases or faction reputation, so those prompts explicitly direct you to the relevant game screens. The guide is advisory and does not change the existing money-management implementation.
+Your $8b reserve remains intact. The panel checks casino earnings this installation, not total cash, sampling completion, or whether coinflip exited. It uses a read-only view of installed augmentations; it does not inspect queued purchases or faction reputation, so those prompts explicitly direct you to the relevant game screens. The guide is advisory and does not change the existing money-management implementation.
 
 Use `--no-tail` for log-only operation or `--once` for a single snapshot without starting autopilot. `--roadmap` and `--install` also never start it. Stop the guide process to silence it for the current session. It exits outside BN1 or once SF1/SF4 is active.
 

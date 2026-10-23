@@ -66,18 +66,20 @@ assert.equal(getBn1Guidance(dark).id, 'casino', 'Do not recommend darknet purcha
 // Work suggestions advance past installed targets without requiring Singularity.
 const progress = snapshot();
 progress.player.factions = ['CyberSec', 'Sector-12', 'NiteSec'];
-assert(getBn1Guidance(progress).steps.some(step => step.includes('Factions > CyberSec > Hacking Contracts')));
+assert(getBn1Guidance(progress).steps.some(step => step.includes('Factions > CyberSec > Details > Hacking Contracts')));
 progress.reset.ownedAugs.set('Neurotrainer I', 1);
 progress.reset.ownedAugs.set('BitWire', 1);
-assert(getBn1Guidance(progress).steps.some(step => step.includes('Factions > Sector-12 > Hacking Contracts')));
+assert(getBn1Guidance(progress).steps.some(step => step.includes('Factions > Sector-12 > Details > Hacking Contracts')));
 progress.reset.ownedAugs.set('CashRoot Starter Kit', 1);
-assert(getBn1Guidance(progress).steps.some(step => step.includes('Factions > NiteSec > Hacking Contracts')));
+assert(getBn1Guidance(progress).steps.some(step => step.includes('Factions > NiteSec > Details > Hacking Contracts')));
 const roadmap = getBn1FactionRoadmap(snapshot()).steps.join('\n');
-assert(roadmap.includes('backdoor CSEC: hacking 55, 1 port'), 'Use actual server hacking requirements');
-assert(roadmap.includes('backdoor avmnite-02h: hacking 210, 2 ports'));
+assert(roadmap.includes('needs hacking 55 and 1 port-opening program'), 'Use actual server hacking requirements');
+assert(roadmap.includes('"backdoor" beside "CSEC"'));
+assert(roadmap.includes('needs hacking 210 and 2 port-opening programs'));
+assert(roadmap.includes('"backdoor" beside "avmnite-02h"'));
 assert(roadmap.includes('Hacking Contracts'));
 assert(roadmap.includes('do not join Chongqing, New Tokyo, Ishima, or Volhaven'));
-assert(roadmap.includes('Optional for unattended work: Tian Di Hui'));
+assert(roadmap.includes('Optional: Tian Di Hui'));
 assert(getBn1FactionRoadmap(progress).steps.some(step => step.includes('CashRoot Starter Kit (installed)')));
 
 // Every install path keeps autopilot active and asks the user to liquidate;
@@ -87,16 +89,16 @@ for (const factions of [['CyberSec'], ['Daedalus']]) {
   const text = getBn1Guidance(ready).steps.join('\n');
   assert(text.includes('leave autopilot running'));
   assert(text.includes('run stockmaster.js --liquidate'));
-  assert(text.includes('Verify all stock positions are zero'));
+  assert(text.includes('verify zero shares held'));
 }
 const installSteps = getBn1InstallGuidance().steps;
 const sellAt = installSteps.findIndex(step => step.includes('run stockmaster.js --liquidate'));
 const verifyAt = installSteps.findIndex(step => step.includes('verify zero positions'));
-const buyAt = installSteps.findIndex(step => step.includes('Buy desired expensive augmentations'));
+const buyAt = installSteps.findIndex(step => step.includes('Buy the useful upgrades'));
 assert(sellAt >= 0 && sellAt < verifyAt && verifyAt < buyAt);
 assert(installSteps.some(step => step.includes('Leave autopilot running')));
 assert(!installSteps.some(step => /stop every autopilot|keep autopilot stopped|pauses the guide/i.test(step)));
-assert(installSteps.some(step => step.includes('Without TIX API access, sell manually')));
+assert(installSteps.some(step => step.includes('Sell ALL') && step.includes('Long or Short')));
 
 // Reference panels never launch helpers, alter startup state, trade, or stop scripts.
 for (const mode of ['install', 'roadmap']) {
@@ -116,7 +118,7 @@ for (const mode of ['install', 'roadmap']) {
   });
   assert(rendered.some(message => message.includes(mode === 'install'
     ? 'run stockmaster.js --liquidate' : 'Faction roadmap')));
-  assert(rendered.some(message => message.includes('Reference view exits now')));
+  assert(rendered.some(message => message.includes('checklist stays in the log')));
   assert.equal(writes.size, 0);
 }
 
@@ -167,8 +169,8 @@ await main({
   print: m => messages.push(m), tprint: m => messages.push(m),
   sleep: () => {throw Error('Low-RAM guide should exit rather than occupy home');},
 });
-assert(messages.some(message => message.includes('guide exits now')));
-assert(messages.some(message => message.includes('$8b reserve')));
+assert(messages.some(message => message.includes('guide closes now')));
+assert(messages.some(message => message.includes('$10 billion before spending')));
 
 // Automatic startup is bounded and keeps supervising throughout the cycle.
 // Old persistent markers must not prevent an absent autopilot from restarting.
