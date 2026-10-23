@@ -4,7 +4,7 @@ The highest-value work is fixing progression stalls and making the early-game la
 
 **The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) now contains implemented fixes and positive offline checks for all 18 original findings.** It combines BN1.1 prompts, focused Go fixes, resource/purchase repairs, corporation lifecycle/expansion fixes, the revised BN route, and the remaining infrastructure/batcher corrections. See [remaining-fixes.md](remaining-fixes.md) for the final backlog pass and its limits. Batch timing/scheduling and the $8b reserve formula are unchanged. Live validation and route/performance measurements remain necessary.
 
-**Beginner guide update:** [BN1 instructions and automation assessment](2026-10-23-bn1-guidance-automation.md) replaces implementation commentary with numbered clicks and commands, including named stores, faction buttons and backdoor targets. Scan links now wait for the terminal input to render before pressing Enter. Four focused checks pass; the guide remains 8 GB and scan 4.05 GB. Full BN1 UI automation is feasible from the source review but is not implemented by this update; the audit records the restart, screen coordination and progression work still needed. Pull the same branch, restart the guide and rerun scan to refresh its links.
+**Beginner guide update:** [BN1 instructions and automation assessment](2026-10-23-bn1-guidance-automation.md) replaces implementation commentary with numbered clicks and commands, including named stores, faction buttons and backdoor targets. The accompanying scan helper introduced a focus-order regression and has been removed from scan; the [scan hotfix](2026-10-23-scan-regression.md) restores its prior working handler and adds a real React/Material UI reproduction. Three focused hotfix checks pass; the guide remains 8 GB and scan 4.05 GB. Full BN1 UI automation is feasible from the source review but is not implemented by this update; the audit records the restart, screen coordination and progression work still needed. Pull the same branch, restart the guide and rerun scan to refresh its links.
 
 **October 22 review:** [Current outstanding findings](2026-10-22-outstanding-review.md) records the corrected sharing-buffer regression and two further faction-manager issues: unnecessary NeuroFlux donations and partial-SF4 purchase RAM outside BN4. Those two findings remain open. All 22 current positive suites pass; passing fixtures do not cover every gameplay state.
 
@@ -58,6 +58,8 @@ Combined-branch checks:
 ```sh
 node audit/2026-10-17-speedrun/checks/bn1-guide.mjs
 node audit/2026-10-17-speedrun/checks/terminal-ui.mjs /path/to/bitburner-src
+# UI dependency setup is documented in 2026-10-23-scan-regression.md
+node audit/2026-10-17-speedrun/checks/scan-ui.mjs /path/to/bitburner-src /tmp/bitburner-terminal-ui-check
 node audit/2026-10-17-speedrun/checks/augmentation-reset.mjs
 node audit/2026-10-17-speedrun/checks/stock-liquidation.mjs
 node audit/2026-10-17-speedrun/checks/stock-valuation.mjs /path/to/bitburner-src

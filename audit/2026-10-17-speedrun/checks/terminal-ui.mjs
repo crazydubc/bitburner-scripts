@@ -1,4 +1,5 @@
-// Exercise the real game Enter handler with delayed React renders.
+// Unit fixture for the game Enter handler with deliberately delayed state updates.
+// scan-ui.mjs covers real React/MUI focus behavior; this plain-object fixture cannot.
 // node .../terminal-ui.mjs /path/to/bitburner-src
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';

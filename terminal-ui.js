@@ -1,5 +1,5 @@
-// Terminal UI submission shared by clickable navigation and future BN1 controls.
-// Browser timers are intentional: scan.js links remain usable after its main exits.
+// Experimental UI helper retained for downloader compatibility; scan.js does not use it.
+// Browser timers allow a bounded submission without keeping a Netscript process alive.
 function controls(input) {
     const key = Object.keys(input ?? {}).find(name => name.startsWith('__reactProps$'));
     const props = key ? input[key] : null;
@@ -17,9 +17,11 @@ export async function sendTerminalCommand(doc, command, {
     const input = doc.getElementById('terminal-input');
     if (!input || input.disabled) throw new Error('Open Terminal and wait for its current command to finish.');
     if (!canContinue()) throw new Error('Terminal command cancelled.');
+    // Focus can rerender a controlled MUI input and restore its previous value.
+    // Finish that transition before writing the command or reading its handlers.
+    input.focus();
     const initial = controls(input), deadline = now() + timeout;
     input.value = command;
-    input.focus();
     initial.onChange({target: input, currentTarget: input, isTrusted: true});
     while (now() < deadline) {
         await sleep(25);

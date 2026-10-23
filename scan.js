@@ -1,5 +1,4 @@
 import { getConfiguration, formatRam, formatMoney, formatNumber } from './utils.js'
-import { sendTerminalCommand } from './terminal-ui.js';
 
 const argsSchema = [
   ['hide-stats', false], // Set to false to hide detailed server statistics (RAM, max money, etc...)
@@ -37,22 +36,18 @@ export function main(ns) {
   const doc = eval("document");
   const terminalInput = doc.getElementById("terminal-input");
   if (!terminalInput) throw new Error("This script must be run while the terminal is visible.");
+  const terminalEventHandlerKey = Object.keys(terminalInput)[1];
 
   function terminalInsert(html) {
     const term = doc.getElementById("terminal");
     if (!term) throw new Error("This script must be run while the terminal is visible.");
     term.insertAdjacentHTML('beforeend', `<li>${html}</li>`);
   }
-  let navigationPending = false;
   async function setNavCommand(inputValue) {
-    if (navigationPending) return;
-    navigationPending = true;
-    try { await sendTerminalCommand(doc, inputValue); }
-    catch (error) {
-      const line = doc.createElement('li');
-      line.textContent = `Navigation: ${String(error?.message ?? error)}`;
-      doc.getElementById('terminal')?.appendChild(line);
-    } finally { navigationPending = false; }
+    terminalInput.value = inputValue
+    terminalInput[terminalEventHandlerKey].onChange({ target: terminalInput })
+    terminalInput.focus()
+    await terminalInput[terminalEventHandlerKey].onKeyDown({ key: 'Enter', preventDefault: () => 0 })
   }
 
   const myHackLevel = ns.getHackingLevel();

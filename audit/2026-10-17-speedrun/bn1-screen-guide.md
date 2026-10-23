@@ -1,6 +1,6 @@
 # BN1.1 in-game prompts
 
-The panel now uses numbered clicks and terminal commands, for example `City > Slums > Mug` and `run scan.js`, then click `backdoor` beside `CSEC`. It names the current city's shop or university and keeps the longer faction/install instructions in their own views. See [the October 23 update](2026-10-23-bn1-guidance-automation.md) for the scan-link fix and full-automation assessment.
+The panel now uses numbered clicks and terminal commands, for example `City > Slums > Mug` and `run scan.js`, then click `backdoor` beside `CSEC`. It names the current city's shop or university and keeps the longer faction/install instructions in their own views. See [the October 23 update](2026-10-23-bn1-guidance-automation.md) for the guide changes and full-automation assessment. The accompanying scan change was reverted after a focus-order regression; see the [scan hotfix](2026-10-23-scan-regression.md).
 
 On a fresh first BN1 run, start with:
 

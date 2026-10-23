@@ -1,5 +1,7 @@
 # Beginner BN1.1 guidance and full-automation assessment — 2026-10-23
 
+**Scan correction:** the terminal helper described below introduced a focus-order regression and is no longer used by scan. The [hotfix](2026-10-23-scan-regression.md) restores the previous scan handler and reproduces the defect with real React/Material UI components. The beginner guide and full-automation assessment are unchanged. The original scan validation below was insufficient and is retained as history.
+
 This update ships clearer `bn1-guide.js` instructions and a terminal-input timing correction for `scan.js`. It does **not** replace the guide with a fully autonomous BN1 controller.
 
 ## Implemented guidance
