@@ -76,7 +76,7 @@ function cost(files,name,ignoreOverride=false) {
   assert.equal(result.errorCode,undefined,`${name}: ${result.errorMessage}`);
   return result.cost;
 }
-const targets=['autopilot.js','kernel.js','bn1-guide.js','scan.js','go.js','host-manager.js','stockmaster.js','stock-diagnostic.js','stats.js','sleeve.js',
+const targets=['bn1-auto.js','bn1-casino.js','bin/bn1-stock.js','coinflip.js','autopilot.js','kernel.js','bn1-guide.js','scan.js','go.js','host-manager.js','stockmaster.js','stock-diagnostic.js','stats.js','sleeve.js',
   'hacknet-upgrade-manager.js','spend-hashes.js','gangs.js','ascend.js','corporation.js','faction-manager.js',
   'bladeburner.js','work-for-faction2.js','farm-intel.js','bin/intel-farm-state.js',
   'bin/getHackP.js','bin/getGrowThreads.js','bin/serverRun.js','bin/getbnmultis.js','bin/singRun.js','bin/singReadMany.js','bin/reserve.js',
@@ -88,8 +88,8 @@ for(const file of targets) {
   const before=baseline?cost(baseline,file):null, after=cost(current,file);
   const declared=current.get(file).code.match(/ns\.ramOverride\(([\d.]+)\)/)?.[1];
   const raw=declared?cost(current,file,true):null;
-  if(file==='bn1-guide.js') assert(after<=8,'The fresh-BN1 guide must still fit on 8 GB home');
-  if(declared && baseline && !file.startsWith('bin/')) {
+  if(['bn1-auto.js','bn1-casino.js','bn1-guide.js'].includes(file)) assert(after<=8,'The fresh-BN1 guide must still fit on 8 GB home');
+  if(declared && before !== null && !file.startsWith('bin/')) {
     const beforeRaw=cost(baseline,file,true);
     // Overrides may intentionally omit static-only costs (such as DOM). Preserve their prior
     // headroom and cover every new API charge, or cover the full static cost if that is lower.

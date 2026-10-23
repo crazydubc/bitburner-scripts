@@ -273,11 +273,11 @@ const autopilotSource = await readFile(new URL('../../../autopilot.js', import.m
 const coinflipStartup = autopilotSource.slice(autopilotSource.indexOf('// A restarted autopilot'),
   autopilotSource.indexOf('let startUpRan = false'));
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-for (const running of [true, false]) {
+for (const running of ['coinflip.js', 'bn1-casino.js', 'bn1-auto.js', null]) {
   const launches = [];
   await AsyncFunction('ns', 'doSCP', 'RUNLOG_FILE', 'isScriptRunning', 'launchScriptHelper', coinflipStartup)(
     {getHostname: () => 'home'}, async () => {}, 'runlog.txt',
-    async (ns, name) => { assert.equal(name, 'coinflip.js'); return running; },
+    async (ns, name) => name === running,
     async (ns, name) => { launches.push(name); return 7; });
   assert.deepEqual(launches, running ? [] : ['coinflip.js']);
 }

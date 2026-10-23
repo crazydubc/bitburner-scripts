@@ -1,5 +1,5 @@
-// Experimental UI helper retained for downloader compatibility; scan.js does not use it.
-// Browser timers allow a bounded submission without keeping a Netscript process alive.
+// Bounded terminal input for BN1 automation. scan.js keeps its existing click handlers.
+// The controller supplies ns.sleep, so its actions end with its Netscript process.
 function controls(input) {
     const key = Object.keys(input ?? {}).find(name => name.startsWith('__reactProps$'));
     const props = key ? input[key] : null;

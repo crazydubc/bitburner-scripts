@@ -1,7 +1,7 @@
 import { getPlayerInfo, log, formatMoney } from './utils.js'
 
 /** @param {NS} ns */
-export async function main(ns) {
+export async function main(ns, readPlayer = getPlayerInfo) {
   async function unfocus(ns) {
     const btnUnfocus = await findRequiredElement("//button[text()='Do something else simultaneously']");
     if (btnUnfocus) await click(btnUnfocus);
@@ -16,21 +16,21 @@ export async function main(ns) {
     if (ns.getMoneySources().sinceInstall?.casino >= 10e9) {
       return;
     }
-    let player = await getPlayerInfo(ns);
+    let player = await readPlayer(ns);
     while (player.city != "Aevum") {
       while (player.money <= 200000) { //wait till we have enough money.
         await ns.sleep(1000);
-        player = await getPlayerInfo(ns);
+        player = await readPlayer(ns);
       }
       await unfocus(ns);
       // If automatic travel failed or couldn't be attempted, try clicking our way there!
       await click(await findRequiredElement("//div[@role='button' and ./div/p/text()='Travel']"));
       await click(await findRequiredElement("//span[contains(@class,'travel') and ./text()='A']"));
-      player = await getPlayerInfo(ns);
+      player = await readPlayer(ns);
       // If this didn't put us in Aevum, there's likely a travel confirmation dialog we need to click through
       if (player.city !== "Aevum")
         await click(await findRequiredElement("//button[p/text()='Travel']"));
-      player = await getPlayerInfo(ns);
+      player = await readPlayer(ns);
     }
     await ns.sleep(10);
     doc = eval("document");
@@ -39,7 +39,7 @@ export async function main(ns) {
       await unfocus(ns);
       await click(await findRequiredElement("//div[(@role = 'button') and (contains(., 'City'))]", 15,
         `Couldn't find the "🏙 City" menu button. Is your \"World\" nav menu collapsed?`));
-      await click(await findRequiredElement("//span[@aria-label = 'Iker Molina Casino']"));
+      await click(await findRequiredElement("//span[@aria-label = 'Iker Molina Casino'] | //button[normalize-space(.) = 'Iker Molina Casino']"));
     } catch (err) { // Try to use SF4 as a fallback (if available) - it's more reliable.
       return await main_loop(ns);
     }

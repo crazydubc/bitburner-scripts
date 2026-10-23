@@ -12,7 +12,7 @@ import { infiltrationView, infiltrationDemand, infiltrationButton, clickInfiltra
 const argsSchema = [['auto', false], ['single', false], ['stop', false], ['status', false], ['quiet', false],
   ['company', ''], ['faction', ''], ['target-rep', 0], ['money-target', 10e9], ['time', 120_000],
   ['max-runs', 3], ['min-demand', 0.8], ['scheduled', false], ['soa', false],
-  ['aug-count-target', 30], ['cooldown', 60_000]];
+  ['aug-count-target', 30], ['cooldown', 60_000], ['bn1-controller', 0]];
 const sessionKey = '__bitburnerScriptsInfiltration';
 export function autocomplete(data) { data.flags(argsSchema); return []; }
 
@@ -32,6 +32,14 @@ export async function main(ns) {
     }
     return;
   }
+  const reset = ns.getResetInfo();
+  const controller = wnd.__bitburnerBn1Cycle;
+  const controlled = controller && !controller.stop && controller.expires > Date.now() &&
+    controller.lastAugReset === reset.lastAugReset && controller.lastNodeReset === reset.lastNodeReset &&
+    reset.currentNode === 1 && reset.ownedSF instanceof Map && !reset.ownedSF.has(1) && !reset.ownedSF.has(4) &&
+    Number.isInteger(controller.pid) && ns.isRunning(controller.pid);
+  if (controlled ? options['bn1-controller'] !== controller.pid : options['bn1-controller'] !== 0)
+    return ns.tprint('Infiltration deferred: BN1 controller owns the screen, or its handoff has expired.');
   if (previous) return ns.tprint('Infiltration runner is already active; use --stop first.');
   if (wnd.tmrAutoInf) {
     wnd.clearInterval(wnd.tmrAutoInf); delete wnd.tmrAutoInf;
@@ -57,7 +65,6 @@ export async function main(ns) {
   const companyNames = possibleLocations.map(location => location.name);
   const lease = read(INFILTRATION_LEASE);
   if (options.scheduled && lease?.retryAfter > started) return;
-  const reset = ns.getResetInfo();
   const augs = reset.ownedSF;
   const hasSingularity = reset.currentNode === 4 || Number(augs instanceof Map ? augs.get(4) : augs?.[4]) > 0;
   if (options['target-rep'] > 0 && !hasSingularity)
@@ -95,7 +102,7 @@ export async function main(ns) {
     if (!(ns.getMoneySources().sinceInstall.casino >= 10e9)) return print('Infiltration deferred until the coinflipper finishes its $10b.');
     if (!idleInfiltrationScreen(doc, companyNames) && !(options.soa && soaInvitation(doc)))
       return print('Infiltration deferred: return to the Terminal, City, or company screen.');
-    session = {stop: false}; wnd[sessionKey] = session;
+    session = {stop: false, controller: options['bn1-controller']}; wnd[sessionKey] = session;
     ns.atExit(cleanup);
     while (!stopping() && runs < limit) {
       let player = ns.getPlayer();

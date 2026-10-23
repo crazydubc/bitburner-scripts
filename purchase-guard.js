@@ -46,6 +46,11 @@ export function executePurchase(ns, namespace, method, args, policy = {}) {
   const buyingShares = namespace === 'stock' && ['buyStock', 'buyShort'].includes(method);
   const failure = buyingShares ? 0 : namespace === 'cloud' && method === 'purchaseServer' ? '' :
     namespace === 'hacknet' && method === 'purchaseNode' ? -1 : false;
+  // Optional first-BN1 controller briefly holds spending for cash goals/installations.
+  // Its atExit clears this record; the heartbeat also bounds stale records after a crash.
+  const controller = globalThis['window']?.__bitburnerBn1Cycle;
+  if (controller?.spendLock && !controller.stop && controller.expires > Date.now())
+    return {result: failure, spent: 0, cost, reason: 'bn1-cash-goal'};
   if (!Number.isFinite(cost) || cost < 0 || cost > available ||
       (buyingShares && !(ns.getMoneySources().sinceInstall?.casino >= 10e9)))
     return {result: failure, spent: 0, cost, reason: 'budget-or-casino'};

@@ -297,7 +297,8 @@ export async function main(ns) {
     }
     log(ns, "INFO: Auto-pilot engaged...", true, 'info');
     // A restarted autopilot must not duplicate a coinflipper that is still earning.
-    if (!await isScriptRunning(ns, 'coinflip.js'))
+    if (!await isScriptRunning(ns, 'coinflip.js') && !await isScriptRunning(ns, 'bn1-casino.js') &&
+        !await isScriptRunning(ns, 'bn1-auto.js'))
       await launchScriptHelper(ns, 'coinflip.js'); //lets try to get some cash!
     let startUpRan = false, keepRunning = true;
     while (keepRunning) {
@@ -326,17 +327,19 @@ export async function main(ns) {
       installedAugmentations = await getOwnedAugs(ns, false);
       playerInstalledAugCount = installedAugmentations.length;
     } else {
-      log(ns, `WARNING: This script requires SF4 (singularity) functions to assess purchasable augmentations ascend automatically. ` +
-        `Some functionality will be disabled and you'll have to manage working for factions, purchasing, and installing augmentations yourself.`, true);
+      const bn1Automatic = resetInfo.currentNode === 1 && !dictOwnedSourceFiles[1] && await isScriptRunning(ns, 'bn1-auto.js');
+      if (bn1Automatic) log(ns, 'BN1 controller is handling faction work, augmentation purchases, and installation. Restart bn1-auto.js after each installation.', true);
+      else log(ns, `WARNING: This script requires SF4 (singularity) functions to assess purchasable augmentations and ascend automatically. ` +
+        `Without the optional BN1 controller, manage faction work, purchasing, and installation yourself.`, true);
 
       if (resetInfo.currentNode === 1 && !dictOwnedSourceFiles[1]) {
         // Non-modal guidance. A failed optional launch must not stall the income loop.
-        if (!await isScriptRunning(ns, 'bn1-guide.js')) {
+        if (!bn1Automatic && !await isScriptRunning(ns, 'bn1-guide.js')) {
           const guidePid = ns.exec('bn1-guide.js', 'home', { threads: 1, temporary: true });
           if (!guidePid) log(ns, 'BN1.1 guide could not start. Free home RAM, then run bn1-guide.js.', true);
         }
       }
-      log(ns, 'Manual steps: work for factions, buy/install useful augmentation bundles, then restart automation. ' +
+      if (!bn1Automatic) log(ns, 'Manual steps: work for factions, buy/install useful augmentation bundles, then restart automation. ' +
         'For first-BN1 prompts, run bn1-guide.js. After BN1.1, complete BN4.1–4.3 for Singularity automation.', true);
     }
     const runLog = await recordBnStart(ns, currBN, {route: options['bn-route']});
@@ -416,6 +419,7 @@ export async function main(ns) {
 
   async function checkOnRunningScripts(ns, runningScripts) {
     for (const script of asynchronousHelpers) {
+      if (script.name === 'infiltrate.js' && runningScripts?.has('bn1-auto.js')) continue;
       if (Date.now() < (script.nextRun ?? 0)) continue;
       try {
         const serverRunning = await isScriptRunning(ns, script.name, runningScripts);

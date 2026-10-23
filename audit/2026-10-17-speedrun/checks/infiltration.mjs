@@ -23,7 +23,7 @@ assert.equal(freshInfiltrationTarget(target,reset,player.factions,20000),true);
 for (const changed of [{lastAugReset:101},{lastNodeReset:51},{updatedAt:1},{faction:'Daedalus'},{targetRep:NaN}])
   assert.ok(!freshInfiltrationTarget({...target,...changed},reset,player.factions,100000));
 
-const defaults = Object.fromEntries([['auto',false],['single',false],['stop',false],['status',false],['quiet',true],['company',''],['faction','CyberSec'],['target-rep',0],['money-target',20e9],['time',120000],['max-runs',3],['min-demand',0.8],['scheduled',false],['soa',false],['aug-count-target',30],['cooldown',60000]]);
+const defaults = Object.fromEntries([['auto',false],['single',false],['stop',false],['status',false],['quiet',true],['company',''],['faction','CyberSec'],['target-rep',0],['money-target',20e9],['time',120000],['max-runs',3],['min-demand',0.8],['scheduled',false],['soa',false],['aug-count-target',30],['cooldown',60000],['bn1-controller',0]]);
 let soaSource=readFileSync(new URL('../../../infiltration-soa.js',import.meta.url),'utf8')
   .replace("import { singRun, purchase } from './utils.js';",'const singRun=(ns,fn,...args)=>ns.sing(fn,...args); const purchase=(ns,...args)=>ns.purchase(...args);');
 for(const name of ['infiltration-policy','infiltration-ui']) soaSource=soaSource.replace(`'./${name}.js'`,JSON.stringify(new URL(`../../../${name}.js`,import.meta.url).href));
@@ -101,7 +101,7 @@ function fixture(options={}) {
   const f={ns,doc,files,messages,rep,get model(){return model;},get screen(){return screen;},set screen(v){screen=v;},
     set demand(v){demand=v;},set dialog(v){dialog=v;},get now(){return now;},
     get counts(){return {starts,successes,claims,cancels,nativeKeys,cityClicks,companyClicks,entryClicks};},
-    async run(){const saved=Date.now;Date.now=()=>now;globalThis.window={document:doc};try{await main(ns);}finally{exit.forEach(fn=>fn());Date.now=saved;delete globalThis.window;}},
+    async run(){const saved=Date.now;Date.now=()=>now;globalThis.window={document:doc,...(options.controller ? {__bitburnerBn1Cycle:options.controller} : {})};try{await main(ns);}finally{exit.forEach(fn=>fn());Date.now=saved;delete globalThis.window;}},
   };
   return f;
 }
@@ -291,3 +291,15 @@ for(const invitation of ['suppressed','reward-popup','initial-popup']) {
   assert.deepEqual(JSON.parse(f.files.get(INFILTRATION_PROGRESS)).owned,[SOA_WKS]);
 }
 console.log('Automatic SoA invitation, concurrent rewards, WKS-first guarded purchase, and progression status checks passed.');
+
+// The optional BN1 controller owns navigation for the cycle; only its explicit child may enter.
+for (const [controller,requested,expected] of [
+  [{pid:99,lastAugReset:100,lastNodeReset:50,expires:999999},0,0],
+  [{pid:99,lastAugReset:100,lastNodeReset:50,expires:999999},99,1],
+  [{pid:99,lastAugReset:100,lastNodeReset:50,expires:1},99,0],
+  [{pid:99,lastAugReset:101,lastNodeReset:50,expires:999999},99,0],
+]) {
+  const f=fixture({controller,'bn1-controller':requested});await f.run();
+  assert.equal(f.counts.starts,expected,'Respect BN1 screen ownership and reject stale handoffs');
+}
+console.log('BN1 infiltration handoff: other launches defer, matching live owner succeeds, and expired/reset-stale handoffs stop.');

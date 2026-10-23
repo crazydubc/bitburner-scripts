@@ -1,5 +1,7 @@
 # BN1.1 in-game prompts
 
+For the optional automatic cycle, use [`run bn1-auto.js`](2026-10-23-bn1-automation.md), then run it again after each installation. The instructions below describe the manual guide.
+
 The panel now uses numbered clicks and terminal commands, for example `City > Slums > Mug` and `run scan.js`, then click `backdoor` beside `CSEC`. It names the current city's shop or university and keeps the longer faction/install instructions in their own views. See [the October 23 update](2026-10-23-bn1-guidance-automation.md) for the guide changes and full-automation assessment. The accompanying scan change was reverted after a focus-order regression; see the [scan hotfix](2026-10-23-scan-regression.md).
 
 On a fresh first BN1 run, start with:
