@@ -12,9 +12,11 @@
 
 import {
   getConfiguration, log, getErrorInfo, getActiveSourceFiles, whichServerIsRunning,
-  getBoard, getControlledENodes, goMove, goValidMoves, goCheatChance, play2Moves,
-  goLiberties, goChains, destroyND, disableLogs
+  getBoard, getGoSnapshot, getReset, recordGoResult, getGoResults, getGoContext, goMove, goCheatChance, play2Moves,
+  destroyND, disableLogs
 } from './utils.js'
+import { goCohort, selectGoBoard, GO_GOALS, GO_OPPONENTS as POLICY_OPPONENTS, selectAutoGoOpponent, hasHiddenGoOpponent } from './go-policy.js';
+export const GO_OPPONENTS = POLICY_OPPONENTS;
 
 const argsSchema = [
   ['cheats', true], // (Now true by default - but still an option for backwards compatibility) This is only possible if you have BN14.2
@@ -23,7 +25,22 @@ const argsSchema = [
   ['logtime', false], // Logs time time it takes for each player to take their move
   ['runOnce', false], // Will only play one game if enabled
   ['silent', false], // (Obsolete) This script used to automatically tail. Now if you want to do this, call with --tail like normal.
+  ['board-size', 'profile'], // Fixed sizes per opponent from measured favor/time results, auto learns, or force 5/7/9/13.
+  ['board-exploration', true], // With --board-size auto: bounded trials only outside winning streaks and favor routes.
+  ['opponent', 'auto'], // Follow the current goal, or choose a faction name, "hidden", or "random". Never abandons a board.
+  ['goal', 'auto'], // With --opponent auto: infer work, or use crime/combat/rep/money/hacking (also works before SF4).
+  ['hidden-opponent', true], // Allow the hidden 19x19 opponent in auto/random selection after installing The Red Pill.
 ];
+
+export const HIDDEN_GO_OPPONENT = '????????????';
+export function selectGoOpponent(requested, includeHidden, reset, random = Math.random) {
+  const unlocked = hasHiddenGoOpponent(reset);
+  const pool = unlocked && includeHidden ? [...GO_OPPONENTS, HIDDEN_GO_OPPONENT] : GO_OPPONENTS;
+  const selected = requested === 'hidden' ? HIDDEN_GO_OPPONENT : requested;
+  if (selected === HIDDEN_GO_OPPONENT && unlocked) return selected;
+  if (GO_OPPONENTS.includes(selected)) return selected;
+  return pool[Math.floor(random() * pool.length)];
+}
 
 export function autocomplete(data, args) {
   data.flags(argsSchema);
@@ -40,7 +57,12 @@ export async function main(ns) {
   let logtime = false;
   let runOnce = true;
   let silent = false;
-  let currentValidMovesTurn = 0; //The turn count that the currentValidMoves is valid for
+  let boardSize = 'profile', requestedOpponent = 'auto', requestedGoal = 'auto', includeHidden = true, exploreBoards = true;
+  let gameStartedAt = Date.now(), resumedGame = true;
+  let gameCohort, startWins, gameTrial = false, statisticsHealthy = true;
+  let gameRecorded = true;
+  const favorDeadlines = {};
+  let currentValidMovesTurn = -1; //The turn count that the currentValidMoves is valid for
   let turn = 0;
   let START = performance.now();
   // Global variables initialized in this way get strong typing throughout
@@ -83,10 +105,6 @@ export async function main(ns) {
     ["?WWW?", "W.*.W", "WXXXW", "?????", "?????"], //Take the 3x3 back corner
   ];
 
-  // Original
-  const opponent = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati"];
-  const opponent2 = ["Netburners", "Slum Snakes", "The Black Hand", "Tetrads", "Daedalus", "Illuminati", "????????????"];
-
   const sourceFiles = await getActiveSourceFiles(ns, true);
   await start();
 
@@ -98,9 +116,19 @@ export async function main(ns) {
 
     logtime = runOptions.logtime;
     runOnce = runOptions.runOnce;
+    boardSize = String(runOptions['board-size'] ?? 'profile');
+    exploreBoards = runOptions['board-exploration'] ?? true;
+    requestedOpponent = runOptions.opponent ?? 'auto';
+    requestedGoal = runOptions.goal ?? 'auto';
+    includeHidden = runOptions['hidden-opponent'] ?? true;
+    if (!['profile', 'auto', '5', '7', '9', '13'].includes(boardSize) ||
+      !['auto', 'random', 'hidden', HIDDEN_GO_OPPONENT, ...GO_OPPONENTS].includes(requestedOpponent) || !GO_GOALS.includes(requestedGoal)) {
+      log(ns, 'ERROR: Use --board-size profile/auto/5/7/9/13; --opponent auto/random/hidden or a faction name; --goal auto/crime/combat/rep/money/hacking.', true);
+      return;
+    }
 
     // Enable cheats if we have SF14.2 or higher (unless the user disabled cheats).
-    cheats = !runOptions['disable-cheats'] && (sourceFiles[14] ?? 0) >= 2;
+    cheats = runOptions.cheats && !runOptions['disable-cheats'] && (sourceFiles[14] ?? 0) >= 2;
     cheatChanceThreshold = runOptions['cheat-chance-threshold'];
 
     ns.disableLog("go.makeMove")
@@ -122,6 +150,9 @@ export async function main(ns) {
   /** @param {NS} ns */
   async function playGo(ns) {
     const startBoard = await getBoard(ns)
+    gameStartedAt = Date.now();
+    resumedGame = true; // Only a board this process reset has a trustworthy start time.
+    startWins = ns.go.analysis?.getStats?.()[ns.go.getOpponent()]?.wins;
     let inProgress = false
     turn = 0
     START = performance.now()
@@ -136,16 +167,28 @@ export async function main(ns) {
       }
       if (inProgress) break
     }
-    const currentGame = await ns.go.opponentNextTurn(false)
-    checkNewGame(ns, currentGame)
-    const playStyle = getStyle(ns);
+    let currentGame = await ns.go.opponentNextTurn(false)
+    if (currentGame?.type !== 'gameOver') gameRecorded = false;
+    await checkNewGame(ns, currentGame)
     while (true) {
       turn++
-      board = await getBoard(ns);
-      contested = await getControlledENodes(ns);
-      validMove = await goValidMoves(ns);
-      validLibMoves = await goLiberties(ns);
-      chains = await goChains(ns);
+      // Two passes end the game at this score. Do not risk an already secured win.
+      if (currentGame?.type === 'pass') {
+        const score = ns.go.getGameState();
+        if (score.blackScore > score.whiteScore) {
+          currentGame = await ns.go.passTurn();
+          await checkNewGame(ns, currentGame);
+          continue;
+        }
+      }
+      const playStyle = getStyle(ns); // resetBoardState may have selected a different opponent.
+      const snapshot = await getGoSnapshot(ns);
+      board = snapshot.board;
+      contested = snapshot.controlled;
+      validMove = snapshot.valid;
+      validLibMoves = snapshot.liberties;
+      chains = snapshot.chains;
+      currentValidMovesTurn = -1; // Invalidate on each snapshot, including retry/new-game turn-number reuse.
       const size = board[0].length
       //Build a test board with walls
       let testWall = "W".repeat(size + 2);
@@ -318,7 +361,8 @@ export async function main(ns) {
             break
         } //End of style switch
       } // end of turn >= 3
-      checkNewGame(ns, results)
+      currentGame = results;
+      await checkNewGame(ns, results)
     }
   }
 
@@ -338,13 +382,50 @@ export async function main(ns) {
   /** @param {NS} ns
    * @param {{ type:"move"|"pass"|"gameOver"; x:number; y:number;}} gameInfo
    */
-  function checkNewGame(ns, gameInfo) {
-    if (gameInfo.type === "gameOver") {
+  async function checkNewGame(ns, gameInfo) {
+    if (gameInfo?.type === "gameOver") {
+      if (!gameRecorded) try {
+        gameRecorded = true;
+        const score = ns.go.getGameState();
+        const wins = ns.go.analysis?.getStats?.()[ns.go.getOpponent()]?.wins;
+        const currentCohort = goCohort(cheats, cheatChanceThreshold, score.bonusCycles > 0);
+        const saved = await recordGoResult(ns, {opponent: ns.go.getOpponent(), size: (await getBoard(ns)).length,
+          blackScore: score.blackScore, whiteScore: score.whiteScore,
+          won: Number.isFinite(wins) && Number.isFinite(startWins) ? wins > startWins : score.blackScore >= score.whiteScore,
+          durationMs: Date.now() - gameStartedAt, resumed: resumedGame || currentCohort !== gameCohort,
+          cohort: gameCohort, trial: gameTrial});
+        statisticsHealthy = saved !== false;
+      } catch (error) { statisticsHealthy = false; log(ns, `WARNING: Go timing unavailable: ${String(error)}`); }
       if (runOnce) ns.exit()
-      try { ns.go.resetBoardState(opponent2[Math.floor(Math.random() * opponent2.length)], 13) }
-      catch { ns.go.resetBoardState(opponent[Math.floor(Math.random() * opponent.length)], 13) }
+      const reset = await getReset(ns);
+      const cohort = goCohort(cheats, cheatChanceThreshold, ns.go.getGameState?.().bonusCycles > 0);
+      let stats = {};
+      if (boardSize === 'auto' || requestedOpponent === 'auto') try { stats = await getGoResults(ns); }
+      catch (error) { log(ns, `WARNING: Adaptive Go statistics unavailable: ${String(error)}`); }
+      let context = null;
+      if (requestedOpponent === 'auto') try { context = await getGoContext(ns, sourceFiles); }
+      catch (error) { log(ns, `WARNING: Go goal context unavailable: ${String(error)}`); }
+      const opponentChoice = requestedOpponent === 'auto'
+        ? selectAutoGoOpponent({goal: requestedGoal, context, reset, includeHidden, stats, cohort, boardSize,
+          liveStats: ns.go.analysis?.getStats?.() ?? {}, favorDeadlines})
+        : {opponent: selectGoOpponent(requestedOpponent, includeHidden, reset), reason: `${requestedOpponent} opponent setting`};
+      const next = opponentChoice.opponent;
+      // Execute the board used by the favor forecast, including its current streak and remaining rewards.
+      const choice = opponentChoice.board ?? selectGoBoard({opponent: next, requested: boardSize, stats, cohort,
+        streak: ns.go.analysis?.getStats?.()[next]?.winStreak ?? 0,
+        explore: exploreBoards && statisticsHealthy && opponentChoice.goal !== 'favor'});
+      // The engine supplies the fixed 19x19 Bitverse board for the hidden opponent.
+      ns.go.resetBoardState(next, choice.size);
+      gameStartedAt = Date.now();
+      gameCohort = cohort;
+      gameTrial = choice.trial === true;
+      startWins = ns.go.analysis?.getStats?.()[next]?.wins ?? 0;
+      resumedGame = false;
+      gameRecorded = false;
       turn = 0
+      currentValidMovesTurn = -1;
       ns.clearLog()
+      log(ns, `${next}: ${choice.size}x${choice.size} — ${opponentChoice.reason}. Board: ${choice.reason}`);
     }
   }
   /** @param {NS} ns
@@ -497,8 +578,8 @@ export async function main(ns) {
 
     const checked = new Set
 
-    for (let x = 0; x < size - 1; x++)
-      for (let y = 0; y < size - 1; y++) {
+    for (let x = 0; x < size; x++)
+      for (let y = 0; y < size; y++) {
         if (contested[x][y] === "X" || board[x][y] !== "O" || validLibMoves[x][y] !== 2 || checked.has(JSON.stringify([x, y]))) continue
         //Is it the enemy, with 2 libs (we can kill) and we have not checked this spot and the chain is large enough
         const chain = getChainValue(x, y, "O")
@@ -1251,7 +1332,7 @@ export async function main(ns) {
     for (const [x, y] of moves) {
       for (const pattern of def)
         if (isPattern(x, y, pattern)) {
-          const msg = sprintf("Def Pattern: %s\n%s\n%s", pattern.length, pattern.join("\n"), "---------------")
+          const msg = `Def Pattern: ${pattern.length}\n${pattern.join("\n")}\n---------------`
           return {
             coords: [x, y],
             msg: msg
@@ -1271,7 +1352,7 @@ export async function main(ns) {
     for (const [x, y] of moves) {
       for (const pattern of disrupt)
         if (isPattern(x, y, pattern)) {
-          const msg = sprintf("Eye Disruption: %s\n%s\n%s", pattern.length, pattern.join("\n"), "---------------")
+          const msg = `Eye Disruption: ${pattern.length}\n${pattern.join("\n")}\n---------------`
           return {
             coords: [x, y],
             msg: msg
@@ -1285,7 +1366,7 @@ export async function main(ns) {
   async function movePiece(ns, attack) {
     if (attack.coords === undefined) return false
     const [x, y] = attack.coords
-    if (x === undefined) return false
+    if (x === undefined || !validMove[x]?.[y]) return false
     let mid = performance.now()
     ns.printf("%s moving..", attack.msg)
     const results = await goMove(ns, x, y);
@@ -1296,11 +1377,11 @@ export async function main(ns) {
   }
   /** @param {NS} ns */
   async function moveWallBreaker(ns, attack) {
-    if (attack.coords === undefined || !cheats || !(4 in sourceFiles)) return false
+    if (attack.coords === undefined || !cheats) return false
     const [s1x, s1y] = attack.coords
     if (s1x === undefined) return false
     const chance = await goCheatChance(ns);
-    if (chance < .7) return false
+    if (chance < cheatChanceThreshold) return false
     let mid = performance.now()
     ns.printf("%s", attack.msg)
     const results = await destroyND(ns, s1x, s1y)
@@ -1312,7 +1393,7 @@ export async function main(ns) {
   }
   /** @param {NS} ns */
   function getWallBreaker(eyesToBreak = 3) {
-    if (!cheats || !(4 in sourceFiles)) return []
+    if (!cheats) return []
     const moveOptions = []
     const size = board[0].length
     let highValue = 1;
@@ -1320,8 +1401,8 @@ export async function main(ns) {
     const you = "O";
     const checked = new Set
 
-    for (let x = 0; x < size - 1; x++)
-      for (let y = 0; y < size - 1; y++) {
+    for (let x = 0; x < size; x++)
+      for (let y = 0; y < size; y++) {
         if (contested[x][y] === me || board[x][y] !== you || (validLibMoves[x][y] !== eyesToBreak && eyesToBreak > 0) || checked.has(JSON.stringify([x, y]))) continue
         //Is it the enemy, with 2 libs (we can kill) and we have not checked this spot and the chain is large enough
         const chain = getChainValue(x, y, you, true)

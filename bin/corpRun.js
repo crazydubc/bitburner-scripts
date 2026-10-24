@@ -3,7 +3,7 @@ export async function main(ns) {
   ns.ramOverride(23.6);
   const port = ns.getPortHandle(ns.pid);
   const [fn, ...args] = ns.args;
-  let response;
+  let response = `ERROR:corporation.${String(fn)} exited before returning a result`;
 
   ns.atExit(() => {
     try {
@@ -14,12 +14,13 @@ export async function main(ns) {
   });
 
   try {
+    const required = Math.max(23.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`corporation.${fn}`));
+    if (ns.ramOverride(required) < required) throw new Error(`Insufficient RAM for corporation.${fn}: ${required} GB required`);
     const f = ns.corporation?.[fn];
     if (typeof f !== "function") throw new Error(`Invalid corporation function: ${String(fn)}`);
 
     response = await f(...args);
-  } catch {
-    // Preserve the existing corpRun contract: corporation API errors return undefined.
-    response = undefined;
+  } catch (error) {
+    response = `ERROR:${String(error?.stack ?? error)}`;
   }
 }

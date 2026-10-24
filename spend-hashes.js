@@ -1,4 +1,5 @@
-import { log as log_helper, getConfiguration, disableLogs, formatMoney, formatDuration, formatNumberShort, getErrorInfo, getOptimalTarget } from './utils.js'
+import { purchase } from './utils.js';
+import { log as log_helper, getConfiguration, disableLogs, formatMoney, formatDuration, formatNumberShort, getErrorInfo, getOptimalTarget, getReserve } from './utils.js'
 
 const sellForMoney = 'Sell for Money';
 
@@ -20,6 +21,18 @@ const basicSpendOptions = ['Sell for Money', 'Generate Coding Contract', 'Improv
 const parameterizedSpendOptions = ['Reduce Minimum Security', 'Increase Maximum Money'];
 const purchaseOptions = basicSpendOptions.concat(parameterizedSpendOptions);
 const minTimeBetweenToasts = 5000; // milleconds. If we start buying a lot of things, throttle toast notifications.
+const targetRefreshInterval = 60_000;
+
+/** A bulk cash sale must not consume hashes before other explicitly requested upgrades. */
+export function prioritizeHashPurchases(actions) {
+  const unique = [...new Set(actions.map(s => s.replaceAll('_', ' ')))];
+  return unique.filter(action => action !== sellForMoney).concat(unique.includes(sellForMoney) ? [sellForMoney] : []);
+}
+
+export function getHashTargetHostname(target) {
+  const hostname = typeof target === 'string' ? target : target?.hostname;
+  return typeof hostname === 'string' && hostname.length > 0 ? hostname : null;
+}
 
 export function autocomplete(data, args) {
   data.flags(argsSchema);
@@ -38,9 +51,13 @@ export async function main(ns) {
   if (!options) return; // Invalid options, or ran in --help mode.
   const liquidate = options.l || options.liquidate;
   const interval = options.interval;
-  if (ns.corporation.hasCorporation()) options['spend-on'].push('Sell for Corporation Funds')
-  const toBuy = options['spend-on'].map(s => s.replaceAll("_", " "));
-  let spendOnServer = options['spend-on-server']?.replaceAll("_", " ") ?? await getOptimalTarget(ns);
+  // Corporation funding/research is opt-in. Keep the default cash seller at low priority so a
+  // dedicated corporation spender can save hashes instead of competing with a bulk cash sale.
+  const toBuy = prioritizeHashPurchases(options['spend-on']);
+  const needsServer = toBuy.some(action => parameterizedSpendOptions.includes(action));
+  const explicitServer = options['spend-on-server']?.replaceAll("_", " ");
+  let spendOnServer = getHashTargetHostname(explicitServer);
+  let lastTargetRefresh = -Infinity;
   const maxPurchasesPerLoop = options['max-purchases-per-loop'];
   // Validate arguments
   if (toBuy.length == 0)
@@ -78,7 +95,6 @@ export async function main(ns) {
   const formatHashes = (hashes) => formatNumberShort(hashes, 6, 3);
   while (true) {
     await ns.sleep(interval);
-    spendOnServer = options['spend-on-server']?.replaceAll("_", " ") ?? await getOptimalTarget(ns);
     if (lowPriority && ns.hacknet.numHashes() > 0) // Low priority mode means any competing scripts should get to spend hashes first.
       await ns.sleep(interval); // Yeild for an additional interval to give competing scripts a chance to spend first. 
     try {
@@ -94,6 +110,12 @@ export async function main(ns) {
         continue; // Nothing to do until at least one node is purchased.
       } else if (capacity == 0)
         return log(ns, 'INFO: You have hacknet nodes, not hacknet servers, so spending hashes is not applicable.');
+      if (needsServer && !explicitServer && Date.now() - lastTargetRefresh >= targetRefreshInterval) {
+        // Cash, corporation and research spending do not need a network scan or target RPC.
+        lastTargetRefresh = Date.now();
+        spendOnServer = getHashTargetHostname(await getOptimalTarget(ns));
+        if (!spendOnServer) log(ns, 'WARN: No eligible hash-upgrade target yet; retrying in one minute.');
+      }
       // Helper function to get total hash production across all nodes
       let globalProduction = Array.from({ length: nodes }, (_, i) => ns.hacknet.getNodeStats(i))
         .reduce((total, node) => total + node.production, 0);
@@ -111,6 +133,8 @@ export async function main(ns) {
           lastPurchaseSucceeded = false; // Safety mechanism to avoid looping if we don't enter the for-loop below for some reason
           // Loop over all requested purchases and try to buy each one once (TODO: Figure out in advance how many we can buy of each and buy in bulk)
           for (const spendAction of purchases) {
+            if (purchasesThisLoop >= maxPurchasesPerLoop) break;
+            if (parameterizedSpendOptions.includes(spendAction) && !spendOnServer) continue;
             const cost = ns.hacknet.hashCost(spendAction); // What's the cost of making this purchase
             const budget = maxHashSpend();
             if (cost > budget) continue; // Skip this purchase if if costs more than we have left
@@ -172,14 +196,17 @@ export async function main(ns) {
             lowestIndex = i, lowestLevel = ns.hacknet.getNodeStats(i).hashCapacity;
         const nextCacheUpgradeCost = lowestIndex == null ? Number.POSITIVE_INFINITY : ns.hacknet.getCacheUpgradeCost(lowestIndex, 1);
         const nextNodeCost = ns.hacknet.getPurchaseNodeCost();
-        const reservedMoney = options['reserve'] ?? Number(ns.read("reserve.txt") || 0);
+        const reservedMoney = options['reserve'] ?? await getReserve(ns);
         const playerMoney = ns.getServerMoneyAvailable('home');
         const spendableMoney = Math.max(0, playerMoney - reservedMoney,
           // Hack: Because managing global reserve is tricky. We tend to always want to purchase cheap upgrades
           playerMoney * options['ignore-reserve-if-upgrade-cost-less-than-pct']);
         // If it's cheaper to buy a new hacknet node than to upgrade the cache of an existing one, do so
         if (nextNodeCost < nextCacheUpgradeCost && nextNodeCost < spendableMoney) {
-          if (ns.hacknet.purchaseNode())
+          const bought = await purchase(ns, 'hacknet', 'purchaseNode', [], {budget: nextNodeCost,
+            ...(options.reserve == null ? {} : {reserve: options.reserve}),
+            ignoreReserveBelowFraction: options['ignore-reserve-if-upgrade-cost-less-than-pct']});
+          if (Number.isInteger(bought.result) && bought.result >= 0)
             log(ns, `SUCCESS: spend-hacknet-hashes.js spent ${formatMoney(nextNodeCost)} to purchase a new hacknet node ${nodes + 1} ` +
               `in order to increase hash capacity and afford further purchases (${toBuy.join(", ")}). (You can disable this with --no-capacity-upgrades)`, false, 'success');
           else
@@ -187,7 +214,9 @@ export async function main(ns) {
               `but the purchase failed for an unknown reason (despite appearing to have ${formatMoney(spendableMoney)} to spend after reserves.)`, false, 'warning');
         } // Otherwise, try upgrading the cache level of an existing hash node 
         else if (lowestIndex !== null && nextCacheUpgradeCost < spendableMoney) {
-          if (ns.hacknet.upgradeCache(lowestIndex, 1))
+          if ((await purchase(ns, 'hacknet', 'upgradeCache', [lowestIndex, 1], {budget: nextCacheUpgradeCost,
+            ...(options.reserve == null ? {} : {reserve: options.reserve}),
+            ignoreReserveBelowFraction: options['ignore-reserve-if-upgrade-cost-less-than-pct']})).result === true)
             log(ns, `SUCCESS: spend-hacknet-hashes.js spent ${formatMoney(nextCacheUpgradeCost)} to upgrade hacknet node ${lowestIndex} hash capacity ` +
               `in order to afford further purchases (${toBuy.join(", ")}). (You can disable this with --no-capacity-upgrades)`, false, 'success');
           else

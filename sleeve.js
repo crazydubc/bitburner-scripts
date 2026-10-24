@@ -1,7 +1,8 @@
 import {
   log, getConfiguration, disableLogs, getActiveSourceFiles, singRun, gangRun, hnRun,
-  formatMoney, formatDuration, getPlayerInfo, getReset, findPids, sleeveRun, bbRun, getOwnedAugs
+  formatMoney, formatDuration, getPlayerInfo, getReset, findPids, sleeveRun, bbRun, getOwnedAugs, getReserve, purchase
 } from './utils.js'
+import { hasBladeburnerAccess } from './progression.js'
 import {
   DEFAULT_DESIRED_AUGS, DEFAULT_PRIORITY_AUGS, buildAugUtilityMap, buildDesiredAugSet,
   getDefaultDesiredStats, planDistinctFactionRepRoutes
@@ -271,15 +272,24 @@ async function manageSleeveAugs(ns, i, budget) {
     log(ns, `INFO: With budget ${formatMoney(budget)}, ${(lastPurchaseStatusUpdate[i] = purchaseUpdate)} ` +
       `(Min batch size: ${options['min-aug-batch']}, Cooldown: ${formatDuration(cooldownLeft)})`);
   if (cooldownLeft == 0 && batchCount > 0 && ((batchCount >= availableAugs[i].length - 1) || batchCount >= options['min-aug-batch'])) { // Don't require the last aug it's so much more expensive
-    let strAction = `Purchase ${batchCount}/${availableAugs[i].length} augmentations for sleeve ${i} at total cost of ${formatMoney(batchCost)}`;
-    let toPurchase = availableAugs[i].splice(0, batchCount);
-    const purchase = toPurchase.map(a => a.name).slice(1).reduce((s, aug) => s && ns.sleeve.purchaseSleeveAug(i, aug), true);
-    if (purchase) {
-      //log(ns, `SUCCESS: ${strAction}`, true, 'success');
-      [lastSleeveHp[i], lastSleeveShock[i]] = [undefined, undefined]; // Sleeve stats are reset on installation of augs, so forget saved health info
-    } //else log(ns, `ERROR: Failed to ${strAction}`, true, 'error');
-    lastPurchaseTime[i] = Date.now();
-    return batchCost; // Even if we think we failed, return the predicted cost so if the purchase did go through, we don't end up over-budget
+    let spent = 0, purchased = 0;
+    try {
+      for (const aug of availableAugs[i].slice(0, batchCount)) {
+        const bought = await purchase(ns, 'sleeve', 'purchaseSleeveAug', [i, aug.name],
+          {budget: Math.max(0, budget - spent), ...(options.reserve == null ? {} : {reserve: options.reserve})});
+        if (bought.result !== true) break;
+        purchased++;
+        spent += bought.spent;
+        availableAugs[i].shift(); // Remove only confirmed purchases; retain failed/unattempted items.
+      }
+    } finally {
+      cacheExpiry[i] = 0; // Reconcile failures or external purchases before selecting another batch.
+      if (purchased > 0) {
+        [lastSleeveHp[i], lastSleeveShock[i]] = [undefined, undefined];
+        lastPurchaseTime[i] = Date.now();
+      }
+    }
+    return spent;
   }
   return 0;
 }
@@ -426,8 +436,8 @@ async function mainLoop(ns) {
   numSleeves = (await sleeveRun(ns, 'getNumSleeves'));
   const playerInfo = await getPlayerInfo(ns);
   // If we have not yet detected that we are in bladeburner, do that now (unless disabled)
-  if (!options['disable-bladeburner'] && !playerInBladeburner)
-    playerInBladeburner = await bbRun(ns, 'inBladeburner');
+  if (!options['disable-bladeburner'] && hasBladeburnerAccess(ownedSourceFiles) && !playerInBladeburner)
+    playerInBladeburner = await bbRun(ns, 'inBladeburner') === true;
   const playerWorkInfo = await getCurrentWorkInfo(ns);
   if (!playerInGang && (2 in ownedSourceFiles)) {
     const inGangResult = await gangRun(ns, 'inGang');
@@ -439,8 +449,8 @@ async function mainLoop(ns) {
     2 in ownedSourceFiles,
     ns.heart.break(),
   );
-  let globalReserve = Number(ns.read("reserve.txt") || 0);
-  let budget = (playerInfo.money - (options['reserve'] || globalReserve)) * options['aug-budget'];
+  let globalReserve = await getReserve(ns);
+  let budget = (playerInfo.money - (options['reserve'] ?? globalReserve)) * options['aug-budget'];
   // Estimate the cost of sleeves training over the next time interval to see if (ignoring income) we would drop below our reserve.
   const costByNextLoop = interval / 1000 * task.filter(t => t?.startsWith("train")).length * 12000; // TODO: Training cost/sec seems to be a bug. Should be 1/5 this ($2400/sec)
   // Get time in current bitnode (to cap how long we'll train sleeves)
@@ -459,7 +469,7 @@ async function mainLoop(ns) {
   if (canTrain && task.some(t => t?.startsWith("study")) && !options['disable-spending-hashes-for-study-upgrades'])
     if (await hnRun(ns, 'spendHashes', "Improve Studying"))
       log(ns, `SUCCESS: Bought "Improve Studying" to speed up Sleeve studying.`, false, 'success');
-  if (playerInBladeburner && (7 in ownedSourceFiles)) {
+  if (playerInBladeburner && hasBladeburnerAccess(ownedSourceFiles)) {
     const bladeburnerCity = await bbRun(ns, 'getCity');
     bladeburnerCityChaos = await bbRun(ns, 'getCityChaos', bladeburnerCity);
     bladeburnerContractChances = {};

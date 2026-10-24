@@ -1,8 +1,10 @@
 import {
   log, getConfiguration, findPids, formatNumberShort, formatMoney,
-  getActiveSourceFiles, getBNMults, getStocksValue, getReset, getPlayerInfo, doSCP, getOwnedAugs, singRun, addRepToFavor
+  getActiveSourceFiles, getBNMults, getStocksValue, getReset, getPlayerInfo, doSCP, getOwnedAugs, singRun, singReadMany, addRepToFavor, favorToRep
 } from './utils.js'
 import { buildDonationFavorProgress, FACTIONS_WITHOUT_DONATIONS } from './donation-favor.js'
+import { SOA_AUGS, INFILTRATION_TARGET } from './infiltration-policy.js'
+import { buildAugUtilityMap } from './faction-route-planner.js'
 
 // PLAYER CONFIGURATION CONSTANTS
 // This acts as a list of default "easy" factions to always show even if the user has --hide-locked-factions
@@ -26,6 +28,8 @@ let favorToDonate = 0; // Based on the current BitNode Multipliers, the favour r
 // Various globals because this script does not do modularity well. Assigned values are all ignored, just used to get type hints
 let playerData = (/**@returns{Player}*/() => null)(), bitNode = 0, gangFaction = "";
 let numAugsAwaitingInstall = 0, nfLevelPurchased = 0, startingPlayerMoney = 0, stockValue = 0; // If the player holds stocks, their liquidation value will be determined
+let stockValueKnown = false; // Cash-only planning must not imply that an unreadable portfolio is empty.
+let numPriceScalingAugsAwaitingInstall = 0; // Queued SoA augs count toward installs but do not inflate ordinary aug prices.
 let factionNames = [""], joinedFactions = [""], desiredAugs = [""], desiredStatsFilters = [""], purchaseFactionDonations = [];
 let ownedAugmentations = [""], simulatedOwnedAugmentations = [""], allAugStats = [""], priorityAugs = [""];
 let effectiveSourceFiles = (/**@returns {{[bitNode: number]: number}}*/() => ({}))();
@@ -45,7 +49,7 @@ const argsSchema = [ // The set of all command line arguments
   ['v', false], // (Kept for backwards compatilily) this was an alias flag for setting --verbose to true when it previously defaulted to false.
   ['ignore-player-data', false], // Display stats for all factions and augs, despite what we already have (kind of a "mock" mode)
   ['i', false], // Flag alias for --ignore-player-data
-  // By default, we ignore "Shadows of Anarchy" because they are tied to infiltration (manual action) and their aug prices don't follow normal conventions
+  // SoA purchases are handled by the infiltration runner because their prices use separate multipliers.
   ['ignore-faction', ["Shadows of Anarchy"]], // Factions to omit from all data, stats, and calcs, (e.g.) if you do not want to purchase augs from them, or do not want to see them because they are impractical to join at this time
   ['after-faction', []], // Pretend we were to buy all augs offered by these factions. Show us only what remains.
   ['force-join', null], // Always join these factions if we have an invite (useful to force join a gang faction)
@@ -105,6 +109,7 @@ export async function main(ns) {
 
   // Ensure all globals are reset before we proceed with the script, in case we've done things out of order
   augCountMult = favorToDonate = playerData = gangFaction = nfLevelPurchased = startingPlayerMoney = stockValue = null;
+  stockValueKnown = false;
   factionNames = [], joinedFactions = [], desiredAugs = [], desiredStatsFilters = [], purchaseFactionDonations = [];
   ownedAugmentations = [], simulatedOwnedAugmentations = [], effectiveSourceFiles = {}, allAugStats = [], priorityAugs = [], purchaseableAugs = [];
   factionData = {}, augmentationData = {}, bitNodeMults = {};
@@ -144,7 +149,16 @@ export async function main(ns) {
   gangFaction = gangInfo ? gangInfo.faction : null;
   favorToDonate = ns.getFavorToDonate();
   startingPlayerMoney = playerData.money;
-  stockValue = options['ignore-stocks'] ? 0 : await getStocksValue(ns);
+  stockValue = 0;
+  if (!options['ignore-stocks']) {
+    try {
+      stockValue = await getStocksValue(ns);
+      stockValueKnown = true;
+    } catch (error) {
+      log(ns, `WARNING: Stock value unavailable; planning augmentations using cash only. ` +
+        `Automatic installation will wait for readable holdings. If this persists, save and reload the game. ${String(error)}`);
+    }
+  }
   joinedFactions = ignorePlayerData ? [] : playerData.factions;
   log(ns, 'In factions: ' + joinedFactions);
   // Get owned augmentations (whether they've been installed or not). Ignore strNF because you can always buy more.
@@ -152,6 +166,7 @@ export async function main(ns) {
   const installedAugmentations = (/**@returns {string[]}*/() => null)() ??
     await getOwnedAugs(ns, false);
   numAugsAwaitingInstall = ownedAugmentations.length - installedAugmentations.length;
+  numPriceScalingAugsAwaitingInstall = ownedAugmentations.slice(installedAugmentations.length).filter(name => !SOA_AUGS.includes(name)).length;
   if (options['neuroflux-disabled']) omitAugs.push(strNF);
   simulatedOwnedAugmentations = ignorePlayerData ? [] : ownedAugmentations.filter(a => a != strNF);
   // Clear "priority" / "desired" lists of any augs we already own
@@ -222,12 +237,26 @@ export async function main(ns) {
     // Infer the number of nf we have installed based on the current nf purchase level, minus the pending nf installs
     const nfInstalled = nfLevelPurchased - augsAwaitingInstall.filter(a => a == strNF).length;
     const donationFavorProgress = getDonationFavorProgress();
+    let workGoal;
+    try {
+      await doSCP(ns, INFILTRATION_TARGET, ns.getHostname(), 'home');
+      const progress = JSON.parse(ns.read(INFILTRATION_TARGET) || 'null');
+      if (progress?.lastAugReset === resetInfo.lastAugReset && progress.lastNodeReset === resetInfo.lastNodeReset &&
+        Date.now() - progress.updatedAt >= 0 && Date.now() - progress.updatedAt <= 90_000 &&
+        Number.isFinite(progress.workGoal?.plannedAt) && Date.now() - progress.workGoal.plannedAt >= 0 &&
+        Date.now() - progress.workGoal.plannedAt <= 90_000)
+        workGoal = progress.workGoal;
+    } catch { /* Old/unavailable workers still allow measured cash/reputation goals. */ }
     ns.write(output_file, JSON.stringify({
       generated_at: Date.now(),
       current_node: resetInfo.currentNode,
       last_aug_reset: resetInfo.lastAugReset,
+      stock_value_known: stockValueKnown,
+      stock_value: stockValueKnown ? stockValue : null,
       favor_to_donate: favorToDonate,
       donation_favor_progress: donationFavorProgress,
+      go_favor_targets: getGoFavorTargets(omitAugs),
+      reset_planning: getResetPlanningSnapshot(augsAwaitingInstall, omitAugs, workGoal),
       // Augs we already have installed
       installed_augs: installedAugmentations, // Names of augs we've installed (Note: NeuroFlux will only appears once)
       installed_count: installedAugmentations.length, // Number of augs we've installed (Note: multiple NeuroFlux levels only counts as one)
@@ -295,18 +324,13 @@ let factionSortValue = faction => {
 
 
 async function buildLib(ns, items, cmd) {
-  let ret = {};
-  for (const item of items) {
-    const val = await singRun(ns, cmd, item);
-    ret[item] = val;
-  }
-  return ret;
+  return singReadMany(ns, cmd, items);
 }
 
 /**
  * Report productive factions whose current reputation will convert into enough favor to donate now.
  */
-function getDonationFavorProgress() {
+function getDonationFavorProgress(minimumProgressRatio = 1) {
   const joined = joinedFactions.filter(faction => factionData[faction]?.joined);
   const factionFavor = Object.fromEntries(joined.map(faction => [faction, factionData[faction].favor ?? 0]));
   const factionRep = Object.fromEntries(joined.map(faction => [faction, factionData[faction].reputation ?? 0]));
@@ -333,7 +357,93 @@ function getDonationFavorProgress() {
     augRepRequirements,
     augPrerequisites,
     donationFactions,
+    minimumProgressRatio,
   });
+}
+
+/** Quotes for direct Go favor unlocks. A quote covers an aug plus its remaining donation bill.
+ * Only already-owned prerequisites qualify; do not promise an unfunded prerequisite chain. */
+function getGoFavorTargets(omitted = []) {
+  const goStats = _ns.go.analysis.getStats();
+  return getDonationFavorProgress(0).flatMap(progress => {
+    const faction = factionData[progress.faction];
+    const quotes = progress.desired_augs.filter(name => !omitted.includes(name)).map(name => augmentationData[name])
+      .filter(aug => aug && aug.prereqs.every(name => ownedAugmentations.includes(name)))
+      .map(aug => ({augmentation: aug.name, cost: aug.price + getReqDonationForRep(aug.reputation, faction)}))
+      .filter(quote => Number.isFinite(quote.cost) && quote.cost > 0).sort((a, b) => a.cost - b.cost);
+    return quotes.length ? [{faction: progress.faction, currentFavor: progress.current_favor,
+      requiredFavor: progress.required_favor, goRep: goStats[progress.faction]?.rep ?? 0, ...quotes[0]}] : [];
+  });
+}
+
+/** Reuse this pass's prices, stats and reputation; no additional API calls or purchases. */
+function getResetPlanningSnapshot(awaitingInstall, omitted = [], workGoal) {
+  const pending = [...awaitingInstall, ...purchaseableAugs.map(aug => aug.name)];
+  const names = new Set([...pending, ...Object.values(augmentationData).filter(aug => aug.desired).map(aug => aug.name)]);
+  const utility = buildAugUtilityMap({desiredAugSet: names,
+    augStats: Object.fromEntries(Object.values(augmentationData).map(aug => [aug.name, aug.stats])),
+    augPrereqs: Object.fromEntries(Object.values(augmentationData).map(aug => [aug.name, aug.prereqs])),
+    desiredAugs, priorityAugs});
+  // NF's value comes from its repeated stat improvements, not a distinct-augmentation bonus per level.
+  if (utility[strNF] !== undefined) utility[strNF] = Math.max(0, utility[strNF] - 0.25);
+  const readyUtility = pending.reduce((sum, name) => sum + (utility[name] ?? 0.25), 0);
+  const available = new Set([...ownedAugmentations, ...purchaseableAugs.map(aug => aug.name)]);
+  const plannedNf = purchaseableAugs.filter(aug => aug.name === strNF).length;
+  const currentDonations = Object.values(purchaseFactionDonations).reduce((sum, amount) => sum + amount, 0);
+  const goals = [];
+  for (const original of Object.values(augmentationData)) {
+    if (!original.desired || omitted.includes(original.name) ||
+      (original.name !== strNF && available.has(original.name)) ||
+      !original.prereqs.every(name => available.has(name))) continue;
+    const aug = original.name === strNF ? {...original,
+      price: original.price * nfCountMult ** plannedNf,
+      reputation: original.reputation * nfCountMult ** plannedNf} : original;
+    const price = getTotalCost(sortAugs(_ns, [...purchaseableAugs, aug]));
+    const gain = utility[aug.name] ?? 0.25;
+    for (const faction of original.joinedFactionsWithAug()) {
+      const donation = faction.donationsUnlocked ? Math.max(0,
+        getReqDonationForRep(aug.reputation, faction) - (purchaseFactionDonations[faction.name] ?? 0)) : 0;
+      const money = price + currentDonations + donation;
+      if (!Number.isFinite(money) || !(gain > 0)) continue;
+      const suffix = aug.name === strNF ? `:${nfLevelPurchased + plannedNf + 1}` : '';
+      goals.push({key: `${aug.name}${suffix}:${faction.name}`, label: `${aug.name}${suffix} via ${faction.name}`,
+        faction: faction.name, rep: faction.donationsUnlocked ? 0 : aug.reputation, money, utility: gain});
+    }
+  }
+  // Require present wealth to cover an aug and its full post-reset reputation bill before waiting
+  // for favor. This is a funding proxy: the cash itself does not survive installation.
+  for (const progress of getDonationFavorProgress(0.9).filter(entry => !entry.ready)) {
+    const affordableAfterReset = progress.desired_augs.filter(name => {
+      const aug = augmentationData[name];
+      return aug && aug.price + getCostOfReputation(aug.reputation) <= playerData.money + stockValue;
+    });
+    if (!affordableAfterReset.length) continue;
+    goals.push({key: `favor:${progress.faction}`, label: `donation access for ${progress.faction}`,
+      faction: progress.faction,
+      rep: Math.max(0, favorToRep(progress.required_favor) - favorToRep(progress.current_favor)),
+      money: 0, utility: affordableAfterReset.reduce((sum, name) => sum + (utility[name] ?? 0.25), 0) * 0.2});
+  }
+  if (typeof workGoal?.faction === 'string' && Number.isFinite(workGoal.eta) && workGoal.eta >= 0 &&
+    Array.isArray(workGoal.unlockedAugs) && workGoal.unlockedAugs.every(name => typeof name === 'string')) {
+    const additions = [...new Set(workGoal.unlockedAugs)].filter(name => !available.has(name) && !omitted.includes(name))
+      .map(name => augmentationData[name]);
+    const after = new Set([...available, ...additions.filter(Boolean).map(aug => aug.name)]);
+    if (additions.length && additions.every(aug => aug?.desired && aug.prereqs.every(name => after.has(name)))) {
+      const faction = factionData[workGoal.faction];
+      if (faction && !faction.joined && additions.every(aug => faction.augmentations.includes(aug.name))) {
+        const extraDonation = faction.donationsUnlocked ? getReqDonationForRep(
+          Math.max(...additions.map(aug => aug.reputation)), faction) : 0;
+        const money = getTotalCost(sortAugs(_ns, [...purchaseableAugs, ...additions])) + currentDonations + extraDonation;
+        if (Number.isFinite(money)) goals.push({key: `invite:${workGoal.faction}:${additions.map(aug => aug.name).join('|')}`,
+          label: `join ${workGoal.faction} and unlock ${additions.map(aug => aug.name).join(', ')}`,
+          faction: workGoal.faction, rep: 0, money, eta: workGoal.eta,
+          utility: additions.reduce((sum, aug) => sum + (utility[aug.name] ?? 0.25), 0)});
+      }
+    }
+  }
+  return {version: 1, readyUtility, wealth: playerData.money + stockValue, hacking: playerData.skills.hacking,
+    reputation: Object.fromEntries(Object.values(factionData).filter(faction => faction.joined)
+      .map(faction => [faction.name, faction.reputation])), goals};
 }
 
 
@@ -754,9 +864,9 @@ async function managePurchaseableAugs(ns, outputRows, accessibleAugs) {
   let nextUpAug = dropped.length == 0 ? null : `Next desired aug available at:`.padEnd(37) + ` ${dropped[0].costBefore}  ` +
     `for \"${dropped[0].aug.name}\" from "${dropped[0].aug.getFromJoined()}" (cheapest of ${dropped.length} dropped augs)`
   if (nextUpAug && options['neuroflux-disabled']) outputRows.push(nextUpAug); // Output this now if we will be exiting early, otherwise save for after the last table.
-  if (numAugsAwaitingInstall > 0)
-    outputRows.push(`WARNING: Prices all have a x ${formatNumberShort(augCountMult ** numAugsAwaitingInstall)} cost penalty, because ` +
-      `${numAugsAwaitingInstall} Augmentations were previously purchased but are not yet installed.`);
+  if (numPriceScalingAugsAwaitingInstall > 0)
+    outputRows.push(`WARNING: Ordinary augmentation prices have a x ${formatNumberShort(augCountMult ** numPriceScalingAugsAwaitingInstall)} cost penalty, because ` +
+      `${numPriceScalingAugsAwaitingInstall} non-SoA augmentations were previously purchased but are not yet installed.`);
   if (inaccessiblePriorityAugs.length > 0)
     outputRows.push(`INFO: ${inaccessiblePriorityAugs.length} 'priority' augs are not yet accessible: ${inaccessiblePriorityAugs.map(n => `"${n}"`).join(", ")}`);
   const additionalDroppedPri = droppedPriorityAugs.filter(n => !inaccessiblePriorityAugs.includes(n));
@@ -767,7 +877,7 @@ async function managePurchaseableAugs(ns, outputRows, accessibleAugs) {
   if (options['neuroflux-disabled']) return;
   const augNf = augmentationData[strNF];
   // We can reverse-engineer our current NeuroFlux level by looking at its current price, and knowing its cost scales at x1.14 per level.
-  nfLevelPurchased = Math.round(Math.log(augNf.price / (augCountMult ** numAugsAwaitingInstall * 750000 * bitNodeMults.AugmentationMoneyCost)) / Math.log(1.14));
+  nfLevelPurchased = Math.round(Math.log(augNf.price / (augCountMult ** numPriceScalingAugsAwaitingInstall * 750000 * bitNodeMults.AugmentationMoneyCost)) / Math.log(1.14));
   let nextNfLevel = nfLevelPurchased + 1;
   let getFrom = augNf.getFromJoined();
   // If No currently joined factions can provide us with the next level of Neuroflux, look for the best joined **or unjoined** faction to get NF from.
@@ -900,6 +1010,9 @@ async function purchaseDesiredAugs(ns) {
   let totalAugCost = getTotalCost(purchaseableAugs);
   // Refresh player data to get an accurate read of current money
   playerData = await getPlayerInfo(ns);
+  if (!stockValueKnown && !options['ignore-stocks'])
+    return log(ns, `ERROR: Cannot verify stock holdings; --purchase is paused. ` +
+      `Retry after stock reads recover, or use --ignore-stocks to explicitly buy using cash only.`, printToTerminal, 'error');
   if (stockValue > 0)
     return log(ns, `ERROR: For your own protection, --purchase will not run while you are holding stocks (current stock value: ${formatMoney(stockValue)}). ` +
       `Liquidate your shares before running (run stockmaster.js --liquidate) or run this script with --ignore-stocks to override this.`, printToTerminal, 'error')

@@ -1,8 +1,8 @@
 
 /** @param {NS} ns */
 export async function main(ns) {
-  const utilFile = "./util.js";
   const scriptCost = 12.55;
+  const stasisHelperRam = 13.6; // 1.6 GB base + 12 GB for dnet.setStasisLink.
   const telemetryFile = "telemetry.txt";
   const easyHacks = ["DeskMemo_3.1", "ZeroLogon", "FreshInstall_1.0", "CloudBlare(tm)", "Laika4",
     "OctantVoxel", "OpenWebAccessPoint", "Pr0verFl0", "110100100", "PrimeTime 2", "MathML", "OrdoXenos"];
@@ -46,9 +46,11 @@ export async function main(ns) {
   }
 
   if (ns.args.includes("clear-stasis")) {
-    await runSetStasis(ns, false);
-    const threads = Math.floor((ns.getServerMaxRam(ns.self().server) - ns.dnet.getBlockedRam(ns.self().server)) / scriptCost)
-    ns.spawn(ns.self().filename, { temporary: true, spawnDelay: 0, threads: threads, ramOverride: scriptCost })
+    if (!await runSetStasis(ns, false)) {
+      logonce(ns, `WARNING: Could not clear stasis on ${ns.self().server}; leaving the transition incomplete.`);
+      return;
+    }
+    respawnAfterStasis(ns, scriptCost);
   }
 
 
@@ -1238,10 +1240,10 @@ export async function main(ns) {
       const cost = scriptCost + 12
       if (!ns.dnet.getStasisLinkedServers().includes(ns.self().server)) {
         if (ns.self().ramUsage === scriptCost) {
-          const threads = Math.floor(ns.getServerMaxRam(ns.self().server) / cost)
-          if (threads) ns.spawn(ns.self().filename, { temporary: true, spawnDelay: 0, threads: threads, ramOverride: cost }, "lab")
+          respawnAfterStasis(ns, cost, "lab");
+          return { success: false }; // A rejected transition must not start the puzzle without helper capacity.
         }
-        else await runSetStasis(ns)//setStasis(ns);
+        else if (!await runSetStasis(ns)) return { success: false };
       }
       //logonce(ns, "WARNING:  " + ns.self().server + " is attempting the Labyrinth - " + server)
       const directions = {
@@ -1351,7 +1353,7 @@ export async function main(ns) {
       const details = ns.dnet.getServerDetails(server)
       if (ns.args.includes("lab") && details.modelId !== "(The Labyrinth)") continue
       if (labComplete && details.modelId === "(The Labyrinth)") continue
-      if (!details.isConnectedToCurrentServer) continue
+      if (!details.isOnline || !details.isConnectedToCurrentServer || !details.modelId) continue
       let result
       if (!details.hasSession) {
         result = await breakIn(ns, server, details)
@@ -1364,7 +1366,7 @@ export async function main(ns) {
           && ns.dnet.getBlockedRam(server) > 0 && ns.getServerMaxRam(server) - ns.dnet.getBlockedRam(server) < scriptCost)
           await ns.dnet.memoryReallocation(server)
         if (ns.dnet.getServerDetails(server).isConnectedToCurrentServer && ns.dnet.getServerDetails(server).hasSession && ns.ps(server).length === 0) {
-          ns.scp([ns.self().filename, utilFile], server)
+          ns.scp(ns.self().filename, server)
           if (server === "darkweb") {
             const threads = Math.floor(ns.getServerMaxRam(server) / scriptCost)
             if (threads) ns.exec(ns.self().filename, server, { temporary: true, threads: threads, preventDuplicates: true, temporary: true, ramOverride: scriptCost })
@@ -1389,7 +1391,7 @@ export async function main(ns) {
           if (details.hasSession && details.isConnectedToCurrentServer && ns.dnet.getBlockedRam(server) > 0) {
             await ns.dnet.memoryReallocation(server)
             if (ns.dnet.getServerDetails(server).isConnectedToCurrentServer && ns.dnet.getServerDetails(server).hasSession && ns.ps(server).length === 0) {
-              ns.scp([ns.self().filename, utilFile], server)
+              ns.scp(ns.self().filename, server)
               const threads = Math.floor((ns.getServerMaxRam(server) - ns.dnet.getBlockedRam(server)) / scriptCost)
               if (threads) ns.exec(ns.self().filename, server, { temporary: true, threads: threads, preventDuplicates: true, temporary: true, ramOverride: scriptCost })
             }
@@ -1407,8 +1409,7 @@ export async function main(ns) {
         ns.scp(telemetryFile, "home")
       }
       if (ns.dnet.getStasisLinkedServers().includes(ns.self().server)) {
-        const threads = Math.floor((ns.getServerMaxRam(ns.self().server) - ns.dnet.getBlockedRam(ns.self().server)) / scriptCost + 12)
-        ns.spawn(ns.self().filename, { temporary: true, spawnDelay: 0, threads: threads, ramOverride: scriptCost + 12 }, "clear-stasis")
+        respawnAfterStasis(ns, scriptCost + 12, "clear-stasis");
       }
       if (ns.args.includes("lab")) {
         const threads = Math.floor((ns.getServerMaxRam(ns.self().server) - ns.dnet.getBlockedRam(ns.self().server)) / scriptCost)
@@ -1424,6 +1425,7 @@ export async function main(ns) {
     for (const serverRaw of servers) {
       const server = serverRaw.toString()
       const firstDetails = ns.dnet.getServerDetails(server)
+      if (!firstDetails.isOnline || !firstDetails.isConnectedToCurrentServer || !firstDetails.modelId) continue
       if (!firstDetails.hasSession) {
         if (easyHacks.includes(firstDetails.modelId)) await breakIn(ns, server, firstDetails)
         else if (complete[server] !== undefined) await breakIn(ns, server, firstDetails)
@@ -1435,7 +1437,7 @@ export async function main(ns) {
           && ns.dnet.getBlockedRam(server) > 0 && ns.getServerMaxRam(server) - ns.dnet.getBlockedRam(server) < scriptCost)
           await ns.dnet.memoryReallocation(server)
         if (ns.dnet.getServerDetails(server).isConnectedToCurrentServer && ns.dnet.getServerDetails(server).hasSession && ns.getServerMaxRam(server) - ns.dnet.getBlockedRam(server) > scriptCost && ns.ps(server).length === 0) {
-          ns.scp([ns.self().filename, utilFile], server)
+          ns.scp(ns.self().filename, server)
           const threads = Math.floor((ns.getServerMaxRam(server) - ns.dnet.getBlockedRam(server)) / scriptCost)
           if (threads) ns.exec(ns.self().filename, server, { temporary: true, threads: threads, preventDuplicates: true, temporary: true, ramOverride: scriptCost })
         }
@@ -1551,8 +1553,13 @@ export async function main(ns) {
 * @param { string } ser  r
   **/
   async function breakIn(ns, server, details) {
+    // A device can disappear after probe(); the API then returns an empty offline record.
+    if (!details.isOnline || !details.isConnectedToCurrentServer || !details.modelId) {
+      updateWorkingOn(ns, server, "remove");
+      return { success: false };
+    }
     if (server === "darkweb") return { success: true }
-    if (complete[server]) {
+    if (complete[server] !== undefined) {
       let result = await workOnServer(ns, server, complete[server], 0, details) || {}
       if (result.success || !serverCheck(ns, server, result)) return result
       else delete complete[server]
@@ -1568,6 +1575,24 @@ export async function main(ns) {
     //logonce(ns, `${details.modelId} needs a new format. ` + details.passwordFormat);
     failureReport(ns, server, details)
     return result;
+  }
+  // spawn() terminates this worker and returns no PID. Validate before relinquishing it.
+  function respawnAfterStasis(ns, ramPerThread, ...args) {
+    const self = ns.self();
+    const usableRam = ns.getServerMaxRam(self.server) - ns.dnet.getBlockedRam(self.server);
+    const helperRam = args.includes("clear-stasis") || args.includes("lab") ? stasisHelperRam : 0;
+    const threads = Math.floor((usableRam - helperRam) / ramPerThread);
+    if (!Number.isFinite(usableRam) || !Number.isFinite(ramPerThread) || ramPerThread <= 0 ||
+        !Number.isSafeInteger(threads) || threads < 1) {
+      logonce(ns, `WARNING: Cannot respawn darknet on ${self.server}: ${usableRam} GB available for ${ramPerThread} GB per thread and ${helperRam} GB helper RAM.`);
+      return;
+    }
+    // Our old threads are released by spawn; another process's RAM is not.
+    if (ns.ps(self.server).some(process => process.pid !== self.pid)) {
+      logonce(ns, `WARNING: Delaying darknet stasis respawn on ${self.server} while another script shares its RAM.`);
+      return;
+    }
+    ns.spawn(self.filename, { temporary: true, spawnDelay: 0, threads, ramOverride: ramPerThread }, ...args);
   }
   function logonce(ns, msg) {
     if (logged_once.has(msg)) return;
@@ -1608,7 +1633,7 @@ export async function main(ns) {
       await ns.sleep(10);
     }
 
-    return true;
+    return ns.dnet.getStasisLinkedServers().includes(ns.self().server) === value;
   }
   function getWorker() {
     const worker = new Worker(URL.createObjectURL(blob))

@@ -1,7 +1,7 @@
 import {
   log, disableLogs, findPids, getConfiguration, getActiveSourceFiles,
   getStocksValue, formatNumberShort, formatNumber, formatMoney, formatRam, getFilePath,
-  formatDuration, getReset, getPlayerInfo, getServers, bbRun, hnRun, gangRun, corpRun, doSCP
+  formatDuration, getReset, getPlayerInfo, getServers, bbRun, hnRun, gangRun, corpRun, doSCP, getReserve
 } from './utils.js'
 
 const argsSchema = [
@@ -18,6 +18,7 @@ export function autocomplete(data, args) {
 let doc, hook0, hook1;
 let playerInBladeburner = false, nodeMap = {}
 let resetInfo
+let nextStockWarning = 0;
 
 /** @param {NS} ns **/
 export async function main(ns) {
@@ -32,6 +33,7 @@ export async function main(ns) {
   // Globals need to reset at startup. Otherwise, they can survive e.g. flumes and new BNs and return stale results
   playerInBladeburner = false;
   nodeMap = {};
+  nextStockWarning = 0;
   doc = eval('document');
   hook0 = doc.getElementById('overview-extra-hook-0');
   hook1 = doc.getElementById('overview-extra-hook-1');
@@ -169,10 +171,18 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
     const val = ["Stock"]
     // Show Stocks (only if stockmaster.js isn't already doing the same)
     if (!options['hide-stocks'] && !doc.getElementById("stock-display-1")) {
-      const stkPortfolio = await getStocksValue(ns);
-      // Also, don't bother showing a section for stock if we aren't holding anything
-      if (stkPortfolio > 0) val.push(true, formatMoney(stkPortfolio))
-      else val.push(false)
+      try {
+        const stkPortfolio = await getStocksValue(ns);
+        // Also, don't bother showing a section for stock if we aren't holding anything.
+        if (stkPortfolio > 0) val.push(true, formatMoney(stkPortfolio));
+        else val.push(false);
+      } catch (error) {
+        val.push(true, 'Unavailable', 'Stock holdings could not be valued. Retrying automatically; other stats continue updating.');
+        if (Date.now() >= nextStockWarning) {
+          nextStockWarning = Date.now() + 60_000;
+          log(ns, `WARNING: Stock value unavailable; other stats will continue updating. ${String(error)}`, false, 'warning');
+        }
+      }
     } else val.push(false)
     hudData.push(val)
   }
@@ -186,8 +196,7 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
   // Show reserved money
   {
     const val = ["Reserve"];
-    if (ns.getHostname() !== 'home') await doSCP(ns, 'reserve.txt', ns.getHostname(), "home");
-    const reserve = Number(ns.read("reserve.txt") || 0);
+    const reserve = await getReserve(ns);
     if (reserve > 0) {
       val.push(true, formatNumberShort(reserve, 3, 2), "Most scripts will leave this much money unspent.");
     } else val.push(false)

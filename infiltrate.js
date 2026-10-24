@@ -1,1021 +1,231 @@
-/*
-Maintainer:
-Discord: Sphyxis
+/** Sphyxis / Dihelvid's auto-infiltration approach, with bounded lifecycle and progression selection.
+ * Uses the game's undocumented React model success callback; stops on unknown UI.
+ */
+import { singRun, runScriptLocal } from './utils.js';
+import { chooseInfiltration, freshInfiltrationTarget, infiltrationAlternativeIncome, INFILTRATION_TARGET, INFILTRATION_LEASE,
+  INFILTRATION_HISTORY, INFILTRATION_ACK, INFILTRATION_PROGRESS, SOA_FACTION } from './infiltration-policy.js';
+import { manageSoaProgression, soaInvitation, acceptSoaInvitation } from './infiltration-soa.js';
+import { infiltrationView, infiltrationDemand, infiltrationButton, clickInfiltrationElement,
+  finishInfiltrationStage, selectInfiltrationFaction, idleInfiltrationScreen, openInfiltrationCompany,
+  infiltrationUiTimeout } from './infiltration-ui.js';
 
-Contributer:
-Discord: Dihelvid
---Props for the simple "I Win" exploit
---Added args to allow for auto auto infiltrate ;)
+const argsSchema = [['auto', false], ['single', false], ['stop', false], ['status', false], ['quiet', false],
+  ['company', ''], ['faction', ''], ['target-rep', 0], ['money-target', 10e9], ['time', 120_000],
+  ['max-runs', 3], ['min-demand', 0.8], ['scheduled', false], ['soa', false],
+  ['aug-count-target', 30], ['cooldown', 60_000], ['bn1-controller', 0]];
+const sessionKey = '__bitburnerScriptsInfiltration';
+export function autocomplete(data) { data.flags(argsSchema); return []; }
 
-*/
-
-const argsSchema = [
-  ["single", false],
-  ["stop", false],
-  ["status", false],
-  ["quiet", false],
-  ["auto", true],
-  ["faction", ''],
-  ["update", false],
-  ["company", ''],
-  ['time', 60000]
-]
-
-export function autocomplete(data, args) {
-  data.flags(argsSchema);
-  return [];
-}
-
-//important parameters: "--auto" for auto replay, "--faction BitRunners" for auto-accepting reputation for named faction
-
-const state = {
-  // Name of the company that's infiltrated.
-  company: "",
-
-  // A copy of company, used for auto-restart so it doesn't get reset at end
-  lastCompany: "",
-
-  // Whether infiltration started. False means, we're
-  // waiting to arrive on the infiltration screen.
-  started: false,
-
-  // Details/state of the current mini game.
-  // Is reset after every game.
-  game: {},
-};
-
-// automatically accept reward and re-run for the same company
-let auto = false
-
-
-// auto-accept reputation for faction instead of money
-let repFaction = ''
-
-
-// Speed of game actions, in milliseconds.
-const speed = 50;
-
-// Time infiltration(s)
-let infiltrationStart = 0
-
-// Small hack to save RAM.
-// This will work smoothly, because the script does not use
-// any "ns" functions, it's a pure browser automation tool.
-const wnd = eval("window");
-const doc = wnd["document"];
-
-// List of all games and an automated solver.
-const infiltrationGames = [
-  { name: "type it backward" },
-  { name: "type it" },
-  { name: "enter the code" },
-  { name: "close the brackets" },
-  { name: 'attack after the sentinel drops his guard and is distracted' },
-  { name: "say something nice about the guard" },
-  { name: "remember all the mines" },
-  { name: "mark all the mines" },
-  { name: "match the symbols" },
-  { name: "cut the wires with the following properties" },
-];
-
-let postTimeout = null
-
-/** @param {NS} ns **/
+/** @param {NS} ns */
 export async function main(ns) {
-  const args = ns.flags(argsSchema);
-  auto = args.auto
-  repFaction = args.faction
-
-  function print(msg) {
-    if (!args.quiet) {
-      ns.tprint(`\n${msg}\n`);
-    }
-  }
-
-  if (args.status) {
+  const options = ns.flags(argsSchema);
+  const wnd = globalThis['window'], doc = wnd?.['document'];
+  if (!doc) return ns.tprint('ERROR: Infiltration requires the game UI.');
+  if (ns.getHostname() !== 'home') return ns.tprint('ERROR: Run infiltrate.js on home.');
+  const previous = wnd[sessionKey];
+  if (options.status) return ns.tprint(previous || wnd.tmrAutoInf ? 'Infiltration runner is active.' : 'Infiltration runner is inactive.');
+  if (options.stop) {
+    if (previous) previous.stop = true;
     if (wnd.tmrAutoInf) {
-      print("Automated infiltration is active");
-    } else {
-      print("Automated infiltration is inactive");
+      wnd.clearInterval(wnd.tmrAutoInf); delete wnd.tmrAutoInf;
+      ns.tprint('Stopped the legacy timer. Reload once to clear its old pending callbacks.');
     }
     return;
   }
-
+  const reset = ns.getResetInfo();
+  const controller = wnd.__bitburnerBn1Cycle;
+  const controlled = controller && !controller.stop && controller.expires > Date.now() &&
+    controller.lastAugReset === reset.lastAugReset && controller.lastNodeReset === reset.lastNodeReset &&
+    reset.currentNode === 1 && reset.ownedSF instanceof Map && !reset.ownedSF.has(1) && !reset.ownedSF.has(4) &&
+    Number.isInteger(controller.pid) && ns.isRunning(controller.pid);
+  if (controlled ? options['bn1-controller'] !== controller.pid : options['bn1-controller'] !== 0)
+    return ns.tprint('Infiltration deferred: BN1 controller owns the screen, or its handoff has expired.');
+  if (previous) return ns.tprint('Infiltration runner is already active; use --stop first.');
   if (wnd.tmrAutoInf) {
-    print("Stopping automated infiltration...");
-    clearInterval(wnd.tmrAutoInf);
-    delete wnd.tmrAutoInf;
-    ns.clearPort(30);
-    ns.writePort(1, 1);
-    if (!args.update) return;
+    wnd.clearInterval(wnd.tmrAutoInf); delete wnd.tmrAutoInf;
+    return ns.tprint('Stopped the old infiltration timer. Reload the game once to clear its pending callbacks before using this version.');
   }
-
-  if (args.stop) {
-    setTimeout(() => {
-      var btn = Array.from(doc.querySelectorAll('button')).find(x => x.innerText.includes('Cancel'))
-      if (btn) btn[Object.keys(btn)[1]].onClick({ isTrusted: true })
-    }, 1000)
-    return;
-  }
-
-  auto = args.auto
-
-  repFaction = args.faction && args.faction.length && args.faction
-
-  print(
-    "Automated infiltration is enabled...\nWhen you visit the infiltration screen of any company, all tasks are completed automatically. " +
-    `Auto? ${auto} ` +
-    `Faction or Money? ${repFaction || 'MONEY'}`
-  );
-  ns.writePort(30, ns.pid)
-  endInfiltration();
-
-  // Monitor the current screen and start infiltration once a
-  // valid screen is detected.
-  wnd.tmrAutoInf = setInterval(infLoop, speed);
-
-  // If company is set goto company and start infiltration
-  if (args.company) {
-    state.lastCompany = args.company
-    postTimeout = setTimeout(() => {
-      postTimeout = null
-      var btn = Array.from(doc.querySelectorAll('button')).find(x => x.innerText.indexOf('Infiltrate Company') >= 0)
-      if (btn) btn[Object.keys(btn)[1]].onClick({ isTrusted: true })
-    }, 1000)
-  }
-}
-
-
-
-/**
- * The infiltration loop, which is called at a rapid interval
- */
-function infLoop() {
-  if (!state.started) {
-    waitForStart();
-  } else {
-    playGame();
-  }
-}
-
-/**
- * Returns a list of DOM elements from the main game
- * container.
- */
-function getEl(parent, selector) {
-  let prefix = ":scope";
-
-  if ("string" === typeof parent) {
-    selector = parent;
-    parent = doc;
-
-    prefix = ".MuiBox-root>.MuiBox-root>.MuiBox-root";
-
-    if (!doc.querySelectorAll(prefix).length) {
-      prefix = ".MuiBox-root>.MuiBox-root>.MuiGrid-root";
+  if (options.faction === SOA_FACTION)
+    return ns.tprint('SoA reputation is earned alongside cash/normal faction rewards. Use --soa for its progression; --faction selects a normal reputation recipient such as CyberSec.');
+  if (![options.time, options['max-runs'], options['min-demand'], options['money-target'], options['target-rep'],
+    options['aug-count-target'], options.cooldown].every(Number.isFinite) ||
+    options.time < 1000 || options.time > 600_000 || !Number.isInteger(options['max-runs']) || options['max-runs'] < 1 ||
+    options['max-runs'] > 20 || options['min-demand'] < 0 || options['min-demand'] > 1 ||
+    options['money-target'] < 0 || options['target-rep'] < 0 || !Number.isInteger(options['aug-count-target']) ||
+    options['aug-count-target'] < 0 || options.cooldown < 1000 || options.cooldown > 3_600_000)
+    return ns.tprint('ERROR: Use time 1000..600000 ms, max-runs 1..20, min-demand 0..1, cooldown 1000..3600000 ms, and nonnegative targets (integer aug-count-target).');
+  const read = file => JSON.parse(ns.read(file) || 'null');
+  const print = message => { ns.print(message); if (!options.quiet) ns.tprint(message); };
+  let session, ownedModel, victory = false;
+  const started = Date.now(), deadline = started + options.time;
+  let runs = 0, lastLease = 0;
+  const limit = options.single || !options.auto ? 1 : options['max-runs'];
+  const history = read(INFILTRATION_HISTORY) ?? {};
+  const possibleLocations = ns.infiltration.getPossibleLocations();
+  const companyNames = possibleLocations.map(location => location.name);
+  const lease = read(INFILTRATION_LEASE);
+  if (options.scheduled && lease?.retryAfter > started) return;
+  const augs = reset.ownedSF;
+  const hasSingularity = reset.currentNode === 4 || Number(augs instanceof Map ? augs.get(4) : augs?.[4]) > 0;
+  if (options['target-rep'] > 0 && !hasSingularity)
+    return print('A total --target-rep requires SF4. Use --single --faction and check current reputation in Factions.');
+  const pulse = async () => {
+    if (Date.now() - lastLease < 2000) return;
+    await ns.write(INFILTRATION_LEASE, JSON.stringify({pid: ns.pid,
+      expires: Math.min(deadline + 5000, Date.now() + 60_000), retryAfter: 0}), 'w');
+    lastLease = Date.now();
+  };
+  const stopping = () => session.stop || Date.now() >= deadline;
+  const acquireScreen = async plannerPid => {
+    await pulse();
+    while (plannerPid && ns.isRunning(plannerPid) && !stopping()) {
+      const ack = read(INFILTRATION_ACK);
+      if (ack?.pid === ns.pid && ack.workerPid === plannerPid && ack.at >= started) break;
+      await ns.sleep(100); await pulse();
     }
-    if (!doc.querySelectorAll(prefix).length) {
-      prefix = ".MuiContainer-root>.MuiPaper-root";
-    }
-    if (!doc.querySelectorAll(prefix).length) {
-      return [];
-    }
-  }
+  };
+  const updateSoa = async () => {
+    const state = await manageSoaProgression(ns, {doc, canContinue: () => !stopping(), hasSingularity,
+      augRequirement: options['aug-count-target'], print, heartbeat: pulse});
+    if (state.owned) await ns.write(INFILTRATION_PROGRESS, JSON.stringify({...state,
+      updatedAt: Date.now(), lastAugReset: reset.lastAugReset, lastNodeReset: reset.lastNodeReset}), 'w');
+    return state.goal;
+  };
+  const cleanup = () => {
+    // Release only the model we started; preserve an unclaimed victory screen.
+    const complete = ownedModel && (ownedModel.results?.match(/✓/g)?.length ?? 0) >= ownedModel.maxLevel;
+    if (ownedModel && !victory && !complete) ownedModel.cancel();
+    if (wnd[sessionKey] === session) delete wnd[sessionKey];
+  };
 
-  selector = selector.split(",");
-  selector = selector.map((item) => `${prefix} ${item}`);
-  selector = selector.join(",");
-
-  return parent.querySelectorAll(selector);
-}
-
-/**
- * Returns the first element with matching text content.
- */
-function filterByText(elements, text) {
-  text = text.toLowerCase();
-
-  for (let i = 0; i < elements.length; i++) {
-    const content = elements[i].textContent.toLowerCase();
-
-    if (-1 !== content.indexOf(text)) {
-      return elements[i];
-    }
-  }
-
-  return null;
-}
-
-/**
- * Reset the state after infiltration is done.
- */
-function endInfiltration() {
-  state.company = "";
-  state.started = false;
-  // cancelMyTimeout()
-  // acceptMoney() // TODO: needed?
-}
-
-/**
- * Simulate wining a minigame. Tells the minigame you won. (Exploit)
- */
-function winGame() {
-  const screen = doc.querySelectorAll(".MuiContainer-root")[0]
-  const state = screen[Object.keys(screen).find(k => k.startsWith("__reactFiber$"))]
-  for (const child of state.memoizedProps.children) {
-    if (child.props.onSuccess) {
-      child.props.onSuccess()
-      break
-    }
-  }
-}
-
-/**
- * Infiltration monitor to start automatic infiltration.
- *
- * This function runs asynchronously, after the "main" function ended,
- * so we cannot use any "ns" function here!
- */
-function waitForStart() {
-  if (state.started) {
-    return;
-  }
-
-  const h4 = getEl("h4");
-
-  if (!h4.length) {
-    return;
-  }
-  const title = h4[0].textContent;
-  if (0 !== title.indexOf("Infiltrating")) {
-    return;
-  }
-
-  const btnStart = filterByText(getEl("button"), "Start");
-  if (!btnStart) {
-    return;
-  }
-
-  state.company = title.substr(13);
-  state.lastCompany = title.substr(13);
-  state.started = true;
-
-  var datetime = new Date().today() + " @ " + new Date().timeNow();
-  console.log(datetime, " Start automatic infiltration of", state.company);
-  btnStart.click();
-}
-
-/**
- * Identify the current infiltration game and win it.
- */
-function playGame() {
-  const screens = doc.querySelectorAll(".MuiContainer-root");
-  wnd.info = { screens }
-
-  if (!screens.length) {
-    wnd.info = { screens, messge: 'no screens.length, calling endInfiltration()' }
-    endInfiltration();
-    //refillhealth();
-    selectCompany();
-    return;
-  }
-  if (screens[0].children.length < 3) {
-    wnd.info = { screens, message: 'screens.children.length < 3, calling endInfiltration()' }
-    if (!postTimeout && screens[0].children[1].children[0].innerText === 'Infiltration successful!') {
-      acceptMoney('spam') // I think this is spamming, yes, need to check for infiltration complete, but where
-    }
-    return;
-  }
-
-  const screen = screens[0].children[2];
-  const h4 = screen.children//getEl(screen, "h4");
-
-  if (!h4.length) {
-    wnd.info = { screens, message: 'no h4.length, calling endInfiltration()' }
-    endInfiltration();
-    return;
-  }
-
-  cancelMyTimeout()
-
-  const title = h4[0].textContent.trim().toLowerCase().split(/[!.(]/)[0];
-  wnd.info = { screens, message: 'searching for something', title }
-
-  if ("infiltration successful" === title) {
-    // NOTE: I get screens.length < 3 on success, not this...
-    wnd.info = { screens, message: 'infiltration successful!' }
-    endInfiltration();
-    return;
-  } else {
-    wnd.last_title = title
-  }
-
-  if ("get ready" === title) {
-    if (!infiltrationStart) infiltrationStart = new Date().valueOf()
-    return;
-  }
-
-  const game = infiltrationGames.find((game) => game.name === title);
-  wnd.STATE = { game, screen, h4, title }
-
-  if (game) {
-    winGame() // Tells screen you won
-  } else {
-    console.error("Unknown game:", title);
-  }
-}
-
-/*================================================================================
-  = Auto Mode
-  ================================================================================*/
-
-/**
- * Select a company and begin infiltration for auto mode
- */
-function selectCompany() {
-  if (!auto) return
-  cancelMyTimeout()
-
-  postTimeout = setTimeout(() => {
-    postTimeout = null
-
-    var selector = 'span[aria-label="' + state.lastCompany + '"]'
-    var companyEle = doc.querySelector(selector)
-    if (companyEle) {
-      if (infiltrationStart) {
-        console.info(`FAILED INFILTRATION - ${((new Date().valueOf() - infiltrationStart) / 1000).toFixed(1)} sec, last was ${last_title}`);
-        infiltrationStart = 0
+  try {
+    if (!(ns.getMoneySources().sinceInstall.casino >= 10e9)) return print('Infiltration deferred until the coinflipper finishes its $10b.');
+    if (!idleInfiltrationScreen(doc, companyNames) && !(options.soa && soaInvitation(doc)))
+      return print('Infiltration deferred: return to the Terminal, City, or company screen.');
+    session = {stop: false, controller: options['bn1-controller']}; wnd[sessionKey] = session;
+    ns.atExit(cleanup);
+    while (!stopping() && runs < limit) {
+      let player = ns.getPlayer();
+      const work = hasSingularity ? await singRun(ns, 'getCurrentWork') : null;
+      if (work?.type && work.type !== 'FACTION') break;
+      if (!idleInfiltrationScreen(doc, companyNames) && !(options.soa && soaInvitation(doc))) break;
+      let target = read(INFILTRATION_TARGET), rep = null;
+      const plannerPid = Number.isInteger(target?.pid) && target.lastAugReset === reset.lastAugReset &&
+        target.lastNodeReset === reset.lastNodeReset && Date.now() >= target.updatedAt &&
+        Date.now() - target.updatedAt <= 90_000 && ns.isRunning(target.pid)
+        ? target.pid : null;
+      if (options.scheduled && work?.type === 'FACTION' && !plannerPid) {
+        print('Infiltration deferred: restart the faction worker with --infiltration to coordinate screen use.'); break;
       }
-      companyEle.click()
-      postTimeout = setTimeout(() => {
-        postTimeout = null
-        var btn = Array.from(doc.querySelectorAll('button')).find(x => x.innerText.indexOf('Infiltrate Company') >= 0)
-        if (btn) btn[Object.keys(btn)[1]].onClick({ isTrusted: true })
-      }, 1000)
-    }
-  }, 1000)
-}
-
-// accept money bonus, hand off to acceptReputation() if repFaction is set
-function acceptMoney(msg) {
-  if (!auto) return
-  if (postTimeout) return
-
-  //console.log('acceptMoney:', msg)
-  cancelMyTimeout()
-
-  if (repFaction && repFaction.length) {
-    console.log("starting function accept reputation");
-    acceptReputation()
-    return
-  }
-
-  postTimeout = setTimeout(() => {
-    //console.log('acceptMoney()', msg)
-    cancelMyTimeout()
-    var btn = Array.from(doc.querySelectorAll('button')).find(x => x.innerText.indexOf('Sell for') >= 0)
-    if (btn) {
-      if (infiltrationStart) {
-        console.info(`SUCCESSFUL INFILTRATION - ${((new Date().valueOf() - infiltrationStart) / 1000).toFixed(1)} sec: ${btn.innerText}`);
-        infiltrationStart = 0
+      if (!freshInfiltrationTarget(target, reset, player.factions)) target = null;
+      if (options.faction) {
+        if (!player.factions.includes(options.faction)) {
+          const companyHint = companyNames.includes(options.faction)
+            ? ` To infiltrate that company, use --company ${JSON.stringify(options.faction)} and a joined --faction for the reputation reward.` : '';
+          throw new Error(`Reward faction ${JSON.stringify(options.faction)} is not in your joined factions. ` +
+            `--faction names the reputation recipient; company entry does not require faction membership.${companyHint}`);
+        }
+        target = {kind: 'faction-rep', faction: options.faction, targetRep: options['target-rep'] || Infinity, repRate: 0};
       }
-      btn[Object.keys(btn)[1]].onClick({ isTrusted: true })
-    } else {
-      console.log(`Failure!  ${ms}`)
-    }
-    //refillhealth();
-    selectCompany();
-  }, 1000)
-}
-
-// accept reputation bonus
-function acceptReputation() {
-  cancelMyTimeout()
-
-  postTimeout = setTimeout(() => {
-    postTimeout = null
-
-    // var e = Array.from(doc.querySelectorAll('[role="button"]')).find(x => x.innerText.indexOf('None') >= 0);
-    var e = Array.from(doc.querySelectorAll('[role="combobox"]')).find(x => x.innerText.indexOf('none') >= 0);
-    if (typeof (e) == 'undefined') {
-      var e = Array.from(doc.querySelectorAll('[role="combobox"]')).find(x => x.innerText.indexOf(repFaction) >= 0);
-    }
-    // var datetime = new Date().today() + " @ " + new Date().timeNow();
-    // console.log(datetime, " function acceptReputation: e ",e);
-    // console.log(datetime, " function acceptReputation: repFaction ", repFaction);
-    if (e) {
-      e[Object.keys(e)[1]].onKeyDown(new KeyboardEvent('keydown', { 'key': ' ' }));
-      postTimeout = setTimeout(() => {
-        var e2 = Array.from(doc.querySelectorAll('li[role="option"]')).find(x => x.innerText.indexOf(repFaction) >= 0)
-        // console.log("function acceptReputation: e2 ", e2);
-        e2.click()
-        postTimeout = setTimeout(() => {
-          var btn = Array.from(doc.querySelectorAll('button')).find(x => x.innerText.indexOf('Trade for') >= 0)
-          // console.log("function acceptReputation: btn ",btn);
-          if (btn) {
-            btn[Object.keys(btn)[1]].onClick({ isTrusted: true })
-            if (infiltrationStart) {
-              console.info(`SUCCESSFUL INFILTRATION - ${((new Date().valueOf() - infiltrationStart) / 1000).toFixed(1)} sec - ${btn.innerText}`, repFaction);
-              infiltrationStart = 0
-            }
+      if (target && hasSingularity) {
+        rep = await singRun(ns, 'getFactionRep', target.faction);
+        if (!Number.isFinite(rep)) throw new Error('Faction reputation unavailable');
+      }
+      if (options.faction && rep != null && rep >= target.targetRep) break;
+      let soa = null;
+      if (options.soa) {
+        await acquireScreen(plannerPid);
+        if (stopping()) break;
+        await acceptSoaInvitation(ns, doc, () => !stopping(), pulse);
+        if (!idleInfiltrationScreen(doc, companyNames)) break;
+        soa = await updateSoa();
+        if (stopping()) break;
+        player = ns.getPlayer();
+      }
+      const locations = await runScriptLocal(ns, 'bin/infiltration-locations.js', false, [player.city]);
+      if (!Array.isArray(locations)) throw new Error(`Infiltration quotes unavailable: ${String(locations)}`);
+      const input = {locations, player, target, rep, company: options.company, moneyTarget: options['money-target'],
+        income: infiltrationAlternativeIncome(ns.getTotalScriptIncome()[0], ns.getMoneySources().sinceInstall,
+          (Date.now() - reset.lastAugReset) / 1000),
+        minDemand: options['min-demand'], remainingMs: deadline - Date.now(), history, soa};
+      let choice = chooseInfiltration(input);
+      if (!choice) { print('No infiltration currently beats the active income/rep route within this time budget.'); break; }
+      // Wait for an in-flight faction planning pass to finish before taking the screen.
+      await acquireScreen(plannerPid);
+      if (stopping()) break;
+      if (!idleInfiltrationScreen(doc, companyNames)) break;
+      // Work/bribes/income may have finished the goal while we waited for the planner.
+      input.player = ns.getPlayer();
+      if (input.player.city !== player.city) break;
+      if (target && hasSingularity) {
+        input.rep = await singRun(ns, 'getFactionRep', target.faction);
+        if (!Number.isFinite(input.rep)) throw new Error('Faction reputation unavailable');
+        if (options.faction && input.rep >= target.targetRep) break;
+      }
+      choice = chooseInfiltration({...input, company: choice.company, remainingMs: deadline - Date.now()});
+      if (!choice || stopping()) break;
+      await openInfiltrationCompany(doc, choice.company, ms => ns.sleep(ms), () => !stopping());
+      let view;
+      const appearedBy = Math.min(deadline, Date.now() + infiltrationUiTimeout);
+      while (!stopping() && Date.now() < appearedBy && !(view = infiltrationView(doc, choice.company))) await ns.sleep(50);
+      if (view?.kind !== 'intro' || !view.scope) throw new Error('Expected infiltration introduction did not appear');
+      ownedModel = view.model; victory = false;
+      const demand = infiltrationDemand(view.scope);
+      choice = chooseInfiltration({...input, company: choice.company, demand, remainingMs: deadline - Date.now()});
+      if (!choice || !Number.isFinite(ownedModel.startingDifficulty) || ownedModel.startingDifficulty >= 3.5) {
+        print('Infiltration deferred: demand, difficulty, or time budget is unsuitable.'); break;
+      }
+      if (stopping()) break;
+      print(`Infiltrating ${choice.company} for ${choice.mode === 'rep' ? choice.faction + ' reputation' : 'money'} (demand ${(demand * 100).toFixed(1)}%).`);
+      const gameStart = Date.now(), handled = new WeakSet();
+      clickInfiltrationElement(infiltrationButton(view.scope, 'Start'));
+      let claimSent = false, claimed = false, claimDeadline = 0, absentSince = 0;
+      while (!stopping()) {
+        await pulse();
+        view = infiltrationView(doc, choice.company);
+        if (!view || view.model !== ownedModel) {
+          if (claimSent) { claimed = true; break; }
+          absentSince ||= Date.now();
+          if (Date.now() - absentSince > 500) throw new Error('Infiltration screen changed; yielding control');
+          await ns.sleep(50); continue;
+        }
+        absentSince = 0;
+        if (view.model.results?.includes('✗')) throw new Error('An infiltration stage failed; stopping this session');
+        if (view.kind === 'victory') {
+          victory = true;
+          if (claimSent) {
+            if (Date.now() > claimDeadline) throw new Error('Reward claim did not close the victory screen');
+          } else if (choice.mode !== 'rep' || selectInfiltrationFaction(view.scope, choice.faction)) {
+            const before = ns.getPlayer().money;
+            const oldRep = hasSingularity && choice.mode === 'rep' ? await singRun(ns, 'getFactionRep', choice.faction) : null;
+            if (stopping()) break;
+            view = infiltrationView(doc, choice.company);
+            if (view?.model !== ownedModel || view.kind !== 'victory') throw new Error('Reward screen changed; yielding control');
+            if (choice.mode === 'rep' && !selectInfiltrationFaction(view.scope, choice.faction)) continue;
+            clickInfiltrationElement(infiltrationButton(view.scope, choice.mode === 'rep' ? 'Trade for' : 'Sell for', true));
+            claimSent = true; claimDeadline = Date.now() + 2000;
+            const cash = ns.getPlayer().money - before;
+            const gainedRep = oldRep != null ? (await singRun(ns, 'getFactionRep', choice.faction)) - oldRep : null;
+            print(`Infiltration reward claimed: ${choice.mode === 'rep' ? choice.faction + (gainedRep == null ? '' : ' +' + Math.floor(gainedRep) + ' rep') : '$' + Math.round(cash).toLocaleString()}.`);
           }
-        })
-      }, 1000)
+        } else finishInfiltrationStage(view, handled);
+        await ns.sleep(50);
+      }
+      if (!claimed) break;
+      const row = history[choice.company] ??= {games: 0, durationMs: 0};
+      row.games++; row.durationMs += Date.now() - gameStart;
+      await ns.write(INFILTRATION_HISTORY, JSON.stringify(history, null, 2), 'w');
+      runs++; ownedModel = null; victory = false;
+      await ns.sleep(200);
+      // Claiming the first reward creates the invitation; accept it even on a single-run session.
+      if (options.soa && !stopping()) {
+        await acceptSoaInvitation(ns, doc, () => !stopping(), pulse);
+        if (runs >= limit && idleInfiltrationScreen(doc, companyNames)) await updateSoa();
+      }
     }
-  }, 1000)
-}
-
-
-// For todays date;
-Date.prototype.today = function () {
-  return ((this.getDate() < 10) ? "0" : "") + this.getDate() + "/" + (((this.getMonth() + 1) < 10) ? "0" : "") + (this.getMonth() + 1) + "/" + this.getFullYear();
-}
-
-// For the time now
-Date.prototype.timeNow = function () {
-  return ((this.getHours() < 10) ? "0" : "") + this.getHours() + ":" + ((this.getMinutes() < 10) ? "0" : "") + this.getMinutes() + ":" + ((this.getSeconds() < 10) ? "0" : "") + this.getSeconds();
-}
-
-function cancelMyTimeout() {
-  if (postTimeout) {
-    clearTimeout(postTimeout)
-    postTimeout = null
+  } catch (error) { print(`Infiltration stopped: ${String(error?.message ?? error)}`); }
+  finally {
+    cleanup();
+    if (session) await ns.write(INFILTRATION_LEASE, JSON.stringify({pid: ns.pid, expires: 0, retryAfter: Date.now() + options.cooldown}), 'w');
   }
 }
-
-/*  
-----------------------------------------------
-In memory of a script gone, but not forgotten:
-----------------------------------------------
-
-  {
-    name: "type it",
-    init: function (screen) {
-      const lines = getLines(getEl(screen, "p"));
-      state.game.data = lines[0].split("");
-    },
-    play: function (screen) {
-      if (!state.game.data || !state.game.data.length) {
-        delete state.game.data;
-        return;
-      }
-
-      pressKey(state.game.data.shift());
-    },
-  },
-  {
-    name: "enter the code",
-    init: function (screen) { state.game.position = 0 },
-    play: function (screen) {
-      const h4 = getEl(screen, "h4");
-      const code = h4[1].textContent;
-
-      switch (code[state.game.position]) {
-        case "↑":
-          pressKey("w");
-          break;
-        case "↓":
-          pressKey("s");
-          break;
-        case "←":
-          pressKey("a");
-          break;
-        case "→":
-          pressKey("d");
-          break;
-      }
-      state.game.position++;
-    },
-  },
-  {
-    name: "close the brackets",
-    init: function (screen) {
-      const data = getLines(getEl(screen, "p"));
-      const brackets = data.join("").split("");
-      state.game.data = [];
-
-      for (let i = brackets.length - 1; i >= 0; i--) {
-        const char = brackets[i];
-
-        if ("<" == char) {
-          state.game.data.push(">");
-        } else if ("(" == char) {
-          state.game.data.push(")");
-        } else if ("{" == char) {
-          state.game.data.push("}");
-        } else if ("[" == char) {
-          state.game.data.push("]");
-        }
-      }
-    },
-    play: function (screen) {
-      if (!state.game.data || !state.game.data.length) {
-        delete state.game.data;
-        return;
-      }
-
-      pressKey(state.game.data.shift());
-    },
-  },
-  {
-    name: "attack after the sentinel drops his guard and is distracted",
-    init: function (screen) {
-      state.game.data = "wait";
-    },
-    play: function (screen) {
-      const data = getLines(getEl(screen, "h4"));
-
-      if ("attack" === state.game.data) {
-        pressKey(" ");
-        state.game.data = "done";
-
-      }
-
-      // Attack in next frame - instant attack sometimes
-      // ends in failure.
-      if ('wait' === state.game.data && -1 !== data.indexOf("Distracted!")) {
-        state.game.data = "attack";
-
-      }
-    },
-  },
-  {
-    name: "say something nice about the guard",
-    init: function (screen) { },
-    play: function (screen) {
-      const correct = [
-        "affectionate",
-        "agreeable",
-        "bright",
-        "charming",
-        "creative",
-        "determined",
-        "energetic",
-        "friendly",
-        "funny",
-        "generous",
-        "polite",
-        "likable",
-        "diplomatic",
-        "helpful",
-        "giving",
-        "kind",
-        "hardworking",
-        "patient",
-        "dynamic",
-        "loyal",
-        "based",
-        "straightforward",
-      ];
-      const word = getLines(getEl(screen, "h5"))[1];
-
-      if (-1 !== correct.indexOf(word)) {
-        pressKey(" ");
-      } else {
-        pressKey("w");
-      }
-    },
-  },
-  {
-    name: "remember all the mines",
-    init: function (screen) {
-      const rows = getEl(screen, "p");
-      let gridSize = null;
-      switch (rows.length) {
-        case 9:
-          gridSize = [3, 3];
-          break;
-        case 12:
-          gridSize = [3, 4];
-          break;
-        case 16:
-          gridSize = [4, 4];
-          break;
-        case 20:
-          gridSize = [4, 5];
-          break;
-        case 25:
-          gridSize = [5, 5];
-          break;
-        case 30:
-          gridSize = [5, 6];
-          break;
-        case 36:
-          gridSize = [6, 6];
-          break;
-      }
-      if (gridSize == null) {
-        return;
-      }
-      //12 20 30 42
-      state.game.data = [];
-      let index = 0;
-      //for each row
-      for (let y = 0; y < gridSize[1]; y++) {
-        //initialize array data
-        state.game.data[y] = [];
-        for (let x = 0; x < gridSize[0]; x++) {
-          //for each column in the row add to state data if it has a child
-          if (rows[index].children.length > 0) {
-            state.game.data[y].push(true);
-          } else state.game.data[y].push(false);
-          index += 1;
-        }
-      }
-    },
-    play: function (screen) { },
-  },
-  {
-    name: "mark all the mines",
-    init: function (screen) {
-      state.game.x = 0;
-      state.game.y = 0;
-      state.game.cols = state.game.data[0].length;
-      state.game.dir = 1;
-    },
-    play: function (screen) {
-      let { data, x, y, cols, dir } = state.game;
-
-      if (data[y][x]) {
-        pressKey(" ");
-        data[y][x] = false;
-      }
-
-      x += dir;
-
-      if (x < 0 || x >= cols) {
-        x = Math.max(0, Math.min(cols - 1, x));
-        y++;
-        dir *= -1;
-        pressKey("s");
-      } else {
-        pressKey(dir > 0 ? "d" : "a");
-      }
-
-      state.game.data = data;
-      state.game.x = x;
-      state.game.y = y;
-      state.game.dir = dir;
-    },
-  },
-  {
-    name: "match the symbols",
-    init: function (screen) {
-      const data = getLines(getEl(screen, "h5 span"));
-      const rows = getLines(getEl(screen, "p"));
-      const keypad = [];
-      const targets = [];
-      let gridSize = null;
-      switch (rows.length) {
-        case 9:
-          gridSize = [3, 3];
-          break;
-        case 12:
-          gridSize = [3, 4];
-          break;
-        case 16:
-          gridSize = [4, 4];
-          break;
-        case 20:
-          gridSize = [4, 5];
-          break;
-        case 25:
-          gridSize = [5, 5];
-          break;
-        case 30:
-          gridSize = [5, 6];
-          break;
-        case 36:
-          gridSize = [6, 6];
-          break;
-      }
-      if (gridSize == null) {
-        return;
-      }
-      //build the keypad grid.
-      let index = 0;
-      for (let i = 0; i < gridSize[1]; i++) {
-        keypad[i] = [];
-        for (let y = 0; y < gridSize[0]; y++) {
-
-          keypad[i].push(rows[index]);
-          index += 1;
-        }
-      }
-      //foreach data get coords of keypad entry
-      for (let i = 0; i < data.length; i++) {
-        const symbol = data[i].trim();
-        //for each keypad entry
-        for (let j = 0; j < keypad.length; j++) {
-          const k = keypad[j].indexOf(symbol);
-
-          if (-1 !== k) {
-            targets.push([j, k]);
-            break;
-          }
-        }
-      }
-      state.game.data = targets;
-      state.game.x = 0;
-      state.game.y = 0;
-    },
-    play: function (screen) {
-      const target = state.game.data[0];
-      let { x, y } = state.game;
-
-      if (!target) {
-        return;
-      }
-
-      const to_y = target[0];
-      const to_x = target[1];
-
-      if (to_y < y) {
-        y--;
-        pressKey("w");
-      } else if (to_y > y) {
-        y++;
-        pressKey("s");
-      } else if (to_x < x) {
-        x--;
-        pressKey("a");
-      } else if (to_x > x) {
-        x++;
-        pressKey("d");
-      } else {
-        pressKey(" ");
-        state.game.data.shift();
-      }
-
-      state.game.x = x;
-      state.game.y = y;
-    },
-  },
-  {
-    name: "cut the wires with the following properties",
-    init: function (screen) {
-      let numberHack = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
-      const colors = {
-        red: "red",
-        white: "white",
-        blue: "blue",
-        "rgb(255, 193, 7)": "yellow",
-      };
-      const wireColor = {
-        red: [],
-        white: [],
-        blue: [],
-        yellow: [],
-      };
-      //gather the instructions
-      var instructions = []
-      for (let child of screen.children) instructions.push(child);
-      var wiresData = instructions.pop();
-      instructions.shift();
-      instructions = getLines(instructions);
-      //get the wire information
-      const samples = getEl(wiresData, "p");
-      const wires = [];
-      //get the amount of wires
-      let wireCount = 0;
-      for (let i = wireCount; i < samples.length; i++) {
-        if (numberHack.includes(samples[i].innerText)) wireCount += 1;
-        else break;
-      }
-      let index = 0;
-      //get just the first 3 rows of wires.
-      for (let i = 0; i < 3; i++) {
-        //for each row
-        for (let j = 0; j < wireCount; j++) {
-          const node = samples[index];
-          const color = colors[node.style.color];
-          if (!color) {
-            index += 1;
-            continue;
-          }
-          wireColor[color].push(j + 1);
-          index += 1;
-        }
-      }
-
-      for (let i = 0; i < instructions.length; i++) {
-        const line = instructions[i].trim().toLowerCase();
-
-        if (!line || line.length < 10) {
-          continue;
-        }
-        if (-1 !== line.indexOf("cut wires number")) {
-          const parts = line.split(/(number\s*|\.)/);
-          wires.push(parseInt(parts[2]));
-        }
-        if (-1 !== line.indexOf("cut all wires colored")) {
-          const parts = line.split(/(colored\s*|\.)/);
-          const color = parts[2];
-
-          if (!wireColor[color]) {
-            // should never happen.
-            continue;
-          }
-
-          wireColor[color].forEach((num) => wires.push(num));
-        }
-      }
-
-      // new Set() removes duplicate elements.
-      state.game.data = [...new Set(wires)];
-    },
-    play: function (screen) {
-      const wire = state.game.data;
-      //state.game.data.shift();
-      if (!wire) {
-        return;
-      }
-      for (let i = 0; i < wire.length; i++) {
-        pressKey(wire[i].toString());
-      }
-    },
-  },
-];
-
-
-function pressKey(keyOrCode) {
-  let keyCode = 0;
-  let key = "";
-
-  if ("string" === typeof keyOrCode && keyOrCode.length > 0) {
-    key = keyOrCode.toLowerCase().slice(0, 1)//.substr(0, 1);
-    keyCode = key.charCodeAt(0);
-  } else if ("number" === typeof keyOrCode) {
-    keyCode = keyOrCode;
-    key = String.fromCharCode(keyCode);
-  }
-
-  if (!keyCode || key.length !== 1) {
-    return;
-  }
-
-  function sendEvent(event) {
-    const keyboardEvent = new KeyboardEvent(event, {
-      key,
-      keyCode,
-    });
-    doc.dispatchEvent(keyboardEvent)
-  }
-
-  sendEvent("keydown");
-}
-
-function playGame() {
-  const screens = doc.querySelectorAll(".MuiContainer-root");
-
-  if (!screens.length) {
-    endInfiltration();
-    return;
-  }
-  if (screens[0].children.length < 3) {
-    return;
-  }
-
-  const screen = screens[0].children[2];
-  const h4 = screen.children//getEl(screen, "h4");
-
-  if (!h4.length) {
-    endInfiltration();
-    return;
-  }
-
-  const title = h4[0].textContent.trim().toLowerCase().split(/[!.(]/)[0];
-
-  if ("infiltration successful" === title) {
-    endInfiltration();
-    return;
-  }
-
-  if ("get ready" === title) {
-    return;
-  }
-
-  const game = infiltrationGames.find((game) => game.name === title);
-
-  if (game) {
-    if (state.game.current !== title) {
-      state.game.current = title;
-      game.init(screen);
-    }
-
-    game.play(screen);
-  } else {
-    console.error("Unknown game:", title);
-  }
-}
-
-function wrapEventListeners() {
-  if (!doc._addEventListener) {
-    doc._addEventListener = doc.addEventListener;
-    doc.addEventListener = function (type, callback, options) {
-      if ("undefined" === typeof options) {
-        options = false;
-      }
-      let handler = false;
-
-      // For this script, we only want to modify "keydown" events.
-      if ("keydown" === type) {
-        handler = function (...args) {
-          if (!args[0].isTrusted) {
-            let hackedEv = {}
-
-            for (const key in args[0]) {
-              if ("isTrusted" === key) {
-                hackedEv.isTrusted = true;
-              } else if ("function" === typeof args[0][key]) {
-                hackedEv[key] = args[0][key].bind(args[0]);
-              } else {
-                hackedEv[key] = args[0][key];
-              }
-            }
-            Object.setPrototypeOf(hackedEv, KeyboardEvent.prototype)
-            args[0] = hackedEv;
-          }
-          return callback.apply(callback, args);
-        };
-
-        for (const prop in callback) {
-          if ("function" === typeof callback[prop]) {
-            handler[prop] = callback[prop].bind(callback);
-          } else {
-            handler[prop] = callback[prop];
-          }
-        }
-      }
-
-      if (!this.eventListeners) {
-        this.eventListeners = {};
-      }
-      if (!this.eventListeners[type]) {
-        this.eventListeners[type] = [];
-      }
-
-      this.eventListeners[type].push({
-        listener: callback,
-        useCapture: options,
-        wrapped: handler,
-      });
-
-      return this._addEventListener(
-        type,
-        handler ? handler : callback,
-        options
-      )
-    };
-  }
-
-  if (!doc._removeEventListener) {
-    doc._removeEventListener = doc.removeEventListener;
-
-    doc.removeEventListener = function (type, callback, options) {
-      if ("undefined" === typeof options) {
-        options = false;
-      }
-
-      if (!this.eventListeners) {
-        this.eventListeners = {};
-      }
-      if (!this.eventListeners[type]) {
-        this.eventListeners[type] = [];
-      }
-
-      for (let i = 0; i < this.eventListeners[type].length; i++) {
-        if (
-          this.eventListeners[type][i].listener === callback &&
-          this.eventListeners[type][i].useCapture === options
-        ) {
-          if (this.eventListeners[type][i].wrapped) {
-            callback = this.eventListeners[type][i].wrapped;
-          }
-
-          this.eventListeners[type].splice(i, 1);
-          break;
-        }
-      }
-
-      if (this.eventListeners[type].length == 0) {
-        delete this.eventListeners[type];
-      }
-
-      return this._removeEventListener(type, callback, options);
-    };
-  }
-}
-
-function unwrapEventListeners() {
-  if (doc._addEventListener) {
-    doc.addEventListener = doc._addEventListener;
-    delete doc._addEventListener;
-  }
-  if (doc._removeEventListener) {
-    doc.removeEventListener = doc._removeEventListener;
-    delete doc._removeEventListener;
-  }
-  delete doc.eventListeners;
-}
-*/

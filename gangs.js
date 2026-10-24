@@ -1,6 +1,6 @@
 import {
   log, getConfiguration, findPids, getActiveSourceFiles, getBNMults, gangRun,
-  formatMoney, formatNumberShort, formatDuration, getReset, getPlayerInfo, singRun
+  formatMoney, formatNumberShort, formatDuration, getReset, getPlayerInfo, singRun, getReserve, purchase
 } from './utils.js'
 
 // Global config
@@ -441,7 +441,7 @@ async function tryUpgradeMembers(ns, dictMembers) {
   equipments.forEach(e => e.cost = Number(dictEquipmentCosts[e.name]) || Number.POSITIVE_INFINITY);
 
   const playerData = await getPlayerInfo(ns);
-  const reserve = options['reserve'] != null ? Number(options['reserve']) : Number(ns.read("reserve.txt") || 0);
+  const reserve = options['reserve'] != null ? Number(options['reserve']) : await getReserve(ns);
   const spendableMoney = Math.max(0, playerData.money - Math.max(0, reserve || 0));
   const maxBudget = 0.99;
   const clampBudget = (value, fallback) => Math.min(maxBudget, Math.max(0, Number(value ?? fallback) || 0));
@@ -511,7 +511,8 @@ async function doUpgradePurchases(ns, purchaseOrder) {
   const getOrderSummary = (items) => items.map(o => `${o.member} ${o.type}: "${o.equipmentName}"`).join(", ");
   const succeeded = [], failed = [];
   for (const order of purchaseOrder) {
-    if (await gangRun(ns, 'purchaseEquipment', order.member, order.equipmentName))
+    if ((await purchase(ns, 'gang', 'purchaseEquipment', [order.member, order.equipmentName],
+      {budget: order.cost, ...(options.reserve == null ? {} : {reserve: options.reserve})})).result === true)
       succeeded.push(order)
     else
       failed.push(order);

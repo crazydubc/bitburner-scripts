@@ -1,6 +1,14 @@
+import { purchaseRam } from './purchase-guard.js';
 export async function getPlayerInfo(ns) { return await runScript(ns, "bin/getPlayer.js", false, []) }
 export async function getReset(ns) { return await runScript(ns, "bin/getResetInfo.js", false, []) }
-export async function getBNMults(ns) { return await runScript(ns, "bin/getbnmultis.js", false, []) }
+export async function getBNMults(ns) {
+  const reset = await getReset(ns);
+  const hasApi = reset.currentNode === 5 || Number(reset.ownedSF instanceof Map ? reset.ownedSF.get(5) : reset.ownedSF?.[5]) > 0;
+  const result = await runScriptLocal(ns, "bin/getbnmultis.js", false, [], hasApi ? 6.6 : 2.6);
+  if (!result || typeof result !== 'object' || !Number.isFinite(result.ScriptHackMoney))
+    throw new Error(`Invalid BitNode multipliers: ${String(result)}`);
+  return result;
+}
 export async function getServersLight(ns) { return await runScriptLocal(ns, "bin/getServersLight.js", false, []) }
 export async function getServerAvailRam(ns, hostname) { return await runScriptLocal(ns, "bin/getServerAvailRam.js", false, [hostname]) }
 export async function getServerMaxRam(ns, hostname) { return await runScript(ns, "bin/getServerMaxRam.js", false, [hostname]) }
@@ -8,15 +16,77 @@ export async function getServers(ns) { return await runScriptLocal(ns, "bin/getS
 export async function doSCP(ns, script, hostname, source = "home") { return await runScriptLocal(ns, "bin/scp.js", false, [script, hostname, source]) }
 export async function getOptimalTarget(ns, first = false) { return await runScript(ns, "bin/getOptimalServer.js", false, [first]) }
 export async function getServ(ns, hostname) { return await runScript(ns, "bin/getServer.js", false, [hostname]) }
-export async function getGrowThreads(ns, hostname, moneystate, minsecurity) { return await runScript(ns, "bin/getGrowThreads.js", false, [hostname, moneystate, minsecurity]) }
-export async function getHackP(ns, target, batches, threadsavailable, starthack) { return await runScript(ns, "bin/getHackP.js", false, [target, batches, threadsavailable, starthack]) }
+export async function getGrowThreads(ns, hostname, moneystate, minsecurity) {
+  const multipliers = await getBNMults(ns);
+  const result = await runScript(ns, "bin/getGrowThreads.js", false, [hostname, moneystate, minsecurity, JSON.stringify(multipliers)]);
+  if (!Number.isInteger(result) || result < 0) throw new Error(`Invalid grow calculation: ${String(result)}`);
+  return result;
+}
+export async function getHackP(ns, target, batches, threadsavailable, starthack) {
+  const multipliers = await getBNMults(ns);
+  const result = await runScript(ns, "bin/getHackP.js", false, [target, batches, threadsavailable, starthack, JSON.stringify(multipliers)]);
+  if (!result || !['H1', 'W1', 'G1', 'W2'].every(key => Number.isInteger(result[key]) && result[key] >= 0))
+    throw new Error(`Invalid batch calculation: ${String(result)}`);
+  return result;
+}
 export async function getHackPercent(ns, hostname, minsecurity) { return await runScript(ns, "bin/getHackPercent.js", false, [hostname, minsecurity]) }
 export async function getHackChance(ns, hostname, minsecurity) { return await runScript(ns, "bin/getHackChance.js", false, [hostname, minsecurity]) }
 export async function doGetServerMinSec(ns, hostname) { return await runScript(ns, "bin/doGetServerMinSec.js", false, [hostname]) }
 export async function doGetServerCurSec(ns, hostname) { return await runScript(ns, "bin/doGetServerCurSec.js", false, [hostname]) }
-export async function serverRun(ns, logging, target, w1, g1, w2, h1, w3, g2, w4, batchh1, batchw1, batchg1, batchw2, batches, usehacknet) { return await runScriptLocal(ns, "bin/serverRun.js", false, [logging, target, w1, g1, w2, h1, w3, g2, w4, batchh1, batchw1, batchg1, batchw2, batches, usehacknet]) }
+export async function serverRun(ns, logging, target, w1, g1, w2, h1, w3, g2, w4, batchh1, batchw1, batchg1, batchw2, batches, usehacknet, shareHandoff = '') {
+  const counts = {w1, g1, w2, h1, w3, g2, w4, batchh1, batchw1, batchg1, batchw2, batches};
+  const invalid = Object.entries(counts).find(([, value]) => !Number.isInteger(value) || value < 0);
+  if (invalid) throw new Error(`Invalid dispatcher count for ${target}: ${invalid[0]}=${String(invalid[1])}; refusing to launch work.`);
+  return await runScriptLocal(ns, "bin/serverRun.js", false, [logging, target, w1, g1, w2, h1, w3, g2, w4, batchh1, batchw1, batchg1, batchw2, batches, usehacknet, shareHandoff]);
+}
 export async function hasTixApi(ns) { return await runScript(ns, "bin/hasTixApi.js", false, []) }
 export async function getBoard(ns) { return await runScript(ns, "bin/getBoardState.js", false, []) }
+export async function getGoSnapshot(ns) {
+  const required = ns.getScriptRam('bin/getGoSnapshot.js', 'home');
+  if (!(required > 0) || await getServerAvailRam(ns, 'home') < required) {
+    // Keep the old low-peak-RAM path usable on small/busy home servers.
+    return {board: await getBoard(ns), controlled: await getControlledENodes(ns),
+      valid: await goValidMoves(ns), liberties: await goLiberties(ns), chains: await goChains(ns)};
+  }
+  const result = await runScriptLocal(ns, 'bin/getGoSnapshot.js', false, []);
+  if (!result || !['board', 'controlled', 'valid', 'liberties', 'chains'].every(key => Array.isArray(result[key])))
+    throw new Error(`Go snapshot failed: ${String(result)}`);
+  return result;
+}
+export async function recordGoResult(ns, result) {
+  const saved = await runScriptLocal(ns, 'bin/go-stats.js', false, [JSON.stringify(result)]) === true;
+  if (!saved) ns.print('WARNING: Could not save Go results on home.');
+  return saved;
+}
+export async function getGoResults(ns) {
+  const result = await runScriptLocal(ns, 'bin/go-stats.js', false, ['read']);
+  if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error(`Go results unavailable: ${String(result)}`);
+  return result;
+}
+/** Optional once-per-game reads must not prevent playing when home RAM/API access is limited. */
+export async function getGoContext(ns, sourceFiles = {}) {
+  const required = ns.getScriptRam('bin/go-context.js', 'home');
+  if (!(required > 0)) return null;
+  const free = await getServerAvailRam(ns, 'home');
+  if (!Number.isFinite(free) || free < required) return null;
+  const context = await runScriptLocal(ns, 'bin/go-context.js', false, []);
+  if (!context || typeof context !== 'object' || Array.isArray(context)) return null;
+  if ((sourceFiles[4] ?? 0) > 0) {
+    const fits = fn => free >= Math.max(6.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`singularity.${fn}`));
+    try {
+      if (fits('getCurrentWork')) {
+        const work = await singRun(ns, 'getCurrentWork');
+        if (work === null || (work && typeof work === 'object' && typeof work.type === 'string')) {
+          context.work = work;
+          context.workKnown = true;
+        }
+        if (work?.type === 'CRIME' && typeof work.crimeType === 'string' && fits('getCrimeChance'))
+          context.crimeChance = await singRun(ns, 'getCrimeChance', work.crimeType);
+      }
+    } catch { /* Keep the cheap snapshot if the optional work/chance read fails. */ }
+  }
+  return context;
+}
 export async function getControlledENodes(ns) { return await runScript(ns, "bin/getControlledEmptyNodes.js", false, []) }
 export async function goMove(ns, x, y) { return await runScript(ns, "bin/makeMove.js", false, [x, y]) }
 export async function goValidMoves(ns) { return await runScript(ns, "bin/goValidMoves.js", false, []) }
@@ -26,14 +96,53 @@ export async function goCheatChance(ns) { return await runScript(ns, "bin/getChe
 export async function play2Moves(ns, x1, y1, x2, y2) { return await runScript(ns, "bin/playTwoMoves.js", false, [x1, y1, x2, y2]) }
 export async function destroyND(ns, ...args) { return await runScript(ns, "bin/destroyNode.js", false, [...args]); }
 
-export async function corpRun(ns, fn, ...args) { return await runScript(ns, "bin/corpRun.js", false, [fn, ...args]); }
-export async function stockRun(ns, fn, ...args) { return await runScript(ns, "bin/stockRun.js", false, [fn, ...args]) }
-export async function sleeveRun(ns, fn, ...args) { return await runScript(ns, "bin/sleeveRun.js", false, [fn, ...args]) }
-export async function hnRun(ns, fn, ...args) { return await runScript(ns, "bin/hnRun.js", false, [fn, ...args]) }
-export async function bbRun(ns, fn, ...args) { return await runScript(ns, "bin/bbRun.js", false, [fn, ...args]) }
-export async function singRun(ns, fn, ...args) { return await runScript(ns, "bin/singRun.js", false, [fn, ...args]) }
-export async function stanekRun(ns, fn, ...args) { return await runScript(ns, "bin/stanekRun.js", false, [fn, ...args]) }
-export async function gangRun(ns, fn, ...args) { return await runScript(ns, "bin/gangRun.js", false, [fn, ...args]) }
+async function apiRun(ns, namespace, helper, minimumRam, fn, args) {
+  const ram = Math.max(minimumRam, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`${namespace}.${fn}`));
+  let deadline;
+  if (namespace === 'singularity' && fn === 'installBackdoor') {
+    const target = await singRun(ns, 'getCurrentServer');
+    const duration = await runScriptLocal(ns, 'bin/getBackdoorTime.js', false, [target]);
+    if (!Number.isFinite(duration) || duration < 0) throw new Error('Could not determine backdoor duration');
+    deadline = Math.max(120_000, duration * 1.5 + 60_000);
+  }
+  const result = await runScriptLocal(ns, helper, false, [fn, ...args], ram, deadline);
+  if (typeof result === 'string' && result.startsWith('ERROR:'))
+    throw new Error(`${namespace}.${fn}: ${result.slice(6)}`);
+  return result;
+}
+export async function corpRun(ns, fn, ...args) { return apiRun(ns, 'corporation', 'bin/corpRun.js', 23.6, fn, args); }
+export async function stockRun(ns, fn, ...args) { return apiRun(ns, 'stock', 'bin/stockRun.js', 5.6, fn, args); }
+export async function sleeveRun(ns, fn, ...args) { return apiRun(ns, 'sleeve', 'bin/sleeveRun.js', 5.6, fn, args); }
+export async function hnRun(ns, fn, ...args) { return apiRun(ns, 'hacknet', 'bin/hnRun.js', 6.6, fn, args); }
+export async function bbRun(ns, fn, ...args) { return apiRun(ns, 'bladeburner', 'bin/bbRun.js', 5.6, fn, args); }
+export async function singRun(ns, fn, ...args) { return apiRun(ns, 'singularity', 'bin/singRun.js', 6.6, fn, args); }
+/** Read one Singularity API for many names using one helper and the same peak RAM as a single read. */
+export async function singReadMany(ns, fn, items) {
+  if (!Array.isArray(items) || !items.every(item => typeof item === 'string' && item.length > 0))
+    throw new Error('Singularity bulk reads require a list of nonempty names');
+  const names = [...new Set(items)], entries = [];
+  if (!names.length) return {};
+  const ram = Math.max(6.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`singularity.${fn}`));
+  for (let i = 0; i < names.length; i += 512) {
+    const chunk = names.slice(i, i + 512);
+    const result = await runScriptLocal(ns, 'bin/singReadMany.js', false, [fn, JSON.stringify(chunk)], ram);
+    if (!result || typeof result !== 'object' || Array.isArray(result) ||
+      !chunk.every(name => Object.hasOwn(result, name)))
+      throw new Error(`singularity.${fn} bulk read failed: ${String(result)}`);
+    entries.push(...chunk.map(name => [name, result[name]]));
+  }
+  return Object.fromEntries(entries);
+}
+export async function stanekRun(ns, fn, ...args) { return apiRun(ns, 'stanek', 'bin/stanekRun.js', 6.6, fn, args); }
+export async function gangRun(ns, fn, ...args) { return apiRun(ns, 'gang', 'bin/gangRun.js', 5.6, fn, args); }
+
+export async function purchase(ns, namespace, method, args = [], policy = {}) {
+  const result = await runScriptLocal(ns, 'bin/purchase.js', false,
+    [namespace, method, JSON.stringify(args), JSON.stringify(policy)], purchaseRam(ns, namespace, method));
+  if (!result || typeof result !== 'object' || !Number.isFinite(result.spent) || result.spent < 0)
+    throw new Error(`Purchase failed: ${String(result)}`);
+  return result;
+}
 export async function destroyWD(ns, bn, script) { return await runScript(ns, "bin/destroyWD.js", false, [bn, script]) }
 export async function bitflume(ns, bn, script) { return await runScriptLocal(ns, "bin/bitflume.js", false, [bn, script]) }
 
@@ -49,16 +158,59 @@ export async function crackHosts(ns) { return await runScript(ns, "Tasks/crack-h
 const reservedRam = 16;
 const remoteLaunchTimeout = 10_000;
 const remoteLaunchWarningTimes = new Map();
+const unresponsiveReplies = new Map();
+
+export function rpcReplyBudget(script, args = []) {
+  const name = script.replace(/^\/+/, '');
+  if (!name.startsWith('bin/')) return 0; // Caller-owned scripts retain their own lifetime contract.
+  if (['bin/getHackP.js', 'bin/getOptimalServer.js'].includes(name)) return 120_000;
+  if (name === 'bin/serverRun.js') return 300_000;
+  if (['bin/makeMove.js', 'bin/passTurn.js', 'bin/playTwoMoves.js', 'bin/nextTurn.js'].includes(name)) return 600_000;
+  if (name === 'bin/corpRun.js' && args[0] === 'nextUpdate') return 120_000;
+  if (name === 'bin/stanekRun.js' && args[0] === 'chargeFragment') return 600_000;
+  return 30_000;
+}
+
+/** Read current spending state on home, including when the caller has been offloaded. */
+export async function getReserve(ns) {
+  const value = ns.getHostname() === 'home'
+    ? Number(ns.read('reserve.txt') || 0)
+    : await runScriptLocal(ns, getFilePath('bin/reserve.js'), false, ['read']);
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+    throw new Error('Cannot read a valid reserve.txt from home; skipping spending.');
+  return value;
+}
+
+/** Write only on home; never publish an offloaded process's stale local copy. */
+export async function setReserve(ns, value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0)
+    throw new Error(`Invalid cash reserve: ${value}`);
+  if (ns.getHostname() === 'home') await ns.write('reserve.txt', value, 'w');
+  else if (await runScriptLocal(ns, getFilePath('bin/reserve.js'), false, ['write', value]) !== value)
+    throw new Error('Could not update reserve.txt on home.');
+  return value;
+}
 export const remoteScriptDependencies = [
   "utils.js",
   "faction-route-planner.js",
   "logger.js",
   "donation-favor.js",
+  "progression.js",
+  "hacking-formulas.js",
+  "purchase-guard.js",
+  "speedrun-policy.js",
+  "augmentation-reset-policy.js",
+  "go-policy.js",
+  "share-controller.js",
+  "infiltration-policy.js",
 ];
 
 /** Return the complete shared runtime bundle copied before launching a script away from home. */
 export function getRemoteScriptFiles(script) {
-  return [...new Set([script, ...remoteScriptDependencies.map(getFilePath)])];
+  const bn1 = script.replace(/^\/+/, '') === 'bn1-auto.js'
+    ? ['bn1-ui.js', 'bn1-policy.js', 'bn1-guide.js', 'infiltration-ui.js', 'terminal-ui.js', 'bn1-casino.js', 'coinflip.js']
+    : script.replace(/^\/+/, '') === 'autopilot.js' ? ['bn1-policy.js'] : [];
+  return [...new Set([script, ...remoteScriptDependencies.map(getFilePath), ...bn1.map(getFilePath)])];
 }
 
 /** Returns a helpful error message if we forgot to pass the ns instance to a function
@@ -163,16 +315,68 @@ export async function runScript(ns, scriptName, persistent, args = []) {
 }
 
 /** @param {NS} ns */
-//runs script on the local machine it is called from
-export async function runScriptLocal(ns, scriptName, persistent = false, args = []) {
+// Launch on home. Persistent callers receive a PID; request/reply callers receive the PID-port result.
+export async function runScriptLocal(ns, scriptName, persistent = false, args = [], ramOverride = 0, replyBudget = rpcReplyBudget(scriptName, args)) {
   checkNsInstance(ns, '"runScriptLocal"');
+  const requestKey = JSON.stringify([scriptName, args]);
+  const stalled = unresponsiveReplies.get(requestKey);
+  if (stalled && ns.isRunning(stalled)) throw new Error(`${scriptName} child ${stalled} is still unresponsive; stop that PID before retrying.`);
+  unresponsiveReplies.delete(requestKey);
+  const scriptRam = ns.getScriptRam(scriptName, 'home');
+  if (!(scriptRam > 0)) throw new Error(`Cannot launch ${scriptName}: missing or invalid script on home.`);
+  const options = { threads: 1, temporary: true };
+  if (ramOverride > 0) options.ramOverride = ramOverride;
+  const started = Date.now();
   let pidof;
-  while ((pidof = ns.exec(scriptName, "home", { threads: 1, temporary: true }, ...args)) == 0) {
+  while ((pidof = ns.exec(scriptName, "home", options, ...args)) === 0) {
+    if (Date.now() - started >= remoteLaunchTimeout)
+      throw new Error(`Cannot launch ${scriptName} on home after ${remoteLaunchTimeout / 1000}s. ` +
+        `Needs ${Math.max(scriptRam, ramOverride)} GB; free home RAM or inspect the launch log.`);
     await ns.sleep(10);
   }
   if (persistent) return pidof;
-  await ns.nextPortWrite(pidof);
-  return ns.readPort(pidof);
+  return await waitForRpcReply(ns, scriptName, pidof, replyBudget, requestKey);
+}
+
+/** Preserve event-driven replies without adding a sleep to successful calls. */
+async function waitForRpcReply(ns, scriptName, pid, replyBudget, requestKey) {
+  const port = ns.getPortHandle(pid);
+  if (!port.empty()) return port.read(); // A fast child may already have replied.
+  if (!ns.isRunning(pid)) throw new Error(`${scriptName} (pid ${pid}) exited without a reply.`);
+  let timer;
+  let deadChild = false;
+  let timedOut = false;
+  const started = Date.now();
+  const reply = port.nextWrite();
+  try {
+    await Promise.race([reply, new Promise((resolve, reject) => {
+      const check = () => {
+        try {
+          if (!port.empty()) return resolve();
+          if (!ns.isRunning(pid)) {
+            deadChild = true;
+            return reject(new Error(`${scriptName} (pid ${pid}) exited without a reply.`));
+          }
+          if (replyBudget > 0 && Date.now() - started >= replyBudget) {
+            timedOut = true;
+            unresponsiveReplies.set(requestKey, pid);
+            // Keep kill's RAM charge in its own tiny helper; never kill an unrelated process or a whole filename.
+            const killer = ns.exec('bin/terminate-rpc.js', 'home', {threads: 1, temporary: true}, pid);
+            return reject(new Error(`${scriptName} child ${pid} exceeded its ${replyBudget / 1000}s reply budget. ` +
+              (killer ? 'Requested termination; the caller can recover.' : 'Free home RAM or stop this PID before retrying.')));
+          }
+          // A live backdoor, Go turn, or calculator may legitimately take a long time.
+          timer = setTimeout(check, 1000);
+        } catch (error) { reject(error); }
+      };
+      timer = setTimeout(check, 1000);
+    })]);
+    return port.read();
+  } finally {
+    clearTimeout(timer);
+    // Release our pending listener when the child has died or this request has been abandoned.
+    if ((deadChild || timedOut) && port.empty()) { port.write(undefined); port.read(); }
+  }
 }
 
 /** @param {NS} ns */
@@ -182,10 +386,15 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
   let thispid = 0
   const startedWaiting = Date.now();
   let lastFailure = `no server had enough free RAM for ${script}`;
-  const scriptRam = scriptOverride === 0 ? ns.getScriptRam(script) : scriptOverride
-  const homeAvailRam = Math.ceil(await getServerAvailRam(ns, "home") - reservedRam, 0);
+  const scriptRam = scriptOverride === 0 ? ns.getScriptRam(script, 'home') : scriptOverride;
+  const launchOptions = {threads: 1, temporary: true, ...(scriptOverride > 0 ? {ramOverride: scriptOverride} : {})};
+  if (!Number.isFinite(scriptRam) || scriptRam <= 0) {
+    if (!quiet) log(ns, `WARNING: Cannot launch ${script}: missing script or invalid RAM requirement on home.`);
+    return 0;
+  }
+  const homeAvailRam = await getServerAvailRam(ns, "home") - reservedRam;
   if (!persistent && Math.floor(homeAvailRam / scriptRam) >= 1) {
-    thispid = ns.exec(script, "home", { threads: 1, temporary: true }, ...argmts)
+    thispid = ns.exec(script, "home", launchOptions, ...argmts)
     if (thispid > 0) return thispid;
   }
   while (true) {
@@ -217,9 +426,20 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
         }
       }
       if (!copied) continue;
-      thispid = ns.exec(script, server, { threads: 1, temporary: true }, ...argmts)
+      if (await runScriptLocal(ns, getFilePath('bin/sync-script-config.js'), false, [script, server]) !== true) {
+        lastFailure = `failed to synchronize configuration for ${script} on ${server}`;
+        continue;
+      }
+      thispid = ns.exec(script, server, launchOptions, ...argmts)
       if (thispid > 0) return thispid;
       lastFailure = `ns.exec returned 0 for ${script} on ${server} after its dependencies were copied`;
+    }
+    // Prefer offloading persistent managers, but use home when it is the only suitable host.
+    const homeFree = await getServerAvailRam(ns, 'home');
+    const relocatingSelfFromHome = script.replace(/^\/+/, '') === ns.getScriptName() && ns.getHostname() === 'home';
+    if (!relocatingSelfFromHome && homeFree - reservedRam >= scriptRam) {
+      thispid = ns.exec(script, 'home', launchOptions, ...argmts);
+      if (thispid > 0) return thispid;
     }
     if (persistent || Date.now() - startedWaiting >= remoteLaunchTimeout) {
       const now = Date.now();
@@ -231,13 +451,6 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
       }
       return 0;
     }
-    //run on home last
-    /*let tmpramavailable = Math.max(await getServerAvailRam(ns, "home") - reservedRam, 0);
-    const threadsonserver = Math.floor(tmpramavailable / scriptRam);
-    if (threadsonserver > 1) {
-      thispid = ns.exec(script, "home", { threads: 1, temporary: true }, ...argmts)
-      if (thispid > 1) return thispid;
-    }*/
     await ns.sleep(50);
   }
 }
@@ -297,22 +510,34 @@ export function getErrorInfo(err) {
    */
 export async function whichServerIsRunning(ns, scriptName) {
   checkNsInstance(ns, '"whichServerIsRunning"');
-  const servers = await getServers(ns);
+  // Process lookup needs only hostnames. Avoid a home RPC and full server snapshots.
+  const servers = new Set(['home']);
   for (const server of servers) {
-    const procs = ns.ps(server.hostname);
+    const procs = ns.ps(server);
     for (const p of procs) {
       if (p.filename === scriptName) {
-        return [server.hostname, p.pid];
+        return [server, p.pid];
       }
     }
+    for (const neighbor of ns.scan(server)) servers.add(neighbor);
   }
   return [null, null];
 }
 
 /** finds if a script is running * @param {NS} ns * @param {string} scriptName * @returns [] */
-export async function isScriptRunning(ns, scriptName) {
+export async function isScriptRunning(ns, scriptName, snapshot) {
+  if (snapshot) return snapshot.has(scriptName.replace(/^\/+/, ''));
   const running = await whichServerIsRunning(ns, scriptName);
   return running[0] !== null;
+}
+
+/** Reuse only within one scheduler pass; launches still use live RAM checks. */
+export function getRunningScriptNames(ns, servers) {
+  const names = new Set();
+  for (const server of servers) {
+    for (const process of ns.ps(server.hostname)) names.add(process.filename.replace(/^\/+/, ''));
+  }
+  return names;
 }
 
 
@@ -371,7 +596,7 @@ export async function maxRun(ns, persistent, useHacknet = false) {
   for (const server of servers) {
     if (server.startsWith("hacknet")) {
       if (!useHacknet) continue;
-    } else if (ns.hasRootAccess(server)) continue; //can't check for root on hacknets
+    } else if (!ns.hasRootAccess(server)) continue; //can't check for root on hacknets
     let tmpramavailable = await getServerAvailRam(ns, server)
     if (server === "home" && persistent) tmpramavailable = Math.max(tmpramavailable, 0)
     if (tmpramavailable > highest)
@@ -385,7 +610,7 @@ export async function maxRun(ns, persistent, useHacknet = false) {
   for (const server of servers) {
     if (server.startsWith("hacknet")) {
       if (!useHacknet) continue;
-    } else if (ns.hasRootAccess(server)) continue; //can't check for root on hacknets
+    } else if (!ns.hasRootAccess(server)) continue; //can't check for root on hacknets
     let tmpramavailable = await getServerAvailRam(ns, server)
     if (persistent && emergencyReserve && tmpramavailable >= resRam) {
       emergencyReserve = false
@@ -404,7 +629,7 @@ export async function maxRun(ns, persistent, useHacknet = false) {
  * @returns {Promise<boolean[]>} */
 export async function filesExist(ns, fileNames, hostname = "home") {
   checkNsInstance(ns, '"filesExist"');
-  return fileNames.slice(1).map(f => ns.fileExists(f, hostname));
+  return fileNames.map(f => ns.fileExists(f, hostname));
 }
 
 /** A helper to parse the command line arguments with a bunch of extra features, such as
@@ -539,19 +764,40 @@ export async function buildLib(ns, items, cmd) {
  *  @param {NS} ns The nestcript instance passed to your script's main entry point
  * @returns {Promise<number>} The current total dollar value of all owned stocks */
 export async function getStocksValue(ns) {
-  if (!(await hasTixApi(ns))) return 0;
-  let stockSymbols = await stockRun(ns, 'getSymbols');
-  if (stockSymbols == null) return 0; // No TIX API Access
-  const askPrices = await buildLib(ns, stockSymbols, 'getAskPrice');
-  // Workaround for Bug #304: If we lost TIX access, our cache of stock symbols will still be valid, but we won't be able to get prices.
-  if (askPrices == null) return 0; // No TIX API Access
-  const bidPrices = await buildLib(ns, stockSymbols, 'getBidPrice');
-  const positions = await buildLib(ns, stockSymbols, 'getPosition');
-  return stockSymbols.map(sym => ({ sym, pos: positions[sym], ask: askPrices[sym], bid: bidPrices[sym] }))
-    .reduce((total, stk) => total + (stk.pos[0] * stk.bid) /* Long Value */ + stk.pos[2] * (stk.pos[3] * 2 - stk.ask) /* Short Value */
-      // Subtract commission only if we have one or more shares (this is money we won't get when we sell our position)
-      // If for some crazy reason we have shares both in the short and long position, we'll have to pay the commission twice (two separate sales)
-      - 100000 * (Math.sign(stk.pos[0]) + Math.sign(stk.pos[2])), 0);
+  // getSymbols() can list a valid ticker before its position data is readable.
+  // Retry the entire valuation, never a partial sum or a fabricated zero balance.
+  for (let retryIndex = 0; ; retryIndex++) {
+    try { return await readStocksValue(ns); }
+    catch (error) {
+      if (retryIndex >= 2 || !/\bstock\.(?:getPosition|getBidPrice|getAskPrice)\b[\s\S]*Invalid stock symbol:/.test(String(error))) throw error;
+      await ns.sleep(250);
+    }
+  }
+}
+
+async function readStocksValue(ns) {
+  const tixAccess = await hasTixApi(ns);
+  if (tixAccess === false) return 0;
+  if (tixAccess !== true) throw new Error(`Invalid stock access result: ${String(tixAccess)}`);
+  const required = ns.getScriptRam('bin/getStockValue.js', 'home');
+  let value = 0;
+  if (required > 0 && await getServerAvailRam(ns, 'home') >= required) {
+    value = await runScriptLocal(ns, 'bin/getStockValue.js', false, []);
+  } else {
+    // Stock snapshots need 9.65 GB in v3.0.1. Retain the smaller per-call helper when they cannot fit.
+    const symbols = await stockRun(ns, 'getSymbols');
+    if (!Array.isArray(symbols)) throw new Error(`Invalid stock symbols: ${String(symbols)}`);
+    for (const symbol of symbols) {
+      const position = await stockRun(ns, 'getPosition', symbol);
+      if (!Array.isArray(position) || position.length !== 4 || !position.every(Number.isFinite))
+        throw new Error(`Invalid position for ${symbol}`);
+      const [long, , short, shortPrice] = position;
+      if (long > 0) value += long * await stockRun(ns, 'getBidPrice', symbol) - 100_000;
+      if (short > 0) value += short * (2 * shortPrice - await stockRun(ns, 'getAskPrice', symbol)) - 100_000;
+    }
+  }
+  if (!Number.isFinite(value)) throw new Error(`Stock valuation failed: ${String(value)}`);
+  return value;
 }
 
 const crackNames = ["BruteSSH.exe", "FTPCrack.exe", "relaySMTP.exe", "HTTPWorm.exe", "SQLInject.exe"];

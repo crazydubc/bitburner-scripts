@@ -5,6 +5,44 @@ let servers;
 let max;
 let chunkSwitch;
 let logging;
+let shareWorkers = new Map();
+
+// Only the kernel's explicitly handed-off workers can be reclaimed. Read actual
+// process RAM/threads rather than trusting serialized accounting or killing by name.
+function readShareWorkers(ns, encoded) {
+  const result = new Map();
+  if (!encoded) return result; // Older/offloaded callers do not supply a handoff.
+  let handoff;
+  try { handoff = JSON.parse(encoded); } catch { return result; }
+  if (!Number.isInteger(handoff?.owner) || handoff.owner <= 0 || !Array.isArray(handoff.pids)) return result;
+  for (const pid of new Set(handoff.pids)) {
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    const job = ns.getRunningScript(pid);
+    if (!job || job.filename !== 'bin/share.js' || job.args.length !== 2 ||
+      job.args[0] !== '--owner' || job.args[1] !== handoff.owner ||
+      !Number.isInteger(job.threads) || job.threads <= 0 || !Number.isFinite(job.ramUsage) || job.ramUsage <= 0) continue;
+    if (!result.has(job.server)) result.set(job.server, []);
+    result.get(job.server).push({pid, ram: job.ramUsage * job.threads});
+  }
+  return result;
+}
+
+function availableRam(ns, host) {
+  const reclaimable = (shareWorkers.get(host) ?? []).reduce((sum, job) => sum + (ns.isRunning(job.pid) ? job.ram : 0), 0);
+  return Math.round((ns.getServerMaxRam(host) - ns.getServerUsedRam(host) + reclaimable) * 100) / 100;
+}
+
+function reclaimFor(ns, host, requiredRam) {
+  const jobs = shareWorkers.get(host);
+  if (!jobs) return true;
+  // Do not interrupt sharing on a host if its genuinely free RAM covers this launch.
+  while (jobs.length && ns.getServerMaxRam(host) - ns.getServerUsedRam(host) + 1e-9 < requiredRam) {
+    const job = jobs.pop();
+    if (ns.isRunning(job.pid)) ns.kill(job.pid);
+  }
+  if (!jobs.length) shareWorkers.delete(host);
+  return ns.getServerMaxRam(host) - ns.getServerUsedRam(host) + 1e-9 >= requiredRam;
+}
 /** @param {NS} ns */
 export async function main(ns) {
   logging = ns.args[0]
@@ -22,6 +60,7 @@ export async function main(ns) {
   const batchw2 = ns.args[12]
   const batches = ns.args[13]
   const useHacknet = ns.args[14]
+  shareWorkers = readShareWorkers(ns, ns.args[15]);
   servers = getServers(ns, useHacknet)
   let results;
   const hacktime = ns.getHackTime(target)
@@ -108,6 +147,7 @@ function runIt_Local(ns, script, argmts) {
 
       if (chunks) {
         if (threadsonserver >= threads) {
+          if (!reclaimFor(ns, server, threads * 1.75)) { servers[i][1] = availableRam(ns, server); continue; }
           thispid = ns.exec(script, server, { threads, temporary: true }, target, sleeptm, "QUIET");
           if (logging && thispid === 0) ns.tprintf("Failed to run: %s on %s threads:%s target:%s", script, server, threads, target);
           servers[i][1] -= threads * 1.75;
@@ -116,6 +156,7 @@ function runIt_Local(ns, script, argmts) {
         }
       } else {
         const use = Math.min(threadsonserver, threads);
+        if (!reclaimFor(ns, server, use * 1.75)) { servers[i][1] = availableRam(ns, server); continue; }
         thispid = ns.exec(script, server, { threads: use, temporary: true }, target, sleeptm, "QUIET");
         if (logging && thispid === 0) ns.tprintf("Failed to run: %s on %s threads:%s target:%s", script, server, use, target);
         servers[i][1] -= use * 1.75;
@@ -162,9 +203,9 @@ function getServers(ns, useHacknet) {
     if (!ns.hasRootAccess(server) || ns.getServerMaxRam(server) <= 0) continue
     if (server.startsWith("hacknet") && !useHacknet) continue
     ns.scp(["/Remote/hack-target.js", "/Remote/grow-target.js", "/Remote/weak-target.js"], server, "home")
-    serverDetails.push([server, ns.getServerMaxRam(server) - ns.getServerUsedRam(server)])
+    serverDetails.push([server, availableRam(ns, server)])
   }
-  serverDetails.sort((a, b) => { return (ns.getServerMaxRam(a[0]) - ns.getServerUsedRam(a[0])) - (ns.getServerMaxRam(b[0]) - ns.getServerUsedRam(b[0])) })
+  serverDetails.sort((a, b) => a[1] - b[1])
 
   return serverDetails
 }
@@ -179,7 +220,7 @@ export function maxRun(ns, persistent, useHacknet) {
   for (const [server, ram] of servers) {
     if (!ns.hasRootAccess(server)) continue
     if ((server.startsWith("hacknet") && persistent)) continue
-    let tmpramavailable = ns.getServerMaxRam(server) - ns.getServerUsedRam(server)
+    let tmpramavailable = availableRam(ns, server)
     if (server === "home" && persistent) tmpramavailable = Math.max(tmpramavailable - reservedRam, 0)
     if (tmpramavailable > highest)
       highest = tmpramavailable
@@ -192,7 +233,7 @@ export function maxRun(ns, persistent, useHacknet) {
   for (const [server, ram] of servers) {
     if (!ns.hasRootAccess(server)) continue
     if ((server.startsWith("hacknet") && persistent)) continue
-    let tmpramavailable = ns.getServerMaxRam(server) - ns.getServerUsedRam(server)
+    let tmpramavailable = availableRam(ns, server)
     if (persistent && emergencyReserve && tmpramavailable >= resRam) {
       emergencyReserve = false
       tmpramavailable -= resRam

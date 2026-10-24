@@ -1,13 +1,23 @@
-import { getHackPercent, getGrowThreads, getHackChance, getBNMults, getServ } from "utils.js"
+import { hackingPercent, hackingChance, growThreads } from "../hacking-formulas.js"
+import { calculatorMultipliers } from './getbnmultis.js';
 
 /** @param {NS} ns */
 export async function main(ns) {
+  ns.ramOverride(5.1);
   const port = ns.getPortHandle(ns.pid)
   //ns.args[0] is the target, 1 is batches, 2 is threads, 3 is starthacks
-  const server = await getServ(ns, ns.args[0])
-  const hack_chance = await getHackChance(ns, ns.args[0], server.minDifficulty)
-  const weakenStrength = 1.5
-  const hackperc = await getHackPercent(ns, ns.args[0], server.minDifficulty)
+  let result = 'ERROR:Batch calculation exited without a result';
+  ns.atExit(() => port.write(result));
+  const server = ns.getServer(ns.args[0]);
+  server.hackDifficulty = server.minDifficulty;
+  const player = ns.getPlayer();
+  const mults = calculatorMultipliers(ns, ns.args[4], 5.1);
+  const hack_chance = hackingChance(server, player);
+  // Workers are distributed across hosts: one core is the conservative capacity shared by all of them.
+  const weakenStrength = ns.weakenAnalyze(1, 1);
+  const hackperc = hackingPercent(server, player, mults);
+  if (!(hackperc > 0) || !(weakenStrength > 0) || !Number.isFinite(1 / hackperc))
+    throw new Error('Cannot plan a batch for an unhackable target');
   let moneytotake = 0
   let hytotalbatches = 1
   let hgwtotalbatches = 1
@@ -32,9 +42,9 @@ export async function main(ns) {
     let hwgwsechack = testthreads * .002 //Security added from hacking
     const hwgww1threads = Math.ceil(hwgwsechack / weakenStrength) //Take it all out   
     //Hybrid and HGW have some security left.  HWGW does not
-    const hygthreads = await getGrowThreads(ns, ns.args[0], server.moneyMax - moneytotake, server.minDifficulty + hysechack)
-    const hgwgthreads = await getGrowThreads(ns, ns.args[0], server.moneyMax - moneytotake, server.minDifficulty + hgwsechack)
-    const hwgwgthreads = await getGrowThreads(ns, ns.args[0], server.moneyMax - moneytotake, server.minDifficulty)
+    const hygthreads = growThreads({...server, moneyAvailable: server.moneyMax - moneytotake, hackDifficulty: server.minDifficulty + hysechack}, player, mults)
+    const hgwgthreads = growThreads({...server, moneyAvailable: server.moneyMax - moneytotake, hackDifficulty: server.minDifficulty + hgwsechack}, player, mults)
+    const hwgwgthreads = growThreads({...server, moneyAvailable: server.moneyMax - moneytotake}, player, mults)
 
     moneytotake *= hack_chance
     //Last weaken threads for the grows and remaining from hacks
@@ -113,11 +123,7 @@ export async function main(ns) {
     if (failed === 3 && VALIDTEST) break//We are done.  Nothing better
   } // for loop to max threads
 
-  let takemult = 1
-  try {
-    const mults = await getBNMults(ns)
-    takemult = mults.ScriptHackMoneyGain
-  } catch { }
+  const takemult = mults.ScriptHackMoneyGain;
   //Create return object
   const record = {
     "H1": besth1threads,
@@ -130,6 +136,6 @@ export async function main(ns) {
     "Chance": hack_chance
   }
 
-  ns.atExit(() => { port.write(record) })
+  result = record;
 }
 

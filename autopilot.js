@@ -1,45 +1,57 @@
 import {
-  log, getReset, getPlayerInfo, getBNMults, getErrorInfo, isScriptRunning, getStocksValue, destroyWD,
-  launchScriptHelper, crackHosts, getActiveSourceFiles, formatDuration, disableLogs,
+  log, getReset, getPlayerInfo, getBNMults, getErrorInfo, isScriptRunning, getRunningScriptNames, getStocksValue, destroyWD,
+  launchScriptHelper, crackHosts, getActiveSourceFiles, formatDuration, disableLogs, getConfiguration,
   getOwnedAugs, getFacInvReqs, singRun, formatMoney, getServerMaxRam, getPortCrackers,
-  getServers, runScriptSomewhere, runScriptLocal, doSCP, gangRun, sleeveRun, stanekRun, bbRun
+  getServers, runScriptSomewhere, runScriptLocal, doSCP, gangRun, sleeveRun, stanekRun, bbRun, getReserve, setReserve
 } from './utils.js';
 
-import { recordBnStart, printBnRunSummary, RUNLOG_FILE } from './logger.js'
+import { recordBnStart, recordRunEvents, printBnRunSummary } from './logger.js'
+import { evaluateAugmentationReset } from './augmentation-reset-policy.js';
+import { firstBn1, bn1Paused } from './bn1-policy.js';
 import {
   buildAscendArgs, getFreshDonationFavorProgress, NEUROFLUX
 } from './donation-favor.js'
+import {
+  selectNextBitNode, sourceFileLevel, hasBladeburnerAccess, hasCompletedBladeburner,
+  getIntelFarmReadiness, intelFarmState, BN_ROUTE, EARLY_UNLOCK_ROUTE
+} from './progression.js'
+
+const argsSchema = [
+  ['bn-route', 'current'], // current or unlocks-first; set autopilot.js.config.txt to retain the experiment across resets.
+  ['disable-go', false], // Prevent Go auto-launch while comparing an external bot; stop an existing go.js yourself first.
+  ['disable-bn1-auto', false], // Keep manual guidance instead of the first-BN1 UI controller.
+  ['infiltration', true], // Bounded UI automation after casino, including Shadows of Anarchy progression.
+  ['infiltration-money-target', 10e9], // Cash goal when no useful reputation target is active.
+  ['infiltration-faction', ''], // Optional explicit reward recipient in BN1; otherwise use the SF4 faction planner.
+];
+export function autocomplete(data) { data.flags(argsSchema); return []; }
+
+/** Preserve player reserves and don't repeatedly launch a disabled corporation feature. */
+export function shouldStartCorporation(ns, sourceFiles, currentNode, money, reserve) {
+  if (!(3 in sourceFiles)) return false
+  if (ns.corporation.hasCorporation()) return true
+  const selfFund = Number(currentNode) !== 3
+  const status = ns.corporation.canCreateCorporation(selfFund)
+  if (status !== 'Success' && status !== true) return false
+  return !selfFund || (Number.isFinite(money) && Number.isFinite(reserve) && reserve >= 0 && money >= 150e9 + reserve)
+}
 
 
 /** @param {NS} ns */
 export async function main(ns) {
-  ns.ramOverride(4)
+  ns.ramOverride(4.2) // Include the reply watchdog's API cost, with a small margin.
+  const options = getConfiguration(ns, argsSchema);
+  if (!options) return;
+  if (!['current', 'unlocks-first'].includes(options['bn-route'])) {
+    ns.tprint('ERROR: --bn-route must be current or unlocks-first.');
+    return;
+  }
+  if (!Number.isFinite(options['infiltration-money-target']) || options['infiltration-money-target'] < 0) {
+    ns.tprint('ERROR: --infiltration-money-target must be a finite nonnegative cash goal.');
+    return;
+  }
+  const route = options['bn-route'] === 'unlocks-first' ? EARLY_UNLOCK_ROUTE : BN_ROUTE;
   const factionManagerOutputFile = "/Temp/affordable-augs.txt"; // Temp file produced by faction manager with status information
-    const defaultBnOrder = [ // The order in which we intend to play bitnodes
-    // 1st Priority: Key new features and/or major stat boosts
-    4.3,  // Normal. Need singularity to automate everything, and need the API costs reduced from 16x -> 4x -> 1x reliably do so from the start of each BN
-    1.3,  // Easy.   Big boost to all multipliers (16% -> 24%), and no penalties to slow us down. Should go quick.
-    5.1,  // Normal. Unlocks intelligence stat early to maximize growth
-    2.3,  // Easy.   Boosts to crime tasks.
-    
-    11.3, // Normal. Decrease augmentation cost scaling in a reset (4% -> 6% -> 7%) (can buy more augs per reset). Also boosts company salary/rep (32% -> 48% -> 56%), which we have little use for with gangs.)
-
-    5.3,  // Normal. Unlock intelligence stat early to maximize growth, getBitNodeMultipliers + Formulas.exe for more accurate scripts, and +8% hack mults
-    3.1,  // Hard.   Corporations. While hard, these are insanely profitable.
-    9.3,  // Hard.   Hacknet nodes are more profitable and cheaper to upgrade. Also unlocks the ability to spend hashes on useful things.
-    3.3,  // Hard.   Corporations. While hard, these are insanely profitable.
-    10.3, // Hard.   Get the sleeves
-    6.1, // Normal. Unlocks the bladeburner API (and bladeburner outside of BN 6/7). Many recommend it before BN9 since it ends up being a faster win condition in some of the tougher bitnodes ahead.
-    7.3,
-    6.3,
-    5.3,
-    9.3,
-    13.3,
-    14.3,
-    15.3,
-    8.3,
-    12.9999999
-  ];
   //disableLogs(ns, ['getServerMaxRam', 'getServerUsedRam', 'getServerMoneyAvailable', 'getServerGrowth', 'getServerSecurityLevel', 'exec', 'scan', 'sleep', 'scp'])
   log(ns, `Cracking initial hosts..`, 'info')
   await crackHosts(ns); //do an initial crack to run scripts on other servers
@@ -49,10 +61,10 @@ export async function main(ns) {
   let player = await getPlayerInfo(ns);
   let alreadyJoinedDaedalus = false, autoJoinDaedalusUnavailable = false, reservingMoneyForDaedalus = false, disableStockmasterForDaedalus = false;
   let resetInfo = await getReset(ns);
+  const automateBn1 = !options['disable-bn1-auto'] && firstBn1(resetInfo);
   let dictOwnedSourceFiles = await getActiveSourceFiles(ns, false);
   const unlockedSFs = await getActiveSourceFiles(ns, true);
-  const getSFLevel = bn => Number(bn + "." + ((dictOwnedSourceFiles[bn] || 0) + (resetInfo.currentNode == bn ? 1 : 0)));
-  const currBN = getSFLevel(resetInfo.currentNode);
+  const currBN = `${resetInfo.currentNode}.${sourceFileLevel(dictOwnedSourceFiles, resetInfo.currentNode) + 1}`;
   let ownedCracks = [];
   const STAGGER = 1000; //default staggering of routine scripts
   const PERIOD = 30000; //timeframe in which we will attempt to rerun routine scripts. (30 sec)
@@ -64,9 +76,22 @@ export async function main(ns) {
   let have4sApi;
   let acceptedStanek = false;
   let reservedPurchase = 0;
+  let currentMoneyReserve = await getReserve(ns);
   let wdHack = null;
   let maxRam = 8;
   let lastFactionManagerWarning = 0;
+  const observedMilestones = new Set();
+  let nextTelemetryAttempt = 0;
+  let lastInvestmentDeadline, nextInvestmentDeadlineAttempt = 0;
+  async function noteMilestones(events) {
+    if (Date.now() < nextTelemetryAttempt) return;
+    const fresh = events.filter(event => !observedMilestones.has(`${event.kind}:${event.key ?? ''}`));
+    if (fresh.length) {
+      if (await recordRunEvents(ns, fresh, currBN))
+        fresh.forEach(event => observedMilestones.add(`${event.kind}:${event.key ?? ''}`));
+      else nextTelemetryAttempt = Date.now() + 30_000;
+    }
+  }
   const lastRestart = Date.now();
   let augMomentum = {
     lastAugCount: 0,
@@ -76,50 +101,64 @@ export async function main(ns) {
     nextExpectedAug: 0,
     hardCapLogged: false,
   };
+  const resetDecisionState = {};
+  let lastResetDecisionLog = '', nextResetDecisionLog = 0;
   const shouldUpgradeHacknet = () =>
     bitNodeMults.HacknetNodeMoney > 0 && // Ensure hacknet is not disabled in this BN
     getPlayerMoney(ns) > reservedMoney(ns); // Player money exceeds the reserve (otherwise it will sit there buying nothing)
   let playerInGang = false;
-  const COMPANY_FACTIONS = [
-  "Bachman & Associates", "ECorp", "Clarke Incorporated", "OmniTek Incorporated", "NWO",
-  "Blade Industries", "MegaCorp", "KuaiGong International", "Fulcrum Secret Technologies", "Four Sigma"
-];
-  /** @param {NS} ns */
-  async function waitForCompanyAccess(ns) {
-    while (true) {
-      const invitations = await singRun(ns, 'checkFactionInvitations');
-      const available = new Set([
-        ...(Array.isArray(player?.factions) ? player.factions : []),
-        ...(Array.isArray(invitations) ? invitations : []),
-      ]);
-      const missing = COMPANY_FACTIONS.filter(faction => !available.has(faction));
-      if (missing.length === 0) return false;
-      return true;
+  let shouldIntelFarm = false, readyToFarmIntel = false, farmState;
+  let lastIntelPreparationCheck = -Infinity;
+  async function refreshIntelFarmReadiness(ns, force = false) {
+    // Readiness is live, but expensive invite/state reads need only run once per planning interval.
+    if (force || Date.now() - lastIntelPreparationCheck >= 30_000) {
+      try {
+        farmState = await intelFarmState(ns);
+        const invitations = sourceFileLevel(dictOwnedSourceFiles, 5) > 0 && 4 in unlockedSFs
+          ? await singRun(ns, 'checkFactionInvitations') : [];
+        const readiness = getIntelFarmReadiness(player, installedAugmentations, invitations, dictOwnedSourceFiles, farmState);
+        shouldIntelFarm = readiness.needed;
+        readyToFarmIntel = readiness.ready;
+      } catch (error) {
+        // An unavailable state helper must not take down money/augmentation automation or start an untracked farm.
+        shouldIntelFarm = getIntelFarmReadiness(player, installedAugmentations, [], dictOwnedSourceFiles, farmState).needed;
+        readyToFarmIntel = false;
+        log(ns, `WARNING: Intelligence preparation state unavailable; retrying in 30 seconds: ${String(error)}`);
+      }
+      lastIntelPreparationCheck = Date.now();
     }
+    // A live INT increase can release the finish gate without waiting for the next invite poll.
+    if (!getIntelFarmReadiness(player, installedAugmentations, [], dictOwnedSourceFiles, farmState).needed)
+      shouldIntelFarm = readyToFarmIntel = false;
   }
-  let shouldIntelFarm = (5 in unlockedSFs) && player.skills.intelligence > 1 && player.skills.intelligence < 230;
-  let readyToFarmIntel = shouldIntelFarm && !(await waitForCompanyAccess(ns));
 
   function getFactionWorkerArgs() {
     if (shouldIntelFarm)
-      return ["--fast-crimes-only", "--prioritize-invites", "--all-company-invites"];
-    return 2 in unlockedSFs && !playerInGang
+      return ["--fast-crimes-only", "--prioritize-invites", "--all-company-invites", "--intel-farm-preparation"];
+    const args = 2 in unlockedSFs && !playerInGang
       ? ["--fast-crimes-only", "--get-invited-to-every-faction", "--crime-focus",
         "--training-stat-per-multi-threshold", 200, "--prioritize-invites"]
       : ["--fast-crimes-only", "--get-invited-to-every-faction"];
+    return options.infiltration ? [...args, '--infiltration'] : args;
   }
 
   //in order by importance!
   const asynchronousHelpers = [
     {
-      name: "work-for-faction2.js",
-      shouldRun: () => 4 in unlockedSFs,
-      args: getFactionWorkerArgs
+      name: 'bn1-auto.js',
+      shouldRun: () => automateBn1 && !bn1Paused(resetInfo),
+      args: () => [],
+      ram: 16, // Reserve the whole cycle allocation before the batcher fills spare RAM.
     },
     {
       name: "kernel.js",
       shouldRun: () => true,
       args: () => []
+    },
+    {
+      name: "work-for-faction2.js",
+      shouldRun: () => 4 in unlockedSFs,
+      args: getFactionWorkerArgs
     },
     {
       name: "host-manager.js",
@@ -129,7 +168,7 @@ export async function main(ns) {
     },
     {
       name: "corporation.js",
-      shouldRun: () => 3 in unlockedSFs && (resetInfo.currentNode == 3 || ns.corporation.hasCorporation() || getPlayerMoney(ns) > 150_000_000_000),
+      shouldRun: () => shouldStartCorporation(ns, unlockedSFs, resetInfo.currentNode, getPlayerMoney(ns), currentMoneyReserve),
       args: () => []
     },
     {
@@ -144,12 +183,13 @@ export async function main(ns) {
     },
     {
       name: "go.js",
-      shouldRun: () => reqRam(2000),
+      shouldRun: () => !options['disable-go'] && reqRam(2000),
       args: () => []
     },
     {
       name: "stockmaster.js",
       shouldRun: () => 
+        !disableStockmasterForDaedalus &&
         (reqRam(3000) || !shouldImproveHacking(ns)) &&
         (getTimeInAug() > 20000 || resetInfo.currentNode == 8),
       args: () => []
@@ -157,7 +197,7 @@ export async function main(ns) {
     {
       name: "bladeburner.js",
       shouldRun: () => 
-        7 in unlockedSFs && bitNodeMults.BladeburnerRank > 0,
+        !shouldIntelFarm && hasBladeburnerAccess(unlockedSFs) && bitNodeMults.BladeburnerRank > 0,
       args: () => []
     },
     {
@@ -167,7 +207,7 @@ export async function main(ns) {
     },
     {
       name: "spend-hashes.js",
-      shouldRun: () => shouldUpgradeHacknet && 9 in unlockedSFs,
+      shouldRun: () => 9 in unlockedSFs && bitNodeMults.HacknetNodeMoney > 0,
       args: () => [],
       nextRun: Date.now() + (6 * STAGGER)
     },
@@ -177,6 +217,13 @@ export async function main(ns) {
       args: () => []
     },
     { name: "stats.js", shouldRun: () => reqRam(1000), args: () => [] }, // Adds stats not usually in the HUD (nice to have)
+    {
+      name: 'infiltrate.js',
+      shouldRun: () => options.infiltration && !shouldIntelFarm && !reservedPurchase && reqRam(128),
+      args: () => ['--scheduled', '--auto', '--quiet', '--soa', '--aug-count-target', bitNodeMults.DaedalusAugsRequirement,
+        '--money-target', reservingMoneyForDaedalus ? 100e9 : options['infiltration-money-target'],
+        ...(options['infiltration-faction'] && !(4 in unlockedSFs) ? ['--faction', options['infiltration-faction']] : [])],
+    },
   ];
   const reqRam = (ram) => maxRam >= ram;
   const periodicScripts = [
@@ -208,35 +255,14 @@ export async function main(ns) {
     {
       name: "hacknet-upgrade-manager.js",
       shouldRun: shouldUpgradeHacknet,
-      alwaysRun: false,
-      args: () => ["-c", "--max-payoff-time", "4h"],
+      args: () => ["-c", "--max-payoff-time", "4h", "--respect-reset-horizon"],
       nextRun: Date.now() + (2 * STAGGER)
-    },
-    {
-      name: "hacknet-upgrade-manager.js",
-      shouldRun: shouldUpgradeHacknet,
-      alwaysRun: true,
-      args: () => ["--max-payoff-time", "8h", "--max-spend", getPlayerMoney(ns) * 0.01],
-      nextRun: Date.now() + (3 * STAGGER)
-    },
-    {
-      name: "hacknet-upgrade-manager.js",
-      shouldRun: shouldUpgradeHacknet,
-      alwaysRun: true,
-      args: () => ["--max-payoff-time", "1E100h", "--max-spend", getPlayerMoney(ns) * 0.001],
-      nextRun: Date.now() + (4 * STAGGER)
     },
     {
       name: "/Tasks/backdoor-all-servers.js",
       shouldRun: () => 4 in unlockedSFs,
       args: () => [],
       nextRun: Date.now() + (5 * STAGGER)
-    },
-    {
-      name: "farm-intel.js",
-      shouldRun: () => readyToFarmIntel,
-      args: () => [],
-      nextRun: Date.now() + (6 * STAGGER)
     },
   ];
 
@@ -252,7 +278,7 @@ export async function main(ns) {
 * @param {NS} n 
 * @returns {number} */
   function reservedMoney(ns) {
-    let shouldReserve = Number(ns.read("reserve.txt") || 0);
+    let shouldReserve = currentMoneyReserve;
     let playerMoney = getPlayerMoney(ns);
     // Conserve money if we're close to being able to afford the Stock Market 4s API
     const fourSigmaCost = (bitNodeMults.FourSigmaMarketDataApiCost * 25000000000);
@@ -270,18 +296,19 @@ export async function main(ns) {
     await crackHosts(ns); 
     //do an initial crack to run scripts on other servers
     log(ns, "INFO: Cracked", true, 'info');
-    readyToFarmIntel = shouldIntelFarm && !(await waitForCompanyAccess(ns));
     // Intelligence farming is coordinated by mainLoop so preparation can survive augmentation resets.
     if (ns.getHostname() == 'home') {
       if (await getServerMaxRam(ns, 'home') < 64) {
         log(ns, "INFO: Bootstrapping autopilot.", true, 'info');
-        const pid = await runScriptSomewhere(ns, 'autopilot.js', true, []);
+        const pid = await runScriptSomewhere(ns, 'autopilot.js', true, ns.args);
         if (pid != 0) return;
       }
     }
     log(ns, "INFO: Auto-pilot engaged...", true, 'info');
-    await doSCP(ns, RUNLOG_FILE, ns.getHostname(), "home");
-    await launchScriptHelper(ns, 'coinflip.js'); //lets try to get some cash!
+    // A restarted autopilot must not duplicate a coinflipper that is still earning.
+    if (!automateBn1 && !await isScriptRunning(ns, 'coinflip.js') && !await isScriptRunning(ns, 'bn1-casino.js') &&
+        !await isScriptRunning(ns, 'bn1-auto.js'))
+      await launchScriptHelper(ns, 'coinflip.js'); //lets try to get some cash!
     let startUpRan = false, keepRunning = true;
     while (keepRunning) {
       try {
@@ -309,22 +336,28 @@ export async function main(ns) {
       installedAugmentations = await getOwnedAugs(ns, false);
       playerInstalledAugCount = installedAugmentations.length;
     } else {
-      log(ns, `WARNING: This script requires SF4 (singularity) functions to assess purchasable augmentations ascend automatically. ` +
-        `Some functionality will be disabled and you'll have to manage working for factions, purchasing, and installing augmentations yourself.`, true);
+      const bn1Automatic = automateBn1 || (resetInfo.currentNode === 1 && !dictOwnedSourceFiles[1] && await isScriptRunning(ns, 'bn1-auto.js'));
+      if (bn1Automatic) log(ns, 'BN1 automation handles travel, casino, faction work, purchases, and installation. Restart autopilot.js after each installation.', true);
+      else log(ns, `WARNING: This script requires SF4 (singularity) functions to assess purchasable augmentations and ascend automatically. ` +
+        `Without the optional BN1 controller, manage faction work, purchasing, and installation yourself.`, true);
 
-      log(ns, `Manual hacking checklist`
-        + `\n1. You should start by going to the slums and mugging people for initial cash.`
-        + `\n2. Info: After getting some intial money, the casino will be ran giving a big boost.`
-        + `\n3. Visit a store like [alpha ent.] and purchase a tor router.`
-        + `\n4. Run buy -a for extra hacks and consider upgrading your home ram.`
-        + `\n5. Work for factions, install augments, and work towards hacking world dominion to destory the BN. Repeat steps 1-4 on each augment install loop.`
-        + `\nNOTE: After this bitnode, bitnode 4 is recommended and provides full automation.`, true);
+      if (resetInfo.currentNode === 1 && !dictOwnedSourceFiles[1]) {
+        // Non-modal guidance. A failed optional launch must not stall the income loop.
+        if (!bn1Automatic && !await isScriptRunning(ns, 'bn1-guide.js')) {
+          const guidePid = ns.exec('bn1-guide.js', 'home', { threads: 1, temporary: true });
+          if (!guidePid) log(ns, 'BN1.1 guide could not start. Free home RAM, then run bn1-guide.js.', true);
+        }
+      }
+      if (!bn1Automatic) log(ns, 'Manual steps: work for factions, buy/install useful augmentation bundles, then restart automation. ' +
+        'For first-BN1 prompts, run bn1-guide.js. After BN1.1, complete BN4.1–4.3 for Singularity automation.', true);
     }
-    await recordBnStart(ns, currBN);
-    printBnRunSummary(ns, 25);
-    const nextRecommendedSf = defaultBnOrder.find(v => v - Math.floor(v) > getSFLevel(Math.floor(v)) - Math.floor(v));
-    nextRecommendedBn = Math.floor(nextRecommendedSf);
-    log(ns, `INFO: After the current BN (${currBN}), the next recommended BN is ${nextRecommendedBn} until you have SF ${nextRecommendedSf}.`, true);
+    const runLog = await recordBnStart(ns, currBN, {route: options['bn-route']});
+    printBnRunSummary(ns, 25, runLog);
+    const next = selectNextBitNode(dictOwnedSourceFiles, resetInfo.currentNode, route);
+    nextRecommendedBn = next.node;
+    log(ns, `INFO: After BN${currBN}, next is BN${next.node}` +
+      (next.repeat ? ' (repeat).' : ` until SF${next.node}.${next.targetLevel}.`), true);
+    await refreshIntelFarmReadiness(ns, true);
     return true;
   }
 
@@ -334,39 +367,54 @@ export async function main(ns) {
     //crack hosts if we increased in hacking level, or gain cracks.
     const playerHackLevel = player.skills.hacking
     player = await getPlayerInfo(ns);
+    await refreshIntelFarmReadiness(ns);
+    if (readyToFarmIntel) {
+      // The farm owns the reset phase. Do not race it with augmentation installation or new work.
+      if (!await isScriptRunning(ns, 'farm-intel.js')) {
+        await refreshIntelFarmReadiness(ns, true);
+        if (readyToFarmIntel) await runScriptLocal(ns, 'farm-intel.js', true, []);
+      }
+      if (readyToFarmIntel) return true;
+    }
     const numCracksOwned = ownedCracks.length;
     ownedCracks = await getPortCrackers(ns);
     if (player.skills.hacking > playerHackLevel || ownedCracks.length > numCracksOwned) await crackHosts(ns);
     
     have4sApi = ns.stock.has4SDataTixApi();
-    playerInGang = await gangRun(ns, 'inGang');
+    playerInGang = 2 in unlockedSFs && await gangRun(ns, 'inGang') === true;
     const servers = await getServers(ns);
     maxRam = 0;
     for (const server of servers) {
       if (server.hasAdminRights && server.maxRam > 0)
-        maxRam += await getServerMaxRam(ns, server.hostname)
+        maxRam += server.maxRam
     }
-    let stocksValue = 0;
-    try { stocksValue = await getStocksValue(ns); } catch { /* Assume if this fails (insufficient ram) we also have no stocks */ }
+    let stocksValue = null;
+    try { stocksValue = await getStocksValue(ns); } catch { /* Keep unreadable holdings distinct from an empty portfolio. */ }
 
-    manageReservedMoney(ns, player, stocksValue);
+    await manageReservedMoney(ns, player, stocksValue ?? 0); // Reserve conservatively using only confirmed cash during a stock outage.
     await checkOnDaedalusStatus(ns, player, stocksValue);
     await checkIfBnIsComplete(ns);
     await maybeAcceptStaneksGift(ns);
-    await runPeriodicScripts(ns);
-    await checkOnRunningScripts(ns);
-    await maybeInstallAugmentations(ns, player);
+    const runningScripts = getRunningScriptNames(ns, servers);
+    await checkOnRunningScripts(ns, runningScripts);
+    await runPeriodicScripts(ns, runningScripts);
+    await noteMilestones([
+      ...player.factions.map(faction => ({kind: 'faction-joined', key: faction})),
+      ...(runningScripts.has('kernel.js') ? [{kind: 'hacking-automation-running'}] : []),
+      ...(stocksValue > 0 ? [{kind: 'stock-position-observed'}] : []),
+    ]);
+    await maybeInstallAugmentations(ns, player, stocksValue !== null);
     return shouldWeKeepRunning(ns); // Return false to shut down autopilot.js if we installed augs, or don't have enough home RAM
   }
 
   /** Consolidated logic for all the   mes we want to reserve money
    * @  ram {NS} ns
    * @param {Play    player */
-  function manageReservedMoney(ns, player, stocksValue) {
+  async function manageReservedMoney(ns, player, stocksValue) {
     if (reservedPurchase) return; // Do not mess with money reserved for installing augmentations
-    const currentReserve = Number(ns.read("reserve.txt") || 0);
+    const currentReserve = currentMoneyReserve = await getReserve(ns);
     if (reservingMoneyForDaedalus) // Reserve 100b to get the daedalus invite
-      return currentReserve == 100E9 ? true : ns.write("reserve.txt", 100E9, "w");
+      return currentReserve == 100E9 ? true : currentMoneyReserve = await setReserve(ns, 100E9);
     // Otherwise, reserve money for stocks for a while, as it's our main source of income early in the BN
     // It also acts as a decent way to save up for augmentations
     const minStockValue = 8E9; // At a minimum 8 of the 10 billion earned from the casino must be reserved for buying stock
@@ -375,29 +423,45 @@ export async function main(ns) {
     const reserveCap = 1E12; // As we start start to earn crazy money, we will hit the stock market cap, so cap the maximum reserve
     // Dynamically update reserved cash based on how much money is already converted to stocks.
     const reserve = Math.min(reserveCap, Math.max(0, player.money * minStockPercent, minStockValue - stocksValue));
-    return currentReserve == reserve ? true : ns.write("reserve.txt", reserve, "w"); // Reserve for stocks
+    return currentReserve == reserve ? true : currentMoneyReserve = await setReserve(ns, reserve); // Reserve for stocks
   }
 
-  async function checkOnRunningScripts(ns) {
+  async function checkOnRunningScripts(ns, runningScripts) {
     for (const script of asynchronousHelpers) {
-      const serverRunning = await isScriptRunning(ns, script.name);
-      if (script.shouldRun() && !serverRunning) {
-        if (script.name == "darknet.js")
-          await runScriptLocal(ns, script.name, true, script.args())
-        else
-          await runScriptSomewhere(ns, script.name, true, script.args());
+      if (script.name === 'bn1-auto.js' && (runningScripts?.has('bn1-casino.js') || runningScripts?.has('coinflip.js'))) continue;
+      if (script.name === 'infiltrate.js' && (automateBn1 || runningScripts?.has('bn1-auto.js') || runningScripts?.has('bn1-casino.js'))) continue;
+      if (Date.now() < (script.nextRun ?? 0)) continue;
+      try {
+        const serverRunning = await isScriptRunning(ns, script.name, runningScripts);
+        if (script.shouldRun() && !serverRunning) {
+          let pid;
+          if (['darknet.js', 'infiltrate.js'].includes(script.name))
+            pid = ns.exec(script.name, 'home', { threads: 1, temporary: true, preventDuplicates: true }, ...script.args());
+          else
+            pid = await runScriptSomewhere(ns, script.name, true, script.args(), script.ram ?? 0);
+          if (pid > 0) runningScripts?.add(script.name.replace(/^\/+/, ''));
+        }
+      } catch (error) {
+        log(ns, `WARNING: ${script.name} launch deferred: ${getErrorInfo(error)}`);
+      } finally {
+        script.nextRun = Date.now() + PERIOD;
       }
     }
   }
-  async function runPeriodicScripts(ns) {
+  async function runPeriodicScripts(ns, runningScripts) {
     const now = Date.now();
 
     for (const script of periodicScripts) {
       if (now > script.nextRun) {
-        const serverRunning = script.alwaysRun || await isScriptRunning(ns, script.name);
-        if (script.shouldRun() && !serverRunning) {
-          log(ns, `Running ${script.name}`)
-          await runScriptSomewhere(ns, script.name, false, script.args());
+        try {
+          const serverRunning = await isScriptRunning(ns, script.name, runningScripts);
+          if (script.shouldRun() && !serverRunning) {
+            log(ns, `Running ${script.name}`);
+            const pid = await runScriptSomewhere(ns, script.name, false, script.args());
+            if (pid > 0) runningScripts?.add(script.name.replace(/^\/+/, ''));
+          }
+        } catch (error) {
+          log(ns, `WARNING: ${script.name} launch deferred: ${getErrorInfo(error)}`);
         }
         // Schedule next run
         script.nextRun = now + PERIOD;
@@ -443,31 +507,32 @@ export async function main(ns) {
     // Check if there is some reason not to automatically destroy this BN
     if (resetInfo.currentNode == 10) { // Suggest the user doesn't reset until they buy all sleeves and max memory
       let sleeveCost = await sleeveRun(ns, 'getSleeveCost');
-      if (sleeveCost < Number.POSITIVE_INFINITY)
+      if (sleeveCost !== Number.POSITIVE_INFINITY)
         return false;
 
       const numSleeves = await sleeveRun(ns, `getNumSleeves`);
+      if (!Number.isInteger(numSleeves) || numSleeves < 0) return false;
 
       for (let i = 0; i < numSleeves; i++) {
         const sleeve = await sleeveRun(ns, 'getSleeve', i);
-        if (sleeve.memory < 100) return false;
+        if (!Number.isFinite(sleeve?.memory) || sleeve.memory < 100) return false;
       }
     }
-    if (wdHack === null) { // If we haven't checked yet, see if w0r1d_d43m0n (server) has been unlocked and get its required hack level
+    const bladeburnerComplete = await hasCompletedBladeburner(ns, unlockedSFs);
+    if (!bladeburnerComplete && !Number.isFinite(wdHack)) {
       wdHack = ns.scan("The-Cave").includes("w0r1d_d43m0n") ? ns.getServerRequiredHackingLevel("w0r1d_d43m0n") : Number.POSITIVE_INFINITY;
     }
 
-    if (player.skills.hacking >= wdHack) {
-      if (ns.hasRootAccess("w0r1d_d43m0n")) {
+    if (bladeburnerComplete || (Number.isFinite(wdHack) && player.skills.hacking >= wdHack && ns.hasRootAccess("w0r1d_d43m0n"))) {
+        await noteMilestones([{kind: 'bn-finish-ready', data: {method: bladeburnerComplete ? 'bladeburner' : 'hacking'}}]);
         //time to leave....
         if (!(4 in unlockedSFs)) {
           log(ns, `You do not own SF4, so you must manually exit the bitnode (` +
-            `${player.skills.hacking >= wdHack ? "by hacking W0r1dD43m0n" : "on the bladeburner BlackOps tab"}).`, true);
+            `${bladeburnerComplete ? "on the Bladeburner BlackOps tab" : "by hacking W0r1dD43m0n"}).`, true);
           return true;
         } else {
           await destroyWD(ns, nextRecommendedBn, ns.getScriptName()); //this should kill it.
         }
-      }
     }
     return false;
   }
@@ -541,37 +606,37 @@ export async function main(ns) {
       };
     }
   }
-  function updateAugMomentum(ns, pendingAugCount) {
-    if (pendingAugCount <= 0) return;
+  function updateAugMomentum(ns, pendingAugCount, pendingNfCount = 0, quiet = false) {
+    const momentumCount = pendingAugCount || (pendingNfCount > 0 ? 1 : 0);
+    if (momentumCount <= 0) return;
 
     const now = Date.now();
     const timeInAug = Math.max(1, getTimeInAug());
     const hardCapReached = timeInAug >= MAX_AUGMENTATION_WAIT;
+    let weight = 2;
+    if ((2 in unlockedSFs)) weight += 0.5; // Resetting with a gang reduces its multipliers.
+    if ((13 in unlockedSFs)) weight += 0.5; // Resetting loses Stanek charges.
+    const nextDeadline = count => timeInAug + Math.max(
+      (timeInAug / count) * Math.max(1, 5 - Math.ceil(count / weight)), 100000);
 
-    if (pendingAugCount > augMomentum.lastAugCount) {
-      augMomentum.lastAugCount = pendingAugCount;
+    if (momentumCount > augMomentum.lastAugCount) {
+      augMomentum.lastAugCount = momentumCount;
       augMomentum.lastIncreaseTime = now;
 
-      // allow delay: up to 5x avg, reduced by 1 for every 2 augs, but never below 1x
-      let weight = 2;
-      if ((2 in unlockedSFs)) weight += 0.5; //resetting with a gang reduces their multipliers 
-      if ((13 in unlockedSFs)) weight += 0.5; //resetting will reset stanek charges.
-      const div = Math.max(1, 5 - Math.ceil(pendingAugCount / weight));
-
       // "expected time since reset when the next aug should arrive"
-      augMomentum.nextExpectedAug = timeInAug + Math.max(((timeInAug / pendingAugCount) * div), 100000);
+      augMomentum.nextExpectedAug = nextDeadline(momentumCount);
 
       const eta = Math.max(0, augMomentum.nextExpectedAug - timeInAug);
 
-      log(
+      if (!quiet) log(
         ns,
         `INFO: ${formatDuration(timeInAug)} since last reset. ` +
-        `Pending augs: ${pendingAugCount}. Next expected in ${formatDuration(eta)} ` +
+        `Pending augs: ${pendingAugCount} + ${pendingNfCount} NF. Next expected in ${formatDuration(eta)} ` +
         `(at T+${formatDuration(augMomentum.nextExpectedAug)}).`,
         true
       );
 
-      const rate = pendingAugCount / timeInAug;
+      const rate = momentumCount / timeInAug;
       augMomentum.bestRate = Math.max(augMomentum.bestRate, rate);
     }
 
@@ -582,7 +647,7 @@ export async function main(ns) {
       augMomentum.nextExpectedAug = timeInAug;
       if (!augMomentum.hardCapLogged) {
         augMomentum.hardCapLogged = true;
-        log(ns, `INFO: Pending augs: ${pendingAugCount}. The four-hour augmentation wait cap has been reached; ` +
+        log(ns, `INFO: Pending augs: ${pendingAugCount} + ${pendingNfCount} NF. The four-hour augmentation wait cap has been reached; ` +
           `the next safe reset check will ascend.`, true, 'info');
       }
     }
@@ -637,13 +702,21 @@ export async function main(ns) {
   /** Logic to detect if it's a goo    me to install augmentations, and if  so, do so    
    * * @param {NS} ns    
    * * @p     {Player} player */
-  async function maybeInstallAugmentations(ns, player) {
+  async function maybeInstallAugmentations(ns, player, stockValueKnown = true) {
     if (!(4 in unlockedSFs))
       return;
     await doSCP(ns, factionManagerOutputFile, ns.getHostname(), "home");
     resetAugTrackersIfNeeded();
     const timeSinceAug = getTimeInAug();
     const facman = getFactionManagerOutput(ns);
+    if (!stockValueKnown || facman?.stock_value_known === false) {
+      // Exclude cash-only samples from wealth/ETA estimates, including the jump when valuation recovers.
+      resetDecisionState.samples = [];
+      resetDecisionState.wait = null;
+      warnAboutFactionManagerOutput(ns, `Automatic installation is waiting for stock holdings to become readable. ` +
+        `Faction planning continues using cash. If this persists, save and reload the game.`);
+      return;
+    }
     if (!facman) return;
 
     const queue = getPendingAugmentationCounts(facman);
@@ -676,23 +749,55 @@ export async function main(ns) {
     }
 
     const pendingAugInclNfCount = pendingAugCount + pendingNfCount;
+    // NF contributes one distinct augmentation only on its first installation.
+    const pendingDistinctAugCount = pendingAugCount +
+      (pendingNfCount > 0 && !installedAugmentations.includes(NEUROFLUX) ? 1 : 0);
     const donationFavorProgress = getFreshDonationFavorProgress(facman, resetInfo);
     const readyDonationFavor = donationFavorProgress.filter(progress => progress.ready);
 
-    updateAugMomentum(ns, pendingAugInclNfCount);
+    // Repeat NeuroFlux levels cannot keep moving a useful bundle's installation deadline.
+    // Use this historical timing only when current goal estimates are unavailable.
+    updateAugMomentum(ns, pendingAugCount, pendingNfCount, facman.reset_planning?.version === 1 && !shouldIntelFarm);
+    const stockUpgradeCost = have4sApi ? 0 : 25e9 * bitNodeMults.FourSigmaMarketDataApiCost +
+      (ns.stock.has4SData() ? 0 : 1e9 * bitNodeMults.FourSigmaMarketDataCost);
+    const goalDecision = shouldIntelFarm ? {action: 'fallback', reason: 'intel-preparation'} :
+      evaluateAugmentationReset(facman, resetInfo, resetDecisionState, Date.now(),
+        installedAugmentations.includes(augTRP) ? wdHack : 0, stockUpgradeCost);
+    const goalTimingAvailable = ['wait', 'reset'].includes(goalDecision.action);
+    const expectedInstallTime = goalTimingAvailable
+      ? goalDecision.action === 'reset' ? timeSinceAug : goalDecision.deadline - getAugmentationCycleStart()
+      : augMomentum.nextExpectedAug;
+    const installationDetails = { pendingAugs: pendingAugCount, pendingNeuroflux: pendingNfCount,
+      pendingDistinctAugs: pendingDistinctAugCount, elapsed: timeSinceAug,
+      deadline: expectedInstallTime, decision: goalDecision };
+
+    // Publish only changed deadlines on home. The buyer checks the matching fresh queue before using one.
+    const resetSoon = goalDecision.action === 'reset' || readyDonationFavor.length > 0 || facman.affordable_augs.includes(augTRP) ||
+      facman.awaiting_install_augs.includes(augTRP) ||
+      (playerInstalledAugCount < bitNodeMults.DaedalusAugsRequirement &&
+        pendingDistinctAugCount + playerInstalledAugCount >= bitNodeMults.DaedalusAugsRequirement);
+    const investmentDeadline = resetSoon ? getAugmentationCycleStart() + 1 : pendingAugInclNfCount <= 0 ? 0 :
+      getAugmentationCycleStart() + Math.min(MAX_AUGMENTATION_WAIT, expectedInstallTime);
+    if (investmentDeadline !== lastInvestmentDeadline && Date.now() >= nextInvestmentDeadlineAttempt) {
+      nextInvestmentDeadlineAttempt = Date.now() + 30_000;
+      try {
+        if (await runScriptLocal(ns, 'bin/getHacknetPayoff.js', false,
+          ['update', investmentDeadline, resetInfo.lastAugReset]) === true) lastInvestmentDeadline = investmentDeadline;
+      } catch (error) { log(ns, `WARNING: Hacknet reset horizon update deferred: ${String(error)}`); }
+    }
 
     //we need 30 augs to get an invite from deadalus. Reset to get this.
     if (playerInstalledAugCount < bitNodeMults.DaedalusAugsRequirement
-      && pendingAugCount + playerInstalledAugCount >= bitNodeMults.DaedalusAugsRequirement)
-      return await installAugs(ns);
+      && pendingDistinctAugCount + playerInstalledAugCount >= bitNodeMults.DaedalusAugsRequirement)
+      return await installAugs(ns, false, { ...installationDetails, reason: 'daedalus-count' });
     //Always install if we can get the red pill or another critical aug list in the run options
 
     if (facman.affordable_augs.includes(augTRP) ||
       facman.awaiting_install_augs.includes(augTRP))
-      return await installAugs(ns);
+      return await installAugs(ns, false, { ...installationDetails, reason: 'red-pill' });
 
     const totalCost = facman.total_rep_cost + facman.total_aug_cost;
-    ns.write("reserve.txt", totalCost, "w");
+    currentMoneyReserve = await setReserve(ns, totalCost);
 
     // Reaching the donation threshold is its own reset milestone. It must bypass the ordinary
     // augmentation-count and momentum gates, and can require a soft reset when nothing is affordable yet.
@@ -702,20 +807,43 @@ export async function main(ns) {
         `${progress.faction} (${progress.projected_favor.toFixed(1)}/${progress.required_favor} favor; ` +
         `${progress.desired_augs.join(", ")})`).join("; ");
       log(ns, `SUCCESS: Projected favor now unlocks donations after reset for ${milestones}. Ascending now.`, true, 'success');
-      return await installAugs(ns, true);
+      return await installAugs(ns, true, { ...installationDetails, reason: 'donation-favor' });
     }
 
     const hardCapReached = timeSinceAug >= MAX_AUGMENTATION_WAIT;
-    if (!(pendingAugInclNfCount > 0 && (hardCapReached ||
-      (timeSinceAug >= augMomentum.nextExpectedAug && pendingAugInclNfCount > 2)))) return;
+    if (pendingAugInclNfCount <= 0) return;
+    if (goalTimingAvailable) {
+      const signature = `${goalDecision.action}:${goalDecision.reason}:${goalDecision.goal ?? ''}`;
+      if (signature !== lastResetDecisionLog || Date.now() >= nextResetDecisionLog) {
+        lastResetDecisionLog = signature;
+        nextResetDecisionLog = Date.now() + 60_000;
+        log(ns, `INFO: Ready to install ${pendingAugCount} augs + ${pendingNfCount} NF. ` +
+          (goalDecision.action === 'wait' ? goalDecision.goal
+            ? `Working toward ${goalDecision.goal}: ETA ${formatDuration(goalDecision.eta)}, ` +
+              `wait limit ${formatDuration(Math.max(0, goalDecision.deadline - Date.now()))}.`
+            : 'Measuring money and reputation progress before choosing the next goal.'
+            : `Time to install (${goalDecision.reason}).`), true);
+      }
+      if (!hardCapReached && goalDecision.action === 'wait') return;
+    } else if (!hardCapReached && timeSinceAug < augMomentum.nextExpectedAug) return;
 
-    if (await shouldDelayInstall(ns, player, facman, { forceReset: hardCapReached }))
+    if (await shouldDelayInstall(ns, player, facman, { forceReset: hardCapReached, goalTimingAvailable }))
       return;
 
-    return await installAugs(ns);
+    return await installAugs(ns, false, { ...installationDetails,
+      reason: hardCapReached ? 'hard-cap' : goalTimingAvailable ? goalDecision.reason : 'momentum' });
   }
   /** Logic to detect if it's a good time to install augmentations, and if  o, do s    * @param {NS} ns*/
-  async function installAugs(ns, allowSoftReset = false) {
+  async function installAugs(ns, allowSoftReset = false, decision = {}) {
+    // A bounded infiltration session may have an unclaimed reward. Let it release the screen first.
+    const infiltrationLease = await runScriptLocal(ns, 'bin/infiltration-control.js', false, ['lease']);
+    if (infiltrationLease !== false) {
+      log(ns, infiltrationLease === true
+        ? 'INFO: Installation is ready; waiting for the active infiltration session to finish.'
+        : 'WARNING: Could not verify infiltration status; deferring installation until the next check.', true);
+      return;
+    }
+    await noteMilestones([{kind: 'installation-requested', data: { ...decision, allowSoftReset }}]);
     const ascendArgs = buildAscendArgs(ns.getScriptName(), allowSoftReset);
     await runScriptLocal(ns, "ascend.js", false, ascendArgs);
     await ns.sleep(1000000);
@@ -749,9 +877,11 @@ export async function main(ns) {
     // If we've previously set a flag to wait for the daedalus invite and reserve money, try to speed-along joining them
     if (reservingMoneyForDaedalus && player.money >= moneyReq) { // If our cash has dipped below the threshold again, we may need to take action below
       const joined = await singRun(ns, 'joinFaction', "Daedalus"); // Note, we should have already checked that we have SF4 access before reserving money
-      return joined ? markDaedalusJoined() : false;
+      return joined === true ? markDaedalusJoined() : false;
     }
 
+    // Preserve an existing invite reservation when a missing stock valuation cannot prove a wealth drop.
+    if (stocksValue === null) return;
     // Remaining logic below is for rushing a Daedalus invite in the current reset
     const totalWorth = player.money + stocksValue;
     // Check for sufficient hacking level before attempting to reserve money
@@ -774,7 +904,7 @@ export async function main(ns) {
       if (player.money < moneyReq) { // Only liquidate stocks if we don't have enough cash lying around.
         disableStockmasterForDaedalus = true; // Flag to keep stockmaster offline until we've gotten a daedalus invite
         log(ns, "INFO: Temporarily liquidating stocks to earn an invite to Daedalus...", true, 'info');
-        await launchScriptHelper(ns, 'stockmaster.js', ['--liquidate']);
+        await launchScriptHelper(ns, 'stockmaster.js', ['--liquidate-once']);
         await ns.sleep(5000);
       } // else if we don't liquidate stocks, and our money dips below 100E9 again, we can always do it on the next loop
     } else if (resetInfo.currentNode == 8) {
@@ -796,12 +926,19 @@ export async function main(ns) {
   async function shouldDelayInstall(ns, player, facmanOutput, {
     favorMilestoneReady = false,
     forceReset = false,
+    goalTimingAvailable = false,
   } = {}) {
     const bypassOptimizationDelays = favorMilestoneReady || forceReset;
     // A completed donation milestone or the four-hour hard cap must not be postponed by 4S/BN8
     // optimization. Daedalus and active BlackOps remain higher-priority safety safeguards.
-    if (!bypassOptimizationDelays && !have4sApi) {
-      const totalWorth = player.money + await getStocksValue(ns);
+    if (!bypassOptimizationDelays && !goalTimingAvailable && !have4sApi) {
+      let stockWorth;
+      try { stockWorth = await getStocksValue(ns); }
+      catch {
+        warnAboutFactionManagerOutput(ns, `Stock holdings became unreadable during installation planning; retrying next cycle.`);
+        return true;
+      }
+      const totalWorth = player.money + stockWorth;
       const has4S = ns.stock.has4SData();
       const totalCost = 25E9 * bitNodeMults.FourSigmaMarketDataApiCost +
         (has4S ? 0 : 1E9 * bitNodeMults.FourSigmaMarketDataCost);

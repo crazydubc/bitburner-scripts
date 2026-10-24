@@ -3,14 +3,38 @@ import {
   getGrowThreads, getServers, serverRun, getServerAvailRam, getPlayerInfo, getHackP,
   doGetServerMinSec, doGetServerCurSec, getReset,
   getActiveSourceFiles, doSCP, getBNMults, stanekRun,
-  getServerMaxRam, getPortCrackers
+  getPortCrackers, getConfiguration
 } from './utils.js'
+import {createShareController, validShareOptions} from './share-controller.js';
 
+const argsSchema = [
+  ['share-mode', 'auto'], // auto enables spare-RAM sharing in BN1 before SF4; otherwise follows player/sleeve faction work. on/off override it.
+  ['share-home-buffer', 64], // Minimum GB left free on home by share workers.
+  ['share-host-buffer', 8], // Minimum GB left free on each other host by share workers.
+  ['share-buffer-fraction', 0.05], // Also leave this fraction of available host RAM free (including owned share workers), using the larger buffer.
+];
+
+export function autocomplete(data) { data.flags(argsSchema); return []; }
 
 //ram to reserve on home.
 const reservedRam = 32;
+
+/** Stop a failed/stale helper reply before its fields can become dispatcher NaNs. */
+export function validateBatchPlan(batch, hostname) {
+  const fields = ['H1', 'W1', 'G1', 'W2'];
+  if (!batch || !fields.every(key => Number.isInteger(batch[key]) && batch[key] >= 0) ||
+    fields.reduce((sum, key) => sum + batch[key], 0) <= 0)
+    throw new Error(`Invalid batch plan for ${hostname}: ${JSON.stringify(batch)}. ` +
+      'Check the calculator error; pull updated files on home and restart kernel.js to reload its dependencies.');
+}
 /** @param {NS} ns */
 export async function main(ns) {
+  const options = getConfiguration(ns, argsSchema);
+  if (!options) return;
+  if (!validShareOptions(options)) {
+    log(ns, 'ERROR: Use --share-mode auto/on/off, nonnegative RAM buffers, and a share-buffer-fraction from 0 to 1.', true);
+    return;
+  }
   let resetInfo = await getReset(ns);
   let player = await getPlayerInfo(ns);
   let target, nextTarget;
@@ -22,14 +46,14 @@ export async function main(ns) {
   let botsSent = 0;
   let botsRequired = -1;
   let threadsLeft = 0;
-  let lastShareTime = Date.now() + 30000;
-  let totalram = await getServerAvailRam(ns, "home");
   const dictSourceFiles = await getActiveSourceFiles(ns);
   if (resetInfo.currentNode == 4) dictSourceFiles[4] = 3;
   const bnMultis = await getBNMults(ns);
   const useHacknet = bnMultis.CloudServerLimit == 0 && 9 in dictSourceFiles;
 
   let stanekUnlocked = 13 in dictSourceFiles;
+  const sharing = createShareController(ns, options, dictSourceFiles, resetInfo.currentNode);
+  ns.atExit(() => sharing.stop());
 
   /** @param {NS} ns **/
   async function startup(ns) {
@@ -61,18 +85,20 @@ export async function main(ns) {
     let targetUpdate = true;
     let loopCount = 0;
     do {
+      validateBatchPlan(batchInfo, target.hostname);
       await ns.sleep(500);
       player = await getPlayerInfo(ns);
       target = await getServ(ns, target.hostname);
       baseServers = await getServers(ns);
+      await sharing.update(baseServers);
       const hackTime = ns.getHackTime(target.hostname) + Date.now();
       threadsLeft = 0;
-      totalram = 0;
       //calc total number of threads we can exploit
       for (const server of baseServers) {
         if (server.hasAdminRights && server.maxRam > 0) {
-          let tmpramavailable = await getServerAvailRam(ns, server.hostname);
-          totalram += await getServerMaxRam(ns, server.hostname);
+          // Sharing is preemptible. Count it as capacity without stopping workers
+          // throughout the census/calculators; dispatch reclaims only hosts it uses.
+          let tmpramavailable = await getServerAvailRam(ns, server.hostname) + sharing.reclaimableRam(server.hostname);
           if (server.hostname === "home") {
             tmpramavailable = Math.max(tmpramavailable - reservedRam, 0)
           }
@@ -84,6 +110,8 @@ export async function main(ns) {
 
       const waveweaken1 = Math.ceil((target.hackDifficulty - target.minDifficulty) / weakenStrength);
       const wavegrow1 = Math.ceil(await getGrowThreads(ns, target.hostname, target.moneyAvailable, target.minDifficulty));
+      if (!Number.isInteger(wavegrow1) || wavegrow1 < 0)
+        throw new Error(`Invalid grow calculation for ${target.hostname}; check the home helper and restart kernel.js after pulling.`);
 
       //weaken
       if (waveweaken1 > threadsLeft) {
@@ -164,48 +192,48 @@ export async function main(ns) {
       if (botnetStatus && botsRequired !== botsSent) batchesTotal = Math.max(batchesTotal - 2, 0)
 
       let results = await serverRun(ns, false, target.hostname, prepWeaken1, prepGrow1, prepWeaken2, prepHack1, prepWeaken3,
-        prepGrow2, prepWeaken4, batchInfo.H1, batchInfo.W1, batchInfo.G1, batchInfo.W2, batchesTotal, useHacknet);
+        prepGrow2, prepWeaken4, batchInfo.H1, batchInfo.W1, batchInfo.G1, batchInfo.W2, batchesTotal, useHacknet, sharing.handoff());
 
-      threadsLeft -= ((batchesTotal.H1 + batchesTotal.W1 + batchesTotal.G1 + batchesTotal.W2) * results.batches);
+      threadsLeft -= ((batchInfo.H1 + batchInfo.W1 + batchInfo.G1 + batchInfo.W2) * results.batches);
       await ns.sleep(10);
       if (botnetStatus && botsRequired !== botsSent) await runbotnet(ns, threadsLeft);
+      // Refill immediately after both dispatchers, even if the last batch PID already ended.
+      await sharing.update(baseServers);
       loopCount++;
       let pids = [];
-      while (ns.isRunning(results.lastpid, "home")) {
-        //share what is left
-        if (stanekUnlocked) {
-          if (!pids.some(pid => ns.isRunning(pid))) {
+      try {
+        while (ns.isRunning(results.lastpid, "home")) {
+          const shareActive = await sharing.update(baseServers);
+          if (!ns.isRunning(results.lastpid, 'home')) break;
+          if (shareActive) {
+            // Only reclaim this kernel's optional charges; active faction work gets spare RAM first.
+            for (const pid of pids) if (ns.isRunning(pid)) ns.kill(pid);
             pids = [];
-            const frags = await stanekRun(ns, 'activeFragments');
-            if (frags.length == 0) break;
-            for (const server of baseServers) {
-              if (server.hostname == 'home') continue;
-              const mult = server.hostname.startsWith('hacknet') ? 10 : 2.1;
-              const threads = Math.floor(await getServerAvailRam(ns, server.hostname) / mult);
-              if (threads > 0) {
-                await doSCP(ns, 'stanek.charge.js', server.hostname);
-                const pid = ns.exec('stanek.charge.js', server.hostname, threads, JSON.stringify(frags));
-                if (pid) pids.push(pid);
+          } else if (stanekUnlocked) {
+            if (!pids.some(pid => ns.isRunning(pid))) {
+              pids = [];
+              const frags = await stanekRun(ns, 'activeFragments');
+              if (frags.length == 0) { await ns.sleep(100); continue; }
+              for (const server of baseServers) {
+                if (server.hostname == 'home') continue;
+                const mult = server.hostname.startsWith('hacknet') ? 10 : 2.1;
+                const threads = Math.floor(await getServerAvailRam(ns, server.hostname) / mult);
+                if (threads > 0) {
+                  await doSCP(ns, 'stanek.charge.js', server.hostname);
+                  const pid = ns.exec('stanek.charge.js', server.hostname, threads, JSON.stringify(frags));
+                  if (pid) pids.push(pid);
+                }
               }
             }
           }
+          await ns.sleep(100);
         }
-        if (totalram > 1200 && lastShareTime < Date.now() - 11000) {
-          lastShareTime = Date.now();
-          for (const server of baseServers) {
-            if (server.hostname == 'home') continue;
-            if (server.hostname.startsWith('hacknet')) continue;
-            if (server.hasAdminRights && server.maxRam > 0) {
-              const threads = Math.floor(await getServerAvailRam(ns, server.hostname) / 6)
-              if (threads > 0) {
-                await doSCP(ns, 'bin/share.js', server.hostname)
-                ns.exec('bin/share.js', server.hostname, threads)
-              }
-            }
-          }
-        }
-        await ns.sleep(100);
+      } finally {
+        for (const pid of pids) if (ns.isRunning(pid)) ns.kill(pid);
       }
+      // A full batch may have left no sharing at all. Fill its released RAM now,
+      // bypassing the sweep throttle, before potentially slow target calculations.
+      await sharing.refresh(baseServers);
       player = await getPlayerInfo(ns);
       if (hacking < player.skills.hacking) {
         hacking = player.skills.hacking;
@@ -236,7 +264,7 @@ export async function main(ns) {
         botsRequired = -1;
         recalcbad = false;
         recalcgood = false;
-        batchInfo = getHackP(ns, target, -1, -1, 1);
+        batchInfo = await getHackP(ns, target.hostname, -1, -1, 1);
       }
 
       if (recalcbad) {
@@ -267,7 +295,7 @@ export async function main(ns) {
     if (threadsthisround > 0) {
       botsSent += threadsthisround;
       threadsLeft -= threadsthisround;
-      await serverRun(ns, false, nextTarget.hostname, threadsthisround, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, useHacknet);
+      await serverRun(ns, false, nextTarget.hostname, threadsthisround, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, useHacknet, sharing.handoff());
     }
   }
 
@@ -293,10 +321,11 @@ export async function main(ns) {
       try {
         await startup(ns);
       } catch (err) {
+        sharing.stop();
         if (startupAttempts == 5)
-          log(ns, `ERROR: daemon.js Keeps catching a fatal error during startup: ${getErrorInfo(err)}`, true, 'error');
+          log(ns, `ERROR: kernel.js Keeps catching a fatal error during startup: ${getErrorInfo(err)}`, true, 'error');
         else {
-          log(ns, `WARN: daemon.js Caught an error during startup: ${getErrorInfo(err)}` +
+          log(ns, `WARN: kernel.js Caught an error during startup: ${getErrorInfo(err)}` +
             `\nWill try again (attempt ${startupAttempts} of 5)`, false, 'warning');
           await ns.sleep(5000);
         }
@@ -304,6 +333,6 @@ export async function main(ns) {
     }
   }
 
-  // Start daemon.js
+  // Start the kernel.
   await startup_withRetries(ns);
 }
