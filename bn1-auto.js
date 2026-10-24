@@ -1,5 +1,5 @@
-// Opt-in first-BN1 automation. Installation ends this process; restart manually each cycle.
-import {isScriptRunning, runScriptLocal} from './utils.js';
+// First-BN1 UI automation, launched by autopilot. Restart autopilot manually after installation.
+import {isScriptRunning, whichServerIsRunning, runScriptLocal, getReserve} from './utils.js';
 import {createBn1UI} from './bn1-ui.js';
 import {BN1_SESSION, BN1_SERVERS, firstBn1, planBn1Augmentations} from './bn1-policy.js';
 import {BN1_CRACKERS} from './bn1-guide.js';
@@ -9,15 +9,25 @@ export async function main(ns) {
     // The bootstrap uses direct reads and hands all RAM to bn1-casino.js when needed.
     ns.ramOverride(8);
     const flags = ns.flags([['stop', false]]), wnd = globalThis['window'], doc = wnd?.['document'];
-    if (ns.getHostname() !== 'home' || !doc) return ns.tprint('Run bn1-auto.js on home with the game open.');
+    if (!doc) return ns.tprint('Run bn1-auto.js with the game open.');
+    const host = ns.getHostname();
+    // Autopilot places the remote controller with its full steady-state allocation.
+    if (host !== 'home' && ns.ramOverride(16) < 16) return ns.tprint('BN1 controller needs 16 GB on its remote host.');
     if (flags.stop) {
-        if (wnd[BN1_SESSION]) wnd[BN1_SESSION].stop = true;
-        for (const p of ns.ps('home')) if (p.filename === 'bn1-casino.js') ns.kill(p.pid);
+        const reset = ns.getResetInfo();
+        const session = wnd[BN1_SESSION] ?? {lastAugReset: reset.lastAugReset, lastNodeReset: reset.lastNodeReset};
+        Object.assign(session, {stop: true, paused: true, lastAugReset: reset.lastAugReset, lastNodeReset: reset.lastNodeReset});
+        wnd[BN1_SESSION] = session;
+        const [, casinoPid] = await whichServerIsRunning(ns, 'bn1-casino.js');
+        if (casinoPid) ns.kill(casinoPid);
         return ns.tprint('BN1 controller stopping. Autopilot and hacking remain running.');
     }
     const reset = ns.getResetInfo();
     if (!firstBn1(reset)) return ns.tprint('bn1-auto.js is only for BN1.1 before SF1/SF4. Use autopilot.js here.');
-    if (ns.ps('home').some(p => ['bn1-auto.js', 'bn1-casino.js'].includes(p.filename) && p.pid !== ns.pid))
+    const casinoRunning = await isScriptRunning(ns, 'bn1-casino.js');
+    const previous = wnd[BN1_SESSION];
+    if (casinoRunning || (previous?.lastAugReset === reset.lastAugReset && previous?.lastNodeReset === reset.lastNodeReset &&
+        Number.isInteger(previous.pid) && previous.pid !== ns.pid && ns.isRunning(previous.pid)))
         return ns.tprint('BN1 automation is already running.');
     const session = {pid: ns.pid, stop: false, spendLock: false, child: 0, expires: 0,
         lastAugReset: reset.lastAugReset, lastNodeReset: reset.lastNodeReset};
@@ -26,7 +36,7 @@ export async function main(ns) {
     const alive = () => !session.stop && wnd[BN1_SESSION] === session;
     ns.atExit(() => {
         session.stop = true;
-        if (wnd[BN1_SESSION] === session) delete wnd[BN1_SESSION];
+        if (wnd[BN1_SESSION] === session && !session.paused && !session.handoff) delete wnd[BN1_SESSION];
         const child = wnd.__bitburnerScriptsInfiltration;
         if (child?.controller === ns.pid) child.stop = true;
     });
@@ -41,8 +51,8 @@ export async function main(ns) {
         while (alive() && Date.now() < until) { pulse(); await ns.sleep(Math.min(1000, until - Date.now())); }
         if (!alive()) throw new Error('Stopped');
     };
-    const reserveBudget = () => {
-        const reserve = Number(ns.read('reserve.txt') || 8e9);
+    const reserveBudget = async () => {
+        const reserve = host === 'home' ? Number(ns.read('reserve.txt') || 8e9) : await getReserve(ns);
         if (!Number.isFinite(reserve) || reserve < 0) throw new Error('Cash reserve is unavailable');
         return Math.max(0, ns.getPlayer().money - reserve);
     };
@@ -84,7 +94,7 @@ export async function main(ns) {
                 while (ns.getPlayer().money < needed) await pause(1000);
             }
             await ui.travel('Aevum'); await ui.terminal();
-            if (!ns.fileExists('bn1-casino.js', 'home')) throw new Error('Missing bn1-casino.js; pull the complete branch');
+            if (!ns.fileExists('bn1-casino.js', host)) throw new Error('Missing bn1-casino.js; pull the complete branch');
             say('Starting coinflip. Automation resumes when the casino has paid $10 billion.');
             handoff = true;
         } else {
@@ -94,19 +104,19 @@ export async function main(ns) {
                 if (!await ui.store('ram', reserveBudget)) break;
             }
             if (ns.getServer('home').maxRam < 64) throw new Error('Need 64 GB home RAM; leave the casino money available for the upgrade');
-            if (ns.ramOverride(16) < 16) throw new Error('Free 8 more GB on home, then restart bn1-auto.js');
+            if (ns.ramOverride(16) < 16) throw new Error(`Free 8 more GB on ${host}, then restart bn1-auto.js`);
             ns.ui.openTail(); ns.ui.resizeTail(800, 400); ns.ui.setTailTitle('BN1.1 — Automatic cycle');
             const state = {}; let nextInfiltration = 0;
             while (alive()) {
                 pulse();
                 if (ns.getResetInfo().lastAugReset !== reset.lastAugReset) break;
                 while (ns.ps('home').some(p => p.filename === 'infiltrate.js')) await pause(1000);
-                ui.check();
+                await ui.check();
                 if (!ns.hasTorRouter()) {
                     say('Buying TOR.'); if (!await ui.store('tor', reserveBudget)) { await pause(5000); continue; }
                 }
                 for (const [file, cost] of [...BN1_CRACKERS, ['DarkscapeNavigator.exe', 50e6]]) {
-                    if (ns.fileExists(file, 'home') || cost > reserveBudget()) continue;
+                    if (ns.fileExists(file, 'home') || cost > await reserveBudget()) continue;
                     say(`Buying ${file}.`);
                     await ui.command(`home;buy ${file}`, () => ns.fileExists(file, 'home'));
                 }
@@ -219,7 +229,13 @@ export async function main(ns) {
             }
         }
     } catch (error) {
-        if (alive()) ns.tprint(`BN1 automation paused: ${String(error?.message ?? error)}. Fix the indicated screen/state, then run bn1-auto.js again. For manual steps: run bn1-guide.js.`);
+        if (alive()) {
+            session.paused = true;
+            ns.tprint(`BN1 automation paused: ${String(error?.message ?? error)}. Fix the indicated screen/state, then run bn1-auto.js again. For manual steps: run bn1-guide.js.`);
+        }
     }
-    if (handoff && alive()) ns.spawn('bn1-casino.js', {threads: 1, spawnDelay: 0});
+    if (handoff && alive()) {
+        session.handoff = Date.now() + 5000;
+        ns.spawn('bn1-casino.js', {threads: 1, spawnDelay: 0, ramOverride: host === 'home' ? 6.5 : 16});
+    }
 }

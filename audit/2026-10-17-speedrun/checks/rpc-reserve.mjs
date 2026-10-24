@@ -1,7 +1,7 @@
 // Actual transport, Singularity and reserve functions with a small Netscript host/port model.
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {runScriptLocal, runScriptSomewhere, singRun, getReserve, setReserve, isScriptRunning, whichServerIsRunning, rpcReplyBudget} from '../../../utils.js';
+import {runScriptLocal, runScriptSomewhere, singRun, getReserve, setReserve, isScriptRunning, whichServerIsRunning, rpcReplyBudget, getRemoteScriptFiles} from '../../../utils.js';
 import {main as reserveMain} from '../../../bin/reserve.js';
 import {main as singularityMain} from '../../../bin/singRun.js';
 import {main as configMain} from '../../../bin/sync-script-config.js';
@@ -43,7 +43,7 @@ function harness() {
       h.launches.push({file, target, options, args});
       if (h.failLaunch) return 0;
       const pid = h.nextPid++;
-      if (file === 'manager.js') { h.running.add(pid); return pid; }
+      if (['manager.js','bn1-auto.js'].includes(file)) { h.running.add(pid); return pid; }
       if (file === 'reply.js') { h.port(pid).write(h.reply); return pid; }
       if (file === 'dead.js') return pid;
       if (file === 'slow.js') { h.running.add(pid); return pid; }
@@ -240,6 +240,27 @@ for (const free of [19.9, 20, 64]) {
   const h = harness(); h.failCopy = true; h.free.home = 19;
   assert.equal(await runScriptSomewhere(h.ns('home'), 'manager.js', true, [], 0, true), 0);
   assert(!h.launches.some(call => call.file === 'manager.js'), 'Do not launch with incomplete dependencies/config');
+}
+
+// A remote BN1 controller is placed and allocated at the full 16 GB requirement.
+for (const homeFree of [8,64]) {
+  const h=harness();h.free={home:homeFree,worker:32};
+  const pid=await runScriptSomewhere(h.ns('home'),'bn1-auto.js',true,[],16);
+  assert(pid>0);const launch=h.launches.at(-1);assert.equal(launch.target,'worker');
+  assert.equal(launch.options.ramOverride,16,'Placement and exec must use the same allocation');
+  const copies=new Set(h.copies.filter(([,dest])=>dest==='worker').map(([file])=>file));
+  for(const file of getRemoteScriptFiles('bn1-auto.js')) assert(copies.has(file),`Missing remote dependency: ${file}`);
+}
+for (const entry of ['autopilot.js','bn1-auto.js']) {
+  const files=new Set(getRemoteScriptFiles(entry));
+  for (const file of files) {
+    const code=await readFile(new URL('../../../'+file,import.meta.url),'utf8');
+    for(const match of code.matchAll(/from ['"](\.[^'"]+)['"]/g)) {
+      const resolved=new URL(match[1],new URL('../../../'+file,import.meta.url));
+      const dependency=resolved.pathname.slice(new URL('../../../',import.meta.url).pathname.length);
+      assert(files.has(dependency),`${entry} deployment misses ${dependency} imported by ${file}`);
+    }
+  }
 }
 
 // Direct process lookup handles network cycles, remote instances and no match without a helper.

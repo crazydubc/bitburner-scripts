@@ -7,6 +7,7 @@ import {
 
 import { recordBnStart, recordRunEvents, printBnRunSummary } from './logger.js'
 import { evaluateAugmentationReset } from './augmentation-reset-policy.js';
+import { firstBn1, bn1Paused } from './bn1-policy.js';
 import {
   buildAscendArgs, getFreshDonationFavorProgress, NEUROFLUX
 } from './donation-favor.js'
@@ -18,6 +19,7 @@ import {
 const argsSchema = [
   ['bn-route', 'current'], // current or unlocks-first; set autopilot.js.config.txt to retain the experiment across resets.
   ['disable-go', false], // Prevent Go auto-launch while comparing an external bot; stop an existing go.js yourself first.
+  ['disable-bn1-auto', false], // Keep manual guidance instead of the first-BN1 UI controller.
   ['infiltration', true], // Bounded UI automation after casino, including Shadows of Anarchy progression.
   ['infiltration-money-target', 10e9], // Cash goal when no useful reputation target is active.
   ['infiltration-faction', ''], // Optional explicit reward recipient in BN1; otherwise use the SF4 faction planner.
@@ -59,6 +61,7 @@ export async function main(ns) {
   let player = await getPlayerInfo(ns);
   let alreadyJoinedDaedalus = false, autoJoinDaedalusUnavailable = false, reservingMoneyForDaedalus = false, disableStockmasterForDaedalus = false;
   let resetInfo = await getReset(ns);
+  const automateBn1 = !options['disable-bn1-auto'] && firstBn1(resetInfo);
   let dictOwnedSourceFiles = await getActiveSourceFiles(ns, false);
   const unlockedSFs = await getActiveSourceFiles(ns, true);
   const currBN = `${resetInfo.currentNode}.${sourceFileLevel(dictOwnedSourceFiles, resetInfo.currentNode) + 1}`;
@@ -141,6 +144,12 @@ export async function main(ns) {
 
   //in order by importance!
   const asynchronousHelpers = [
+    {
+      name: 'bn1-auto.js',
+      shouldRun: () => automateBn1 && !bn1Paused(resetInfo),
+      args: () => [],
+      ram: 16, // Reserve the whole cycle allocation before the batcher fills spare RAM.
+    },
     {
       name: "kernel.js",
       shouldRun: () => true,
@@ -297,7 +306,7 @@ export async function main(ns) {
     }
     log(ns, "INFO: Auto-pilot engaged...", true, 'info');
     // A restarted autopilot must not duplicate a coinflipper that is still earning.
-    if (!await isScriptRunning(ns, 'coinflip.js') && !await isScriptRunning(ns, 'bn1-casino.js') &&
+    if (!automateBn1 && !await isScriptRunning(ns, 'coinflip.js') && !await isScriptRunning(ns, 'bn1-casino.js') &&
         !await isScriptRunning(ns, 'bn1-auto.js'))
       await launchScriptHelper(ns, 'coinflip.js'); //lets try to get some cash!
     let startUpRan = false, keepRunning = true;
@@ -327,8 +336,8 @@ export async function main(ns) {
       installedAugmentations = await getOwnedAugs(ns, false);
       playerInstalledAugCount = installedAugmentations.length;
     } else {
-      const bn1Automatic = resetInfo.currentNode === 1 && !dictOwnedSourceFiles[1] && await isScriptRunning(ns, 'bn1-auto.js');
-      if (bn1Automatic) log(ns, 'BN1 controller is handling faction work, augmentation purchases, and installation. Restart bn1-auto.js after each installation.', true);
+      const bn1Automatic = automateBn1 || (resetInfo.currentNode === 1 && !dictOwnedSourceFiles[1] && await isScriptRunning(ns, 'bn1-auto.js'));
+      if (bn1Automatic) log(ns, 'BN1 automation handles travel, casino, faction work, purchases, and installation. Restart autopilot.js after each installation.', true);
       else log(ns, `WARNING: This script requires SF4 (singularity) functions to assess purchasable augmentations and ascend automatically. ` +
         `Without the optional BN1 controller, manage faction work, purchasing, and installation yourself.`, true);
 
@@ -419,7 +428,8 @@ export async function main(ns) {
 
   async function checkOnRunningScripts(ns, runningScripts) {
     for (const script of asynchronousHelpers) {
-      if (script.name === 'infiltrate.js' && runningScripts?.has('bn1-auto.js')) continue;
+      if (script.name === 'bn1-auto.js' && (runningScripts?.has('bn1-casino.js') || runningScripts?.has('coinflip.js'))) continue;
+      if (script.name === 'infiltrate.js' && (automateBn1 || runningScripts?.has('bn1-auto.js') || runningScripts?.has('bn1-casino.js'))) continue;
       if (Date.now() < (script.nextRun ?? 0)) continue;
       try {
         const serverRunning = await isScriptRunning(ns, script.name, runningScripts);
@@ -428,7 +438,7 @@ export async function main(ns) {
           if (['darknet.js', 'infiltrate.js'].includes(script.name))
             pid = ns.exec(script.name, 'home', { threads: 1, temporary: true, preventDuplicates: true }, ...script.args());
           else
-            pid = await runScriptSomewhere(ns, script.name, true, script.args());
+            pid = await runScriptSomewhere(ns, script.name, true, script.args(), script.ram ?? 0);
           if (pid > 0) runningScripts?.add(script.name.replace(/^\/+/, ''));
         }
       } catch (error) {

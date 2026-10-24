@@ -1,10 +1,14 @@
-// Pure policy for the optional first-BN1 UI controller.
+// Progression and launch policy for the first-BN1 UI controller.
 export const BN1_SESSION = '__bitburnerBn1Cycle';
 export const BN1_FACTIONS = ['CyberSec', 'Sector-12', 'NiteSec', 'The Black Hand', 'BitRunners', 'Tian Di Hui', 'Daedalus'];
 export const BN1_SERVERS = [['CSEC', 'CyberSec'], ['avmnite-02h', 'NiteSec'], ['I.I.I.I', 'The Black Hand'], ['run4theh111z', 'BitRunners']];
 export const NF = 'NeuroFlux Governor';
 export function firstBn1(reset) {
     return reset.currentNode === 1 && reset.ownedSF instanceof Map && !reset.ownedSF.has(1) && !reset.ownedSF.has(4);
+}
+export function bn1Paused(reset, session = globalThis['window']?.[BN1_SESSION]) {
+    return !!session && (session.paused || session.handoff > Date.now()) &&
+        session.lastAugReset === reset.lastAugReset && session.lastNodeReset === reset.lastNodeReset;
 }
 
 /** UI prices are rounded. Use the upper rounding boundary, never a lower spending estimate. */

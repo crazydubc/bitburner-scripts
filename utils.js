@@ -207,7 +207,10 @@ export const remoteScriptDependencies = [
 
 /** Return the complete shared runtime bundle copied before launching a script away from home. */
 export function getRemoteScriptFiles(script) {
-  return [...new Set([script, ...remoteScriptDependencies.map(getFilePath)])];
+  const bn1 = script.replace(/^\/+/, '') === 'bn1-auto.js'
+    ? ['bn1-ui.js', 'bn1-policy.js', 'bn1-guide.js', 'infiltration-ui.js', 'terminal-ui.js', 'bn1-casino.js', 'coinflip.js']
+    : script.replace(/^\/+/, '') === 'autopilot.js' ? ['bn1-policy.js'] : [];
+  return [...new Set([script, ...remoteScriptDependencies.map(getFilePath), ...bn1.map(getFilePath)])];
 }
 
 /** Returns a helpful error message if we forgot to pass the ns instance to a function
@@ -384,13 +387,14 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
   const startedWaiting = Date.now();
   let lastFailure = `no server had enough free RAM for ${script}`;
   const scriptRam = scriptOverride === 0 ? ns.getScriptRam(script, 'home') : scriptOverride;
+  const launchOptions = {threads: 1, temporary: true, ...(scriptOverride > 0 ? {ramOverride: scriptOverride} : {})};
   if (!Number.isFinite(scriptRam) || scriptRam <= 0) {
     if (!quiet) log(ns, `WARNING: Cannot launch ${script}: missing script or invalid RAM requirement on home.`);
     return 0;
   }
   const homeAvailRam = await getServerAvailRam(ns, "home") - reservedRam;
   if (!persistent && Math.floor(homeAvailRam / scriptRam) >= 1) {
-    thispid = ns.exec(script, "home", { threads: 1, temporary: true }, ...argmts)
+    thispid = ns.exec(script, "home", launchOptions, ...argmts)
     if (thispid > 0) return thispid;
   }
   while (true) {
@@ -426,7 +430,7 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
         lastFailure = `failed to synchronize configuration for ${script} on ${server}`;
         continue;
       }
-      thispid = ns.exec(script, server, { threads: 1, temporary: true }, ...argmts)
+      thispid = ns.exec(script, server, launchOptions, ...argmts)
       if (thispid > 0) return thispid;
       lastFailure = `ns.exec returned 0 for ${script} on ${server} after its dependencies were copied`;
     }
@@ -434,7 +438,7 @@ export async function runScriptSomewhere(ns, script, persistent, argmts, scriptO
     const homeFree = await getServerAvailRam(ns, 'home');
     const relocatingSelfFromHome = script.replace(/^\/+/, '') === ns.getScriptName() && ns.getHostname() === 'home';
     if (!relocatingSelfFromHome && homeFree - reservedRam >= scriptRam) {
-      thispid = ns.exec(script, 'home', { threads: 1, temporary: true }, ...argmts);
+      thispid = ns.exec(script, 'home', launchOptions, ...argmts);
       if (thispid > 0) return thispid;
     }
     if (persistent || Date.now() - startedWaiting >= remoteLaunchTimeout) {

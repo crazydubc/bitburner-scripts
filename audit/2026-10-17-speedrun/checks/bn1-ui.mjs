@@ -7,6 +7,7 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
 import {createBn1UI} from '../../../bn1-ui.js';
+import {clickInfiltrationElement as click, infiltrationModals} from '../../../infiltration-ui.js';
 import {planBn1Augmentations, NF} from '../../../bn1-policy.js';
 const engine=resolve(process.argv[2]),require=createRequire(resolve(process.argv[3],'package.json'));
 const {JSDOM}=require('jsdom'),ts=require('typescript');
@@ -22,7 +23,7 @@ const Settings={theme:{primary:'#00ff00',primarydark:'#008800',money:'#ffff00',r
 let rerender,route,receipt='',alive=true,installCount=0,tor=false,homeRam=8,priceMultiplier=1,drainOnPurchase=false;
 const visitedLocations=[],committedCrimes=[];
 const installed=new Map([[NF,3]]),purchases=[],faction={name:'CyberSec',playerReputation:1000};
-const Player={money:10e9,city:'Sector-12',queuedAugmentations:[],augmentations:[{name:NF,level:3}],entropy:0,
+const Player={money:10e9,city:'Sector-12',factions:['CyberSec'],factionInvitations:[],factionRumors:new Set(),exploits:[],queuedAugmentations:[],augmentations:[{name:NF,level:3}],entropy:0,
   canAfford:n=>Player.money>=n,hasAugmentation:name=>name!==NF&&Player.queuedAugmentations.some(q=>q.name===name),
   isAwareOfGang:()=>false,canAccessGrafting:()=>false,hasTorRouter:()=>tor,loseMoney:n=>Player.money-=n,
   getHomeComputer:()=>({maxRam:homeRam}),getUpgradeHomeRamCost:()=>1e6,bitNodeOptions:{},
@@ -30,7 +31,8 @@ const Player={money:10e9,city:'Sector-12',queuedAugmentations:[],augmentations:[
 const Augmentations=Object.fromEntries(['BitWire','Tier 2',NF].map(name=>[name,{name,info:'Improves hacking skill.',stats:'+1% hacking',
   factions:['CyberSec'],prereqs:name==='Tier 2'?['BitWire']:[],getLevel:()=>3+Player.queuedAugmentations.filter(q=>q.name===NF).length}]));
 const getAugCost=aug=>({moneyCost:(aug.name===NF?1e5:1e6)*priceMultiplier*1.9**Player.queuedAugmentations.length,repCost:1000});
-const dialogBoxCreate=text=>{receipt=text;rerender();};
+let alertEvents;
+const dialogBoxCreate=(text,options={})=>alertEvents.emit(text,options.canBeDismissedEasily??true);
 const purchaseAugmentation=(_faction,aug)=>{
   const cost=getAugCost(aug).moneyCost;
   assert(Player.canAfford(cost));Player.money-=cost;purchases.push(aug.name);
@@ -38,7 +40,7 @@ const purchaseAugmentation=(_faction,aug)=>{
   if(!Settings.SuppressBuyAugmentationConfirmation)dialogBoxCreate(`You purchased ${aug.name}. Its enhancements will not take effect until they are installed.`);
   rerender();
 };
-class EventEmitter {listeners=[];subscribe=fn=>{this.listeners.push(fn);return()=>{};};emit=(...args)=>this.listeners.forEach(fn=>fn(...args));}
+class EventEmitter {listeners=[];subscribe=fn=>{this.listeners.push(fn);return()=>{this.listeners=this.listeners.filter(f=>f!==fn);};};emit=(...args)=>this.listeners.forEach(fn=>fn(...args));}
 const cache=new Map();
 function load(path){
   path=resolve(engine,path);if(cache.has(path))return cache.get(path);
@@ -75,7 +77,7 @@ function load(path){
       }else route(page);
     }}};
     if(specifier.endsWith('/Router'))return {Page:{City:'City',Travel:'Travel',StockMarket:'StockMarket',Location:'Location',Work:'Work'}};
-    if(specifier.endsWith('/AlertManager'))return {AlertEvents:new EventEmitter()};
+    if(specifier.endsWith('/AlertManager'))return load('src/ui/React/AlertManager.tsx');
     for(const name of ['InstalledAugmentations','PlayerMultipliers','SourceFilesElement'])
       if(specifier.endsWith('/'+(name==='SourceFilesElement'?'SourceFiles':name)))return {[name]:()=>null};
     if(specifier.endsWith('/WorldMap'))return {WorldMap:({onTravel})=>h(TravelPoint,{city:'Aevum',onTravel})};
@@ -90,7 +92,13 @@ const formats=load('src/ui/formatNumber.ts');formats.FormatsNeedToChange.emit();
 const {Modal}=load('src/ui/React/Modal.tsx'),{PurchasableAugmentation}=load('src/Augmentation/ui/PurchasableAugmentations.tsx'),
   {AugmentationsRoot}=load('src/Augmentation/ui/AugmentationsRoot.tsx'),{TorButton}=load('src/Locations/ui/TorButton.tsx'),
   {RamButton}=load('src/Locations/ui/RamButton.tsx'),{TravelAgencyRoot}=load('src/Locations/ui/TravelAgencyRoot.tsx'),
-  {LocationCity}=load('src/Locations/ui/City.tsx'),{SlumsLocation}=load('src/Locations/ui/SlumsLocation.tsx');
+  {LocationCity}=load('src/Locations/ui/City.tsx'),{SlumsLocation}=load('src/Locations/ui/SlumsLocation.tsx'),
+  {SidebarAccordion}=load('src/Sidebar/ui/SidebarAccordion.tsx'),{AlertManager,AlertEvents}=load('src/ui/React/AlertManager.tsx');
+alertEvents=AlertEvents;
+const sidebarSource=readFileSync(resolve(engine,'src/Sidebar/ui/SidebarRoot.tsx'),'utf8');
+const sidebarGates=Function('Player','knowAboutBitverse',
+  sidebarSource.slice(sidebarSource.indexOf('  const canOpenFactions ='),sidebarSource.indexOf('  const canOpenSleeves ='))+
+  'return {canOpenFactions,canOpenAugmentations};');
 function TravelPoint({city,onTravel}){return h('span',{onClick:()=>onTravel(city)},'A');}
 function FactionView({faction}){
   const parent={faction,rep:faction.playerReputation,rerender,
@@ -104,18 +112,22 @@ function App(){
   const[page,setPage]=React.useState('Terminal'),[,update]=React.useState(0);
   rerender=()=>update(v=>v+1);route=page=>setTimeout(()=>setPage(page),150);
   const install=()=>{installCount++;alive=false;};
-  return h(React.Fragment,null,...['Terminal','Factions','Augmentations','Travel','City'].map(name=>h('div',{key:name,role:'button',onClick:()=>route(name)},name)),
+  const gates=sidebarGates(Player,()=>false);
+  const groups={Hacking:['Terminal'],Character:['Stats',gates.canOpenFactions&&'Factions',gates.canOpenAugmentations&&'Augmentations'],World:['Travel','City']};
+  return h(React.Fragment,null,...Object.entries(groups).map(([name,names])=>h(SidebarAccordion,{key:name,key_:name,page,clickPage:route,
+    items:names.map(name=>name&&({key_:name,icon,count:name==='Augmentations'?Player.queuedAugmentations.length:0})),
+    flash:null,icon,sidebarOpen:true,classes:{listitem:'listitem',active:'active'}})),h(AlertManager,{hidden:false}),
     page==='Terminal'?h('input',{id:'terminal-input'}):page==='Augmentations'?h(AugmentationsRoot,{installAugmentationsFn:install,exportGameFn(){}}):
     page==='Factions'?h('span',{className:'factions-joined'},h(Paper,null,h(Typography,{variant:'h6'},'CyberSec'),h(Button,{onClick:()=>route('Faction')},'Augments'))):
     page==='Faction'?h(FactionView,{faction}):page==='Travel'?h(TravelAgencyRoot):
     page==='City'?h(LocationCity):page==='Slums'?h(SlumsLocation):
     page==='Work'?h(Button,{onClick:()=>{Player.focus=false;route('Terminal');}},'Do something else simultaneously'):
     page==='Shop'?h(React.Fragment,null,h(TorButton,{rerender}),h(RamButton,{rerender})):null,
-    h(Modal,{open:!!receipt,onClose:()=>{receipt='';rerender();}},receipt==='INVITE'?h(React.Fragment,null,h(Typography,{variant:'h4'},'You received a faction invitation.'),h(Button,{onClick:()=>{throw Error('Do not join through popup');}},'Join'),h(Button,{onClick:()=>{receipt='';rerender();}},'Decide later')):h(React.Fragment,null,h(Typography,null,receipt),h(Button,{onClick:()=>{receipt='';rerender();}},'OK'))));
+    h(Modal,{open:!!receipt,onClose:()=>{receipt='';rerender();}},receipt==='INVITE'?h(React.Fragment,null,h(Typography,{variant:'h4'},'You received a faction invitation.'),h(Button,{onClick:()=>{throw Error('Do not join through popup');}},'Join'),h(Button,{onClick:()=>{receipt='';rerender();}},'Decide later')):h(React.Fragment,null,h(Typography,null,receipt),h(Button,{onClick:()=>{throw Error('Do not accept an unrelated confirmation');}},'Confirm'))));
 }
-const ns={getPlayer:()=>({money:Player.money,city:Player.city,factions:['CyberSec']}),getResetInfo:()=>({ownedAugs:installed}),
+const ns={getPlayer:()=>({money:Player.money,city:Player.city,factions:Player.factions}),getResetInfo:()=>({ownedAugs:installed}),
   getServer:()=>({maxRam:homeRam}),hasTorRouter:()=>tor,sleep:ms=>new Promise(r=>setTimeout(r,ms)),tprint(){}};
-const ui=createBn1UI(ns,document,()=>alive);
+let ui=createBn1UI(ns,document,()=>alive);
 let previous=execFileSync('git',['show','0d6e7b3:bn1-ui.js'],{cwd:fileURLToPath(new URL('../../../',import.meta.url)),encoding:'utf8'});
 for(const name of ['infiltration-ui','terminal-ui','bn1-policy'])
   previous=previous.replace(`'./${name}.js'`,JSON.stringify(new URL(`../../../${name}.js`,import.meta.url).href));
@@ -169,8 +181,37 @@ for(const city of Object.values(locationEnums.CityName).filter(city=>!['Sector-1
 assert.equal(committedCrimes.length,12,'One verified Mug per city in each layout');
 ReactDOM.unmountComponentAtNode(root);alive=true;receipt='';ReactDOM.render(h(App),root);await ns.sleep(50);
 receipt='INVITE';rerender();await ns.sleep(50);await ui.queue();assert.equal(receipt,'');await ns.sleep(300);
-receipt='Unexpected dialog';rerender();await ns.sleep(50);await assert.rejects(ui.queue(),/dialog needs your attention/);
+receipt='Unexpected decision';rerender();await ns.sleep(50);await assert.rejects(ui.queue(),/dialog needs your attention/);
 receipt='';rerender();await ns.sleep(300);alive=false;await assert.rejects(ui.queue(),/stopped/);
+ReactDOM.unmountComponentAtNode(root);alive=true;receipt='';Player.augmentations=[];installed.clear();Player.queuedAugmentations=[];
+Player.factions=[];Player.factionInvitations=[];ui=createBn1UI(ns,document,()=>alive);
+ReactDOM.render(h(App),root);await ns.sleep(50);
+assert(![...document.querySelectorAll('[role="button"]')].some(e=>e.textContent==='Augmentations'));
+assert.deepEqual(await ui.queue(),[],'Fresh locked Augmentations menu proves an empty queue');
+await ui.joinInvitations(); // Factions is also locked before the first invitation.
+Player.factions=['CyberSec'];rerender();await ns.sleep(50);
+const firstSnapshot=await ui.snapshot();assert(firstSnapshot.rows.some(r=>r.name==='BitWire'));
+await assert.rejects(oldUI(ns,document,()=>alive).queue(),/Augmentations sidebar menu/);
+// The real alert queue has only an X for normal notices and adds OK for mandatory notices.
+dialogBoxCreate('You are now in Aevum!');dialogBoxCreate('You have purchased a TOR router!');
+await ns.sleep(50);assert.equal([...infiltrationModals(document)[0].querySelectorAll('button')].filter(b=>b.textContent==='OK').length,0);
+await assert.rejects(oldUI(ns,document,()=>alive).queue(),/dialog needs your attention/);
+await ui.check(true);assert.equal(infiltrationModals(document).length,0);
+dialogBoxCreate('Mandatory informational notice',{canBeDismissedEasily:false});await ns.sleep(50);
+assert([...infiltrationModals(document)[0].querySelectorAll('button')].some(b=>b.textContent==='OK'));
+await ui.check();assert.equal(infiltrationModals(document).length,0);
+// A collapsed Character group is expandable, not evidence of an empty purchase queue.
+const character=[...document.querySelectorAll('[role="button"]')].find(e=>e.textContent==='Character');
+click(character);await ns.sleep(300);
+assert.deepEqual(await ui.queue(),[]);
+const firstRow=(await ui.snapshot()).rows.find(r=>r.name==='BitWire');
+assert(await ui.buy(firstRow,()=>Player.money));
+assert.deepEqual(await ui.queue(),[{name:'BitWire',levels:1}],'First purchase reveals Augmentations');
+click([...document.querySelectorAll('[role="button"]')].find(e=>e.textContent==='Character'));await ns.sleep(300);
+assert.deepEqual(await ui.queue(),[{name:'BitWire',levels:1}],'Expand the menu and verify purchases');
+dialogBoxCreate('RUNTIME ERROR: fixture failure');await ns.sleep(50);
+await assert.rejects(ui.check(),/RUNTIME ERROR: fixture failure/);
+assert.equal(infiltrationModals(document).length,1,'Keep runtime errors visible');
 ReactDOM.unmountComponentAtNode(root);dom.window.close();
-console.log('Official TSX + React/MUI: old Slums failure reproduced in both layouts; real City -> The Slums -> Mug succeeds in all six cities/layouts; travel (ASCII/list and confirmations), TOR/RAM purchases, faction row requirements/descriptions/prerequisites, queued NF levels, price-race refusal, both install-confirmation settings, delayed navigation, popup deferral, unrelated dialogs, and cancellation pass.');
+console.log('Official TSX + React/MUI: real queued X/OK alerts, locked/expanded augmentation menus and first-purchase visibility pass; old Slums failure reproduced in both layouts; real City -> The Slums -> Mug succeeds in all six cities/layouts; travel (ASCII/list and confirmations), TOR/RAM purchases, faction row requirements/descriptions/prerequisites, queued NF levels, price-race refusal, both install-confirmation settings, delayed navigation, popup deferral, unrelated dialogs, and cancellation pass.');
 process.exit(0);

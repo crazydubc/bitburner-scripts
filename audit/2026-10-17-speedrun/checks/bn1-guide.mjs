@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {firstBn1,bn1Paused,BN1_SESSION} from '../../../bn1-policy.js';
 import {readFile} from 'node:fs/promises';
 import {getBn1Guidance, getBn1InstallGuidance, getBn1FactionRoadmap, readBn1Snapshot, maybeStartBn1Autopilot, main, BN1_CRACKERS, BN1_FACTION_SERVERS} from '../../../bn1-guide.js';
 import {filesExist, getPortCrackers} from '../../../utils.js';
@@ -273,13 +274,13 @@ const autopilotSource = await readFile(new URL('../../../autopilot.js', import.m
 const coinflipStartup = autopilotSource.slice(autopilotSource.indexOf('// A restarted autopilot'),
   autopilotSource.indexOf('let startUpRan = false'));
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-for (const running of ['coinflip.js', 'bn1-casino.js', 'bn1-auto.js', null]) {
+for (const automateBn1 of [false,true]) for (const running of ['coinflip.js', 'bn1-casino.js', 'bn1-auto.js', null]) {
   const launches = [];
-  await AsyncFunction('ns', 'doSCP', 'RUNLOG_FILE', 'isScriptRunning', 'launchScriptHelper', coinflipStartup)(
+  await AsyncFunction('ns', 'doSCP', 'RUNLOG_FILE', 'isScriptRunning', 'launchScriptHelper', 'automateBn1', coinflipStartup)(
     {getHostname: () => 'home'}, async () => {}, 'runlog.txt',
     async (ns, name) => name === running,
-    async (ns, name) => { launches.push(name); return 7; });
-  assert.deepEqual(launches, running ? [] : ['coinflip.js']);
+    async (ns, name) => { launches.push(name); return 7; }, automateBn1);
+  assert.deepEqual(launches, automateBn1 || running ? [] : ['coinflip.js']);
 }
 const helperSource = autopilotSource.slice(autopilotSource.indexOf('async function checkOnRunningScripts(ns,'),
   autopilotSource.indexOf('async function runPeriodicScripts(ns,'));
@@ -293,6 +294,52 @@ await checkHelpers({exec: (file, host, options) => {
   helperLaunches.push(file); return 0;
 }});
 assert.deepEqual(helperLaunches, ['darknet.js', 'next-helper.js']);
+
+// Run the actual scheduler entries and mode predicate for automatic/manual first-BN1 starts.
+const helperArray=autopilotSource.slice(autopilotSource.indexOf('  const asynchronousHelpers ='),autopilotSource.indexOf('  const reqRam ='));
+const modeLine=autopilotSource.match(/  const automateBn1 = .*;/)[0];
+for (const scenario of [
+  {},{running:['bn1-auto.js']},{running:['bn1-casino.js']},{running:['coinflip.js']},
+  {paused:true},{handoff:true},{stalePause:true},{disabled:true},{node:4},{sf1:true},{fail:true},
+]) {
+  const resetInfo={currentNode:scenario.node??1,ownedSF:new Map(scenario.sf1?[[1,1]]:[]),lastAugReset:2,lastNodeReset:1};
+  const options={'disable-bn1-auto':!!scenario.disabled,infiltration:true};
+  globalThis.window={[BN1_SESSION]:{paused:scenario.paused||scenario.stalePause,handoff:scenario.handoff?Date.now()+5000:0,
+    lastAugReset:scenario.stalePause?1:2,lastNodeReset:1}};
+  const starts=[],running=new Set(scenario.running??[]),warnings=[];
+  const scheduler=Function('options','resetInfo','firstBn1','bn1Paused','isScriptRunning','runScriptSomewhere','log',`
+    const STAGGER=1000,PERIOD=30000,getFactionWorkerArgs=()=>[],getErrorInfo=String;
+    const shouldIntelFarm=false,reservedPurchase=0,reqRam=()=>true,bitNodeMults={DaedalusAugsRequirement:30},
+      reservingMoneyForDaedalus=false,unlockedSFs={};
+    ${modeLine}
+    ${helperArray.replace('const asynchronousHelpers =','let asynchronousHelpers =')}
+    asynchronousHelpers=asynchronousHelpers.filter(s=>['bn1-auto.js','kernel.js','infiltrate.js'].includes(s.name));
+    ${helperSource}
+    return checkOnRunningScripts;
+  `)(options,resetInfo,firstBn1,bn1Paused,async(_ns,name,snapshot)=>snapshot.has(name),
+    async(_ns,name,_persistent,_args,ram)=>{starts.push([name,ram]);return scenario.fail&&name==='bn1-auto.js'?0:123;},
+    (_ns,text)=>warnings.push(text));
+  await scheduler({exec:(name,host)=>{starts.push([name,host]);return 123;}},running);
+  const automatic=!scenario.disabled&&!scenario.sf1&&!scenario.node;
+  assert(starts.some(([name])=>name==='kernel.js'),'Income starts even if UI automation is blocked');
+  assert.equal(starts.some(([name])=>name==='bn1-auto.js'),automatic&&!scenario.paused&&!scenario.handoff&&!scenario.running);
+  if(starts[0]?.[0]==='bn1-auto.js')assert.equal(starts[0][1],16);
+  assert.equal(starts.some(([name])=>name==='infiltrate.js'),!automatic);
+  assert.deepEqual(warnings,[]);
+  delete globalThis.window;
+}
+// Initial 8 GB startup roots hosts and offloads autopilot before starting its managers.
+const mainStart=autopilotSource.slice(autopilotSource.indexOf('  async function main_start(ns)'),autopilotSource.indexOf('  async function startUp(ns)'));
+const startupCalls=[];
+const boot=Function('crackHosts','getServerMaxRam','runScriptSomewhere','isScriptRunning','launchScriptHelper',`
+  const log=()=>{},automateBn1=true,getErrorInfo=String,shouldWeKeepRunning=()=>false;
+  const startUp=async()=>true,mainLoop=async()=>{return false;};
+  ${mainStart}
+  return main_start;
+`)(async()=>startupCalls.push('root'),async()=>8,async()=>{startupCalls.push('offload');return 123;},
+  async()=>false,async()=>{throw Error('BN1 controller owns casino startup');});
+await boot({getHostname:()=> 'home',args:[]});assert.deepEqual(startupCalls,['root','offload']);
+await boot({getHostname:()=> 'remote',sleep:async()=>{}});assert.deepEqual(startupCalls,['root','offload','root']);
 
 // B03: preserve input-to-result correspondence for all single-cracker inventories.
 const names = BN1_CRACKERS.map(([file]) => file);

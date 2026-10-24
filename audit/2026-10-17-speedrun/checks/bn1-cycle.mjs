@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import {resolve} from 'node:path';
-import {firstBn1, displayedNumber, planBn1Augmentations, NF, BN1_SESSION} from '../../../bn1-policy.js';
+import {firstBn1, displayedNumber, planBn1Augmentations, NF, BN1_SESSION, bn1Paused} from '../../../bn1-policy.js';
 import {main as casinoMain} from '../../../bn1-casino.js';
 import {main as stockMain} from '../../../bin/bn1-stock.js';
 import {executePurchase} from '../../../purchase-guard.js';
@@ -17,7 +17,7 @@ let source = readFileSync(new URL('../../../bn1-auto.js', import.meta.url), 'utf
   .replace("import {createBn1UI} from './bn1-ui.js';", 'const createBn1UI=(ns,...args)=>ns.fixtureUI(...args);');
 for (const name of ['utils','bn1-policy','bn1-guide','augmentation-reset-policy'])
   source = source.replace(`'./${name}.js'`, JSON.stringify(new URL(`../../../${name}.js`, import.meta.url).href));
-const {main} = await import(url(source));
+const {main} = await import(url(source+'\n//# sourceURL=bn1-auto-fixture.js'));
 const reset = {currentNode:1, lastAugReset:1, lastNodeReset:1, ownedSF:new Map(), ownedAugs:new Map()};
 assert(firstBn1(reset));
 for (const changed of [{currentNode:4},{ownedSF:new Map([[1,1]])},{ownedSF:new Map([[4,1]])}])
@@ -59,7 +59,7 @@ async function cycle(options={}) {
   const ui={
     check(){},terminal:async()=>calls.push('terminal'),mug:async()=>{calls.push('mug');money=250001;},
     travel:async dest=>{calls.push('travel:'+dest);if(cityName!==dest)money-=200000;cityName=dest;},
-    store:async(kind,budget)=>{calls.push('store:'+kind);if(kind!=='ram')return true;if(homeRam>=128||budget()<1e6)return false;money-=1e6;homeRam*=2;return true;},
+    store:async(kind,budget)=>{calls.push('store:'+kind);if(kind!=='ram')return true;if(homeRam>=128||await budget()<1e6)return false;money-=1e6;homeRam*=2;return true;},
     study:async()=>calls.push('study'),work:async f=>calls.push('work:'+f),joinInvitations:async()=>{},
     command:async text=>calls.push('command:'+text),
     snapshot:async()=>{now+=options.snapshotMs??0;return {queued:structuredClone(queued),rows:[
@@ -69,22 +69,23 @@ async function cycle(options={}) {
     install:async verify=>{await verify();calls.push('install');installed=true;},
   };
   const raw={pid:11,flags:schema=>Object.fromEntries(schema.map(([k,v])=>[k,k==='stop'?(options.stop??v):v])),
-    getHostname:()=> 'home',getResetInfo:()=>info,getPlayer:player,getMoneySources:()=>({sinceInstall:{casino}}),
+    getHostname:()=>options.host??'home',getResetInfo:()=>info,getPlayer:player,getMoneySources:()=>({sinceInstall:{casino}}),
     fixtureUI:()=>ui,ramOverride:n=>{allocated=n;allocations.push(n);return n;},
     disableLog(){},print(){},tprint:t=>messages.push(t),atExit:fn=>exits.push(fn),
     scan:host=>host==='home'?['remote']:['home'],
-    ps:host=>[...(host==='home'?[{filename:'bn1-auto.js',pid:11,args:[]}]:options.offloaded?[{filename:'autopilot.js',pid:12,args:[]}]:[]),
+    ps:host=>[...(host===(options.host??'home')?[{filename:'bn1-auto.js',pid:11,args:[]}]:options.offloaded?[{filename:'autopilot.js',pid:12,args:[]}]:[]),
       ...[...processes].filter(([,p])=>p.host===host).map(([pid,p])=>({pid,...p}))],
-    getServer:host=>({maxRam:homeRam,ramUsed:allocated,requiredHackingSkill:9999,numOpenPortsRequired:5,hasAdminRights:true}),
+    getServer:host=>({maxRam:host==='home'?homeRam:16,ramUsed:host===(options.host??'home')?allocated:0,requiredHackingSkill:9999,numOpenPortsRequired:5,hasAdminRights:true}),
     getScriptRam:()=>4,getScriptName:()=> 'bn1-auto.js',fileExists:()=>true,hasTorRouter:()=>true,read:()=> '8000000000',
-    isRunning:pid=>pid===11||processes.has(pid),
+    isRunning:pid=>{assert(Number.isInteger(pid),'Never pass an absent PID to isRunning');return pid===11||pid===options.otherPid||processes.has(pid);},
     exec:(file,host,config,...args)=>{calls.push('exec:'+file);const child=++pid;
-      if(file==='bin/bn1-stock.js')ports.set(child,market({error:options.marketError}));
+      if(file==='bin/reserve.js')ports.set(child,options.reserveError?'ERROR:Unreadable home reserve':8e9);
+      else if(file==='bin/bn1-stock.js')ports.set(child,market({error:options.marketError}));
       else if(file==='infiltrate.js'){assert.equal(args[args.indexOf('--bn1-controller')+1],11);if(options.infiltrationMs)processes.set(child,{filename:file,host,args,exitAt:now+options.infiltrationMs});}
       else processes.set(child,{filename:file,host,args});return child;},
     getPortHandle:pid=>({empty:()=>!ports.has(pid),read:()=>ports.get(pid)}),
     kill:pid=>{calls.push('kill:'+pid);processes.delete(pid);},
-    spawn:(file,config)=>{calls.push('spawn:'+file);assert.equal(config.spawnDelay,0);},
+    spawn:(file,config)=>{calls.push('spawn:'+file);assert.equal(config.spawnDelay,0);assert.equal(config.ramOverride,options.host?16:6.5);},
     sleep:async ms=>{now+=ms;for(const[pid,p]of processes)if(p.exitAt&&now>=p.exitAt)processes.delete(pid);if(now>250000){stopped=true;globalThis.window[BN1_SESSION].stop=true;}},
     ui:{openTail(){},resizeTail(){},setTailTitle(){}},
   };
@@ -96,7 +97,7 @@ async function cycle(options={}) {
       return value(...args);
     };return key==='ui'?wrap(value,keys):value;
   }});
-  const saved=Date.now;Date.now=()=>now;globalThis.window={document:{}};
+  const saved=Date.now;Date.now=()=>now;globalThis.window={document:{},[BN1_SESSION]:options.session};
   try{await main(wrap(raw));}finally{exits.forEach(fn=>fn());Date.now=saved;delete globalThis.window;}
   return {calls,messages,installed,stopped,allocations,maxUsed,homeRam};
 }
@@ -136,15 +137,32 @@ async function cycle(options={}) {
 {
   const stopped={stop:false},killed=[];
   globalThis.window={document:{},[BN1_SESSION]:stopped};
-  await main({ramOverride(){},flags:()=>({stop:true}),getHostname:()=> 'home',tprint(){},
-    ps:()=>[{filename:'bn1-casino.js',pid:51},{filename:'autopilot.js',pid:52},{filename:'stockmaster.js',pid:53}],
+  await main({ramOverride(){},flags:()=>({stop:true}),getHostname:()=> 'home',tprint(){},print(){},
+    getResetInfo:()=>reset,scan:()=>[],ps:()=>[{filename:'bn1-casino.js',pid:51},{filename:'autopilot.js',pid:52},{filename:'stockmaster.js',pid:53}],
     kill:pid=>killed.push(pid)});
   assert(stopped.stop);assert.deepEqual(killed,[51]);delete globalThis.window;
 }
-console.log('BN1 cycle: 8 GB bootstrap, 16 GB running budget, offloaded autopilot reuse, handoffs, stock verification/hold, goal reset, ordinary-before-NF planning, and first-run gating pass.');
-
-// Exercise the real casino wrapper/coinflip handoff on 8 GB without any home RPC.
 {
+  const remote=await cycle({host:'remote',offloaded:true});
+  assert(remote.installed,JSON.stringify(remote.messages));assert(remote.maxUsed<=16);
+  assert(remote.calls.includes('exec:bin/reserve.js'),'Read the authoritative home reserve before remote spending');
+  assert.deepEqual(remote.allocations,[8,16,16]);
+  const bootstrap=await cycle({host:'remote',offloaded:true,casino:0,money:0,city:'Sector-12'});
+  assert(bootstrap.calls.includes('spawn:bn1-casino.js'));assert.deepEqual(bootstrap.allocations,[8,16]);
+  const unavailable=await cycle({host:'remote',offloaded:true,reserveError:true});
+  assert(!unavailable.installed);assert(unavailable.messages.some(m=>m.includes('valid reserve')));
+  assert(bn1Paused(reset,{paused:true,lastAugReset:1,lastNodeReset:1}));
+  const resumed=await cycle({offloaded:true,session:{paused:true,stop:true,lastAugReset:1,lastNodeReset:1}});
+  assert(resumed.installed,'Manual restart clears a pause even when it has no PID');
+  const duplicate=await cycle({otherPid:42,session:{pid:42,lastAugReset:1,lastNodeReset:1}});
+  assert.equal(duplicate.calls.length,0);assert(duplicate.messages.some(m=>m.includes('already running')));
+  assert(!bn1Paused({...reset,lastAugReset:2},{paused:true,lastAugReset:1,lastNodeReset:1}));
+}
+console.log('BN1 cycle: 8 GB bootstrap, 16 GB remote/running budget, live home reserves, offloaded autopilot reuse, handoffs, stock verification/hold, goal reset, ordinary-before-NF planning, and first-run gating pass.');
+
+// Exercise the real casino wrapper on home and remotely, without any overlapping home RPC.
+for(const host of ['home','remote']) {
+  const exits=new Map();globalThis.window={};
   const calls=[],charged=new Set();let used=RamCostConstants.Base,allocation=6.5,flips=0,playerReads=0;
   const control=fn=>({textContent:'fixture',__reactProps$fixture:{onClick:fn}});
   const tails=control(()=>flips++),heads=control(()=>flips++),noop=control(()=>{});
@@ -155,9 +173,9 @@ console.log('BN1 cycle: 8 GB bootstrap, 16 GB running budget, offloaded autopilo
     xpath.includes("@type='number'")?input:xpath.includes("text() = 'Tail'")?{}:
     xpath.includes("text() = 'Head'")?null:xpath.includes("'City'")?noop:null})};
   globalThis.document=doc;globalThis.XPathResult={FIRST_ORDERED_NODE_TYPE:1};
-  const ns={ramOverride:n=>allocation=n,getHostname:()=> 'home',getResetInfo:()=>reset,
+  const ns={pid:44,ramOverride:n=>allocation=n,getHostname:()=>host,getResetInfo:()=>reset,
     getMoneySources:()=>({sinceInstall:{casino:flips>1024?10e9:0}}),getPlayer:()=>{playerReads++;return {city:'Aevum',money:10000};},
-    sleep:async()=>{},disableLog(){},atExit(){},clearPort(){},writePort(){},print(){},tprint(){},printf(){},toast(){},
+    sleep:async()=>{},disableLog(){},atExit(fn,id='default'){exits.set(id,fn);},clearPort(){},writePort(){},print(){},tprint(){},printf(){},toast(){},
     spawn:(file,config)=>calls.push([file,config]),ui:{getGameInfo:()=>({versionNumber:51}),openTail(){},closeTail(){}}};
   const wrap=(obj,path=[])=>new Proxy(obj,{get(target,key){const value=target[key],keys=[...path,key];
     if(typeof value==='function')return(...args)=>{const name=keys.join('.');if(!charged.has(name)){used+=getRamCost(keys,true);charged.add(name);}
@@ -165,7 +183,10 @@ console.log('BN1 cycle: 8 GB bootstrap, 16 GB running budget, offloaded autopilo
     return key==='ui'?wrap(value,keys):value;
   }});
   await casinoMain(wrap(ns));assert.equal(playerReads,1);assert.equal(flips,1025);
-  assert.deepEqual(calls,[['bn1-auto.js',{threads:1,spawnDelay:0}]]);assert(used<=6.5);
-  delete globalThis.document;delete globalThis.XPathResult;
+  assert.deepEqual(calls,[['bn1-auto.js',{threads:1,spawnDelay:0,ramOverride:host==='home'?8:16}]]);assert(used<=6.5);assert.equal(allocation,host==='home'?6.5:16);
+  assert(exits.has('bn1-casino')&&exits.has('default'),'Controller cleanup must not replace coinflip cleanup');
+  for(const exit of exits.values())exit();
+  assert(globalThis.window[BN1_SESSION].stop);assert(bn1Paused(reset),'Hold off relaunch while the spawned controller starts');
+  delete globalThis.window;delete globalThis.document;delete globalThis.XPathResult;
 }
-console.log('Real coinflip wrapper: samples/wins, direct player read without helper overlap, <=6.5 GB dynamic RAM, and zero-delay return to the controller pass.');
+console.log('Real coinflip wrapper: home/remote handoffs, sampling/winning, <=6.5 GB API usage, and a retained 16 GB remote allocation pass.');
