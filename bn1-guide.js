@@ -118,13 +118,13 @@ export function getBn1Guidance(s) {
   if (s.casinoEarned < 10e9) {
     if (player.city !== 'Aevum' && player.money < 250_000)
       return action('seed-money', 'Earn $250,000 for travel',
-        'Click City > Slums > Mug. Let the crime repeat until you have $250,000.',
+        'Click City > The Slums > Mug. Let the crime repeat until you have $250,000.',
         `Current cash: ${money(player.money)}. The trip costs $200,000; the rest is for betting.`);
     if (player.city !== 'Aevum')
       return action('travel', 'Travel to Aevum', 'Click Travel > Aevum and confirm the trip.',
         'Open Terminal and type "run coinflip.js". If it is already listed in Active Scripts, let it continue.');
     if (player.money < 10_000)
-      return action('bet-money', 'Earn $10,000 for betting', 'Click City > Slums > Mug. Let it repeat until you have $10,000.',
+      return action('bet-money', 'Earn $10,000 for betting', 'Click City > The Slums > Mug. Let it repeat until you have $10,000.',
         'Open Terminal and type "run coinflip.js".');
     return action('casino', 'Let coinflip earn $10 billion',
       'If coinflip.js is not listed in Active Scripts, open Terminal and type "run coinflip.js".',

@@ -139,7 +139,7 @@ export function createBn1UI(ns, doc, alive, heartbeat = () => {}) {
             await wait(() => ns.getPlayer().city === destination, 'Travel did not complete', true);
             await dismiss(new RegExp(`You are now in ${destination.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}!`));
         },
-        async mug() { await location('Slums', () => button(doc, 'Mug (', true)); check(); click(button(doc, 'Mug (', true)); },
+        async mug() { await location('The Slums', () => button(doc, 'Mug (', true)); check(); click(button(doc, 'Mug (', true)); },
         async study() {
             const university = {'Aevum': 'Summit University', 'Sector-12': 'Rothman University', Volhaven: 'ZB Institute of Technology'}[ns.getPlayer().city];
             if (!university) throw new Error('Travel to Aevum, Sector-12 or Volhaven to study');

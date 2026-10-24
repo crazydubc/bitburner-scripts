@@ -44,12 +44,20 @@ The implementation uses the existing casino, infiltration/SoA, stock liquidator 
 
 This first version uses Hacking Contracts for faction work and the existing infiltration selector. It does not add automatic donation planning, a new Go strategy, a new faction-work optimizer, or automatic Bitverse selection. The intended speed gain is reducing idle time between existing progression steps; a faster full BN1 run has **not** been measured.
 
+## Slums bootstrap correction
+
+The first live test stopped at `Location unavailable: Slums` after opening City. The controller requested `Slums`, but the game's location name is `The Slums`. The ASCII map prints `[the slums]`; its clickable letter has `aria-label="The Slums"`. The list layout uses a button with the same full name. This was a missing word in the selector, not a capitalization or render-delay problem.
+
+The controller now requests `The Slums`, and the manual guide uses that name too. The earlier UI fixture did not render the city menu or exercise Mug, so it missed the mismatch. The expanded fixture loads the actual City and Slums components, location data and crime names. It reproduces the old failure in both layouts, then verifies City → The Slums → Mug in all six cities and both layouts. Crime outcomes remain fixture-controlled; this is not a live game run. The existing guide and controller checks pass, and all 50 checked script RAM costs are unchanged from `0d6e7b3`.
+
+Pull the same testing branch, wait for the download to finish, and run `bn1-auto.js` again. No run restart or save reset is needed.
+
 ## Validation
 
 Checked against the official source checkout `1da7316ffd9d281b45a86c4c54ec532276557892` and the reported Steam 3.0.1 build `3162fd2590e221eadd0c0fbd46151913f7c4c41c`. Relevant UI, terminal, reset and cost implementations match. The controller is ready for live testing; no live save or complete BitNode was run here.
 
 - `bn1-cycle.mjs` runs the real controller with controlled game/UI responses and official effective RAM charges. It covers an 8 GB, zero-cash bootstrap; casino/controller handoffs; offloaded autopilot reuse; guarded cash holds; unknown stocks; purchase-before-install ordering; and rejection outside the first BN1. It also runs the actual coinflip wrapper through sequence sampling and a payout with direct player reads. This caught an initial wrapper RAM budget that omitted part of the full return path; the corrected allocation covers it.
-- `bn1-ui.mjs` renders the official augmentation, purchase, queue, travel, TOR and home-RAM TSX components in real React 17.0.2/MUI 5.18.0. Controlled state/routing callbacks exercise delayed navigation, confirmations enabled/disabled, prerequisite unlocks, authoritative rep fulfillment despite rounded labels, tooltip descriptions, cumulative NeuroFlux levels, changed-price refusal, invitation popup deferral, unrelated dialogs and cancellation. This is a component integration fixture, not a complete game session.
+- `bn1-ui.mjs` renders the official City, Slums, augmentation, purchase, queue, travel, TOR and home-RAM TSX components in real React 17.0.2/MUI 5.18.0. Controlled state/routing callbacks exercise Mug in every city/layout, delayed navigation, confirmations enabled/disabled, prerequisite unlocks, authoritative rep fulfillment despite rounded labels, tooltip descriptions, cumulative NeuroFlux levels, changed-price refusal, invitation popup deferral, unrelated dialogs and cancellation. This is a component integration fixture, not a complete game session.
 - Existing BN1 guide, infiltration, SoA, terminal, real-rendered scan, resource-purchase, API-error, stock-liquidation, reset-policy and purchase-RAM checks pass. Infiltration tests cover matching, foreign, expired and reset-stale controller handoffs. Scan remains byte-identical to `8aff87d`.
 - Official RAM comparison over 50 entry points: existing costs are unchanged. New controller: **8 GB at startup**, explicitly raised to **16 GB** after upgrading home; casino wrapper: **6.5 GB**; temporary stock verification: **9.65 GB**. Normal coinflip remains **4.1 GB**, autopilot **4.2 GB**, guide **8 GB**, and kernel **5.85 GB**.
 
