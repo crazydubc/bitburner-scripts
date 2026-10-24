@@ -46,8 +46,11 @@ export function createBn1UI(ns, doc, alive, heartbeat = () => {}) {
             return false;
         }
         const description = uiText(modal);
-        if (dismissed.get(modal) !== description) {
-            dismissed.set(modal, description); click(control);
+        const previous = dismissed.get(modal), now = Date.now();
+        // Distinct receipts can round to identical text and reuse the same modal.
+        // Re-check its current controls on every pass; throttle retries, never suppress forever.
+        if (previous?.description !== description || now - previous.at >= 250) {
+            dismissed.set(modal, {description, at: now}); click(control);
         }
         return true;
     };

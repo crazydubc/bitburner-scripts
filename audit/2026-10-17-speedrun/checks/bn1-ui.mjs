@@ -6,7 +6,7 @@ import {readFileSync, existsSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {resolve} from 'node:path';
-import {createBn1UI} from '../../../bn1-ui.js';
+import {createBn1UI, uiText} from '../../../bn1-ui.js';
 import {clickInfiltrationElement as click, infiltrationModals} from '../../../infiltration-ui.js';
 import {planBn1Augmentations, NF} from '../../../bn1-policy.js';
 const engine=resolve(process.argv[2]),require=createRequire(resolve(process.argv[3],'package.json'));
@@ -51,7 +51,10 @@ function load(path){
     if(specifier.startsWith('@mui/icons-material'))return specifier==='@mui/icons-material'?new Proxy({},{get:()=>icon}):{__esModule:true,default:icon};
     if(specifier==='tss-react/mui')return {makeStyles:()=>()=>()=>({classes:{modal:'modal',paper:'paper'}})};
     if(specifier==='@player')return {Player};
-    if(specifier==='@enums')return {AugmentationName:{NeuroFluxGovernor:NF},FactionName:{},...locationEnums};
+    if(specifier==='@enums')return {AugmentationName:{NeuroFluxGovernor:NF},FactionName:{},...locationEnums,...workEnums};
+    if(specifier.endsWith('/JSONReviver'))return {constructorsForReviver:{}};
+    if(specifier.endsWith('/Formulas'))return {calculateClassEarnings:()=>{throw Error('Course earnings are controlled by the fixture');}};
+    if(specifier.endsWith('/EnumHelper'))return {isMember:()=>false};
     if(specifier.endsWith('/Crimes'))return {Crimes};
     if(specifier.endsWith('/Settings'))return {Settings};
     if(specifier.endsWith('/Augmentations'))return {Augmentations};
@@ -67,7 +70,7 @@ function load(path){
     if(specifier.endsWith('/BitNodeMultipliers'))return {currentNodeMults:{HomeComputerRamCost:1}};
     if(specifier.endsWith('MathNotation.json'))return {HomeRAMCost:{}};
     if(specifier.endsWith('/MathNotationOutput'))return {MathNotationOutput:()=>null};
-    if(specifier.endsWith('/Constants'))return {CONSTANTS:{TorRouterCost:200000,TravelCost:200000}};
+    if(specifier.endsWith('/Constants'))return {CONSTANTS:{TorRouterCost:200000,TravelCost:200000,MilliPerCycle:200}};
     if(specifier.endsWith('/ExportBonus'))return {canGetBonus:()=>false};
     if(specifier.endsWith('/GameRoot'))return {Router:{toPage:(page,options)=>{
       if(page==='Location'){
@@ -85,7 +88,7 @@ function load(path){
     return load(existsSync(dependency)?dependency:existsSync(dependency+'.ts')?dependency+'.ts':dependency+'.tsx');
   },exports);return exports;
 }
-const locationEnums=load('src/Locations/Enums.ts'),{CrimeType}=load('src/Crime/Enums.ts');
+const locationEnums=load('src/Locations/Enums.ts'),workEnums=load('src/Work/Enums.ts'),{CrimeType}=load('src/Crime/Enums.ts');
 const Crimes=Object.fromEntries(Object.values(CrimeType).map(type=>[type,{type,workName:type,tooltipText:type,
   successRate:()=>0.5,commit:()=>committedCrimes.push(type)}]));
 const formats=load('src/ui/formatNumber.ts');formats.FormatsNeedToChange.emit();
@@ -95,6 +98,7 @@ const {Modal}=load('src/ui/React/Modal.tsx'),{PurchasableAugmentation}=load('src
   {LocationCity}=load('src/Locations/ui/City.tsx'),{SlumsLocation}=load('src/Locations/ui/SlumsLocation.tsx'),
   {SidebarAccordion}=load('src/Sidebar/ui/SidebarAccordion.tsx'),{AlertManager,AlertEvents}=load('src/ui/React/AlertManager.tsx');
 alertEvents=AlertEvents;
+const {ClassWork}=load('src/Work/ClassWork.tsx');
 const sidebarSource=readFileSync(resolve(engine,'src/Sidebar/ui/SidebarRoot.tsx'),'utf8');
 const sidebarGates=Function('Player','knowAboutBitverse',
   sidebarSource.slice(sidebarSource.indexOf('  const canOpenFactions ='),sidebarSource.indexOf('  const canOpenSleeves ='))+
@@ -200,6 +204,26 @@ await ui.check(true);assert.equal(infiltrationModals(document).length,0);
 dialogBoxCreate('Mandatory informational notice',{canBeDismissedEasily:false});await ns.sleep(50);
 assert([...infiltrationModals(document)[0].querySelectorAll('button')].some(b=>b.textContent==='OK'));
 await ui.check();assert.equal(infiltrationModals(document).length,0);
+// Distinct course results can round to identical visible text in the same alert container.
+function courseReceipt(extraCost=0) {
+  const course=new ClassWork({classType:workEnums.UniversityClassType.algorithms,
+    location:locationEnums.LocationName.AevumSummitUniversity,singularity:false});
+  course.cyclesWorked=150;course.earnings.money=-28992-extraCost;course.earnings.hackExp=241.6;
+  course.finish(true);
+}
+courseReceipt();courseReceipt(0.0001);await ns.sleep(50);
+const courseModal=infiltrationModals(document)[0],courseText=uiText(courseModal);
+assert(courseText.startsWith('After taking an Algorithms course for 30 seconds'));
+assert(courseText.includes('$28.992k'));assert(courseText.includes('241.600 hacking exp'));
+await ui.check();assert.equal(infiltrationModals(document).length,0,'Close separate receipts even if their displayed text is identical');
+// Retrying a repeated receipt must stop when the next queued alert needs a decision.
+courseReceipt();courseReceipt(0.0002);
+dialogBoxCreate(h(React.Fragment,null,h(Typography,null,'Unrelated queued decision'),
+  h(Button,{onClick:()=>{throw Error('Must not accept the queued decision');}},'Confirm')));
+await ns.sleep(50);await assert.rejects(ui.check(),/dialog needs your attention: Unrelated queued decision/);
+assert(uiText(infiltrationModals(document)[0]).includes('Unrelated queued decision'));
+click(infiltrationModals(document)[0].querySelector('button'));await ns.sleep(300); // Manual dismissal in the fixture.
+
 // A collapsed Character group is expandable, not evidence of an empty purchase queue.
 const character=[...document.querySelectorAll('[role="button"]')].find(e=>e.textContent==='Character');
 click(character);await ns.sleep(300);
@@ -213,5 +237,5 @@ dialogBoxCreate('RUNTIME ERROR: fixture failure');await ns.sleep(50);
 await assert.rejects(ui.check(),/RUNTIME ERROR: fixture failure/);
 assert.equal(infiltrationModals(document).length,1,'Keep runtime errors visible');
 ReactDOM.unmountComponentAtNode(root);dom.window.close();
-console.log('Official TSX + React/MUI: real queued X/OK alerts, locked/expanded augmentation menus and first-purchase visibility pass; old Slums failure reproduced in both layouts; real City -> The Slums -> Mug succeeds in all six cities/layouts; travel (ASCII/list and confirmations), TOR/RAM purchases, faction row requirements/descriptions/prerequisites, queued NF levels, price-race refusal, both install-confirmation settings, delayed navigation, popup deferral, unrelated dialogs, and cancellation pass.');
+console.log('Official TSX + React/MUI: identical rounded ClassWork receipts and queued-decision protection; real queued X/OK alerts, locked/expanded augmentation menus and first-purchase visibility pass; old Slums failure reproduced in both layouts; real City -> The Slums -> Mug succeeds in all six cities/layouts; travel (ASCII/list and confirmations), TOR/RAM purchases, faction row requirements/descriptions/prerequisites, queued NF levels, price-race refusal, both install-confirmation settings, delayed navigation, popup deferral, unrelated dialogs, and cancellation pass.');
 process.exit(0);
