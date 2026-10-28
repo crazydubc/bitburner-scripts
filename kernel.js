@@ -8,6 +8,7 @@ import {
 import {createShareController, validShareOptions} from './share-controller.js';
 
 const argsSchema = [
+  ['max-batches', 99999], // Optional process-pressure limit; lower values also yield more often. Can affect income.
   ['share-mode', 'auto'], // auto enables spare-RAM sharing in BN1 before SF4; otherwise follows player/sleeve faction work. on/off override it.
   ['share-home-buffer', 64], // Minimum GB left free on home by share workers.
   ['share-host-buffer', 8], // Minimum GB left free on each other host by share workers.
@@ -31,6 +32,10 @@ export function validateBatchPlan(batch, hostname) {
 export async function main(ns) {
   const options = getConfiguration(ns, argsSchema);
   if (!options) return;
+  if (!Number.isSafeInteger(options['max-batches']) || options['max-batches'] < 1 || options['max-batches'] > 99999) {
+    log(ns, 'ERROR: --max-batches must be an integer from 1 to 99999.', true);
+    return;
+  }
   if (!validShareOptions(options)) {
     log(ns, 'ERROR: Use --share-mode auto/on/off, nonnegative RAM buffers, and a share-buffer-fraction from 0 to 1.', true);
     return;
@@ -192,7 +197,7 @@ export async function main(ns) {
       if (botnetStatus && botsRequired !== botsSent) batchesTotal = Math.max(batchesTotal - 2, 0)
 
       let results = await serverRun(ns, false, target.hostname, prepWeaken1, prepGrow1, prepWeaken2, prepHack1, prepWeaken3,
-        prepGrow2, prepWeaken4, batchInfo.H1, batchInfo.W1, batchInfo.G1, batchInfo.W2, batchesTotal, useHacknet, sharing.handoff());
+        prepGrow2, prepWeaken4, batchInfo.H1, batchInfo.W1, batchInfo.G1, batchInfo.W2, batchesTotal, useHacknet, sharing.handoff(), options['max-batches']);
 
       threadsLeft -= ((batchInfo.H1 + batchInfo.W1 + batchInfo.G1 + batchInfo.W2) * results.batches);
       await ns.sleep(10);

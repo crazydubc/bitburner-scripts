@@ -60,6 +60,11 @@ export async function main(ns) {
   const batchw2 = ns.args[12]
   const batches = ns.args[13]
   const useHacknet = ns.args[14]
+  // Preserve the established wave size unless the kernel explicitly opts into a smaller limit.
+  const batchLimit = ns.args[16] ?? 99999;
+  if (!Number.isSafeInteger(batchLimit) || batchLimit < 1 || batchLimit > 99999)
+    throw new Error('Batch limit must be an integer from 1 to 99999');
+  const pressureLimited = batchLimit < 99999;
   shareWorkers = readShareWorkers(ns, ns.args[15]);
   servers = getServers(ns, useHacknet)
   let results;
@@ -82,12 +87,13 @@ export async function main(ns) {
   if (w4) results = runIt_Local(ns, "/Remote/weak-target.js", [target, 0, w4, false, useHacknet])
   let batchesrun = 0
   let start = performance.now()
-  for (let i = 1; i <= Math.min(batches, 99999); i++) {
+  let lastYieldBatch = 0;
+  for (let i = 1; i <= Math.min(batches, batchLimit); i++) {
     if (starttime + weaktime <= performance.now()) { //The performance wall
       recalc = true
       break
     }
-    if (i === 99999) recalc = true
+    if (i === 99999 || (i === batchLimit && batches > batchLimit)) recalc = true
 
     batchesrun++
     if (batchh1) results = runIt_Local(ns, "/Remote/hack-target.js", [target, weaktime - hacktime, batchh1, chunkSwitch, useHacknet])
@@ -95,11 +101,16 @@ export async function main(ns) {
     if (batchg1) results = runIt_Local(ns, "/Remote/grow-target.js", [target, weaktime - growtime, batchg1, chunkSwitch, useHacknet])
     if (batchw2) results = runIt_Local(ns, "/Remote/weak-target.js", [target, 0, batchw2, false, useHacknet])
 
-    if (performance.now() - start >= 200) {
+    // The optional limit also yields more often, only between complete batches.
+    // Preserve default pacing: extra timer delays can reduce short-wave income.
+    if (performance.now() - start >= (pressureLimited ? 20 : 200) || pressureLimited && i - lastYieldBatch >= 25) {
       start = performance.now()
       await ns.sleep(0)
+      lastYieldBatch = i;
     }
   }
+  if (pressureLimited && batchesrun === batchLimit && batches > batchLimit)
+    ns.print(`INFO: Limited dispatch to ${batchLimit} of ${batches} batches; requesting larger batches from the kernel.`);
 
 
   const record = {

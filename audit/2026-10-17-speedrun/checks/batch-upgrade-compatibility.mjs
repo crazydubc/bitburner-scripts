@@ -112,7 +112,7 @@ const bindings = {getOptimalTarget: async () => ({...target}), getServ: async ()
   serverRun: async (...args) => {await old.serverRun(...args); throw STOP;}, initialPlayer: player};
 const run = Function(...Object.keys(bindings), `
   let player=initialPlayer,target,nextTarget,threadsLeft=0,totalram=0,botnetStatus=false,botsRequired=-1,botsSent=0;
-  const weakenStrength=0.05,reservedRam=32,useHacknet=false;
+  const weakenStrength=0.05,reservedRam=32,useHacknet=false,options={'max-batches':99999};
   ${loop};return doTargetingLoop;`)(...Object.values(bindings));
 await assert.rejects(run({...h.ns, getHackTime: () => 10000}), error => error === STOP);
 assert.equal(h.state.dispatched.length, 1);

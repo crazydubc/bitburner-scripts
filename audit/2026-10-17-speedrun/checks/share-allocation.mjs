@@ -236,7 +236,7 @@ shares=0;await shareMain({args:['--owner',7],isRunning:()=>false,share:async()=>
 // includes reclaimable RAM, and dispatcher preemption refills immediately.
 const source=readFileSync(new URL('../../../kernel.js',import.meta.url),'utf8');
 const transport=`
-  const getConfiguration=ns=>({...${JSON.stringify(SHARE_DEFAULTS)},'share-mode':ns.audit.mode??'auto'});
+  const getConfiguration=(ns,schema)=>({...Object.fromEntries(schema),'share-mode':ns.audit.mode??'auto','max-batches':ns.audit.batchLimit??99999});
   const log=()=>{},getErrorInfo=String,getReset=async ns=>({currentNode:ns.audit.node}),getPlayerInfo=async()=>({skills:{hacking:100}});
   const getOptimalTarget=async()=>({hostname:'n00dles',hackDifficulty:1,minDifficulty:1,moneyAvailable:1e6});
   const getServ=getOptimalTarget,getServers=async ns=>{ns.audit.census();return ns.audit.servers();};
@@ -264,13 +264,14 @@ h.ns.sleep=async ms=>{
     if(++sleeps>=3){batchAlive=false;h.hosts.get('home').base=20;h.hosts.get('worker').base=16;needsRefill=saturated;}
   }
 };
-h.ns.audit={node,servers:h.servers,stanek(){throw Error('Stanek must not take RAM before useful sharing');},census(){
+h.ns.audit={node,batchLimit:node===4?2000:99999,servers:h.servers,stanek(){throw Error('Stanek must not take RAM before useful sharing');},census(){
   if(censuses++)assert.equal(h.workers().find(p=>p.host==='home').pid,homePid,'No stop between batch completion and next census');
 },calculate(){
   now+=10_000;calculations++;
   if(needsRefill){homePid=h.workers().find(p=>p.host==='home')?.pid;assert(homePid,'Refill released RAM before the next calculator, even within the 2s throttle');needsRefill=false;}
   if(dispatches)assert.equal(h.workers().find(p=>p.host==='home').pid,homePid,'No 10s gap during slow calculations');
 },dispatch(args){
+  assert.equal(args[16],h.ns.audit.batchLimit,'Forward the configured batch limit without shifting the share handoff');
   const handed=JSON.parse(args[15]);assert.equal(handed.owner,7);
   assert.deepEqual(handed.pids,h.workers().map(p=>p.pid));
   // The same prep/batch counts as a share-free census (home keeps the original 32GB reserve).
