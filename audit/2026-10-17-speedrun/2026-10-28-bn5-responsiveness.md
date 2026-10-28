@@ -1,6 +1,25 @@
 # BN5.1 unresponsive-window investigation — October 28, 2026
 
-The report occurred during normal automated play with approximately 1.05 PB of home RAM and 99.9% utilization. The Electron warning does not identify a script or prove an infinite loop. There is no live process snapshot from the incident, so its cause remains unconfirmed.
+The report occurred during normal automated play with approximately 1.05 PB of home RAM and 99.9% utilization. The Electron warning does not identify a script or prove an infinite loop. The subsequent live diagnostic strongly points to process pressure, although it did not capture the earlier freeze itself.
+
+## Live diagnostic supplied at 21:39 UTC
+
+| Measurement | Value |
+| --- | ---: |
+| Home RAM | 1,048,576 GB |
+| Free home RAM, before and after sample | 52,382.8 GB |
+| Reachable hosts | 95 |
+| Total processes | 300,081 |
+| Total threads | 1,049,528 |
+| Hack workers | 100,000 processes / 400,000 threads |
+| Grow workers | 100,001 processes / 300,940 threads |
+| Weaken workers | 100,044 processes / 101,217 threads |
+| Share workers | 26 processes / 247,361 threads |
+| 100 ms sleep overruns | 19 ms maximum / 6.8 ms mean |
+
+About 300,000 tiny hacking workers match the existing 99,999-batch allowance plus prep/host splits. Free RAM comfortably exceeds helper requirements; this sample does not suggest helper starvation. The short timing sample shows no sustained stall at that moment. It cannot rule out a large launch/cleanup burst or prove which event caused the earlier warning. Sharing uses many threads in only 26 processes and is not the source of this process count.
+
+This evidence warrants a live comparison with the optional 2,000-batch setting below. The lower limit remains opt-in because output depends on the actual target, stats, host placement and timing.
 
 ## Findings
 
@@ -17,10 +36,13 @@ The report occurred during normal automated play with approximately 1.05 PB of h
 `kernel.js` now accepts an optional `--max-batches` value from 1 through 99,999. The default remains 99,999. A lower value:
 
 - Limits complete batches per dispatch wave and returns the existing recalculation signal when it truncates a requested wave.
-- Lets the existing planner search for larger individual batches on the next wave. The BN5 fixture adapts from four-thread batches to 300-thread batches and retains more than 99% of the planned thread capacity. This is capacity coverage, **not a live income guarantee**.
+- Before the first limited wave, asks the existing planner for larger individual batches using only RAM left after prep. Accepts a candidate only if it fits and its modeled total take within the selected limit is at least as high. The existing dispatch feedback also uses this comparison on later capped waves. Default 99,999 behavior is unchanged.
+- The BN5 fixture adapts from four-thread batches to approximately 300-thread batches and retains more than 99% of the planned thread capacity in the first limited wave. This avoids an initial tiny capped wave. It is capacity coverage, **not a live income guarantee** or a claim of equal income to unlimited batching.
 - Yields after 20 ms of launching or 25 complete batches, whichever comes first. It never inserts a sleep within a batch's operation group.
 
-For a deliberate experiment after diagnosing process overload, set `"max-batches": 2000` in `kernel.js.config.txt`, preserving any other settings, then restart the existing kernel. Autopilot's normal deployment copies that configuration when it launches an offloaded kernel. Alternatively, launch one kernel with `run kernel.js --max-batches 2000` after stopping its existing instance. Do not start a second kernel alongside the first. Restore 99,999 to use the original behavior.
+For the reported process overload, set `"max-batches": 2000` in `kernel.js.config.txt` on home, preserving any other settings, then stop the existing kernel in Active Scripts, including an offloaded instance. Autopilot's normal deployment copies that configuration when it launches a new offloaded kernel. Alternatively, launch one kernel with `run kernel.js --max-batches 2000` after stopping its existing instance. Do not start a second kernel alongside the first. Restore 99,999 to use the original behavior.
+
+Compare several settled waves at the same target, stats and RAM using the income display and `performance-diagnostic.js`. Expect thousands of batch workers in this fixture, rather than hundreds of thousands. Prep, host splitting, changing stats and other kernels can change the count and output; let existing workers finish before interpreting the new steady state.
 
 This is a per-wave batch limit, not a global process ceiling. Prep jobs, host splits, other scripts and any other kernel instances can add processes. Income effects must be measured in the user's game; do not enable the smaller limit solely because RAM utilization is high.
 
@@ -44,7 +66,7 @@ If the application is still frozen, the game's restart dialog offers a checked *
 
 ## Verification
 
-- `checks/dispatch-pressure.mjs`: real BN5 planner plus the real dispatcher; original large-wave allowance; optional cap/recalculation; identical default operations, threads, delays and replies; identical default pacing under simulated launch costs and timer delays; optional complete-batch yields and argument validation.
+- `checks/dispatch-pressure.mjs`: real BN5 planner plus the real dispatcher; original large-wave allowance; optional cap/recalculation; actual kernel prep through its first dispatch; post-prep capacity budgets; rejected unaffordable/lower-take candidates; identical default prep, operations, threads, delays and replies; identical default pacing under simulated launch costs and timer delays; optional complete-batch yields and argument validation.
 - `checks/performance-diagnostic.mjs`: 50,001-worker inventory, highly threaded single-worker inventory, bounded output, yielding, disappeared hosts, remote execution and read-only behavior.
 - `share-handoff`, `share-allocation`, `batch-upgrade-compatibility`, `batch-correctness` against the pinned engine, `rpc-reserve`, `remaining-paths` and `api-errors` pass. The kernel fixture now supplies its actual flag defaults and verifies forwarding the optional limit.
 - The pinned official RAM calculator checks 51 entry points. All existing costs are unchanged: kernel 5.85 GB, dispatcher 4.9 GB, autopilot 4.2 GB. The new standalone diagnostic costs 3.25 GB.

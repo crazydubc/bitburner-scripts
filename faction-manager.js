@@ -4,7 +4,8 @@ import {
 } from './utils.js'
 import { buildDonationFavorProgress, FACTIONS_WITHOUT_DONATIONS } from './donation-favor.js'
 import { SOA_AUGS, INFILTRATION_TARGET } from './infiltration-policy.js'
-import { buildAugUtilityMap } from './faction-route-planner.js'
+import { buildAugUtilityMap, canJoinFactionPassively } from './faction-route-planner.js'
+import { COMPANY_FACTIONS, getIntelFarmReadiness, intelFarmState } from './progression.js'
 
 // PLAYER CONFIGURATION CONSTANTS
 // This acts as a list of default "easy" factions to always show even if the user has --hide-locked-factions
@@ -34,6 +35,7 @@ let factionNames = [""], joinedFactions = [""], desiredAugs = [""], desiredStats
 let ownedAugmentations = [""], simulatedOwnedAugmentations = [""], allAugStats = [""], priorityAugs = [""];
 let effectiveSourceFiles = (/**@returns {{[bitNode: number]: number}}*/() => ({}))();
 let factionData = (/**@returns {{[factionName: string]: FactionData}}*/() => ({}))();
+let factionEnemies = {}, reservedInvitationFactions = new Set();
 let augmentationData = (/**@returns {{[augmentationName: string]: AugmentationData}}*/() => ({}))();
 let purchaseableAugs = (/**@returns {AugmentationData[]}*/() => [])();
 let bitNodeMults = (/**@returns{BitNodeMultipliers}*/() => undefined)();
@@ -191,7 +193,18 @@ export async function main(ns) {
   log(ns, 'Getting all augmentation data...');
   await updateAugmentationData(ns);
 
-  // Join available factions that would give access to additional desired augmentations
+  // The intelligence farm consumes company invitations after its preparation reset.
+  // Passive joining must not take them away while another manager is preserving them.
+  reservedInvitationFactions = new Set();
+  if (!ignorePlayerData && getIntelFarmReadiness(playerData, installedAugmentations, [], resetInfo.ownedSF).needed) {
+    reservedInvitationFactions = new Set(COMPANY_FACTIONS);
+    try {
+      if (!getIntelFarmReadiness(playerData, installedAugmentations, [], resetInfo.ownedSF, await intelFarmState(ns)).needed)
+        reservedInvitationFactions.clear();
+    } catch (error) { log(ns, `Keeping company invitations for intelligence preparation: ${String(error)}`); }
+  }
+
+  // Join useful invitations and safe extra memberships for passive reputation.
   if (ignorePlayerData)
     log(ns, 'INFO: Skipping joining available factions due to the --ignore-player-data flag set.');
   else {
@@ -467,6 +480,11 @@ async function updateFactionData(ns, factionsToOmit) {
   const dictFactionAugs = await buildLib(ns, factionNames, 'getAugmentationsFromFaction');//Object.fromEntries(await Promise.all(factionNames.map(async o => [o, await singRun(ns, 'getAugmentationsFromFaction', o)])));
   const dictFactionReps = await buildLib(ns, factionNames, 'getFactionRep'); //Object.fromEntries(await Promise.all(factionNames.map(async o => [o, await singRun(ns, 'getFactionRep', o)])));
   const dictFactionFavors = await buildLib(ns, factionNames, 'getFactionFavor'); //Object.fromEntries(await Promise.all(factionNames.map(async o => [o, await singRun(ns, 'getFactionFavor', o)])));
+  factionEnemies = {};
+  if (invitations.length) {
+    try { factionEnemies = await buildLib(ns, factionNames, 'getFactionEnemies'); }
+    catch (error) { log(ns, `Passive faction joins deferred: enemy data unavailable (${String(error)}).`); }
+  }
 
   // Need information about our gang to work around a TRP bug - gang faction appears to have it available, but it's not (outside of BN2)
   if (gangFaction && bitNode != 2)
@@ -633,8 +651,8 @@ class AugmentationData {
   }
 }
 
-/** Helper function to join any factions we have an invite to, and which have augmentatio s we want.
- * @pa am {NS} ns
+/** Join useful or harmless passive-reputation invitations, preserving exclusive routes.
+ * @param {NS} ns
  * @param {string[]} forceJoinFactions A list of factions to join even if they have no remaining augmentations. **/
 async function joinFactions(ns, forceJoinFactions) {
   let manualJoin = ["Sector-12", "Chongqing", "New Tokyo", "Ishima", "Aevum", "Volhaven"];
@@ -646,23 +664,28 @@ async function joinFactions(ns, forceJoinFactions) {
   log(ns, `${accessibleAugmentations.size} augmentations are already accessible from our ${joinedFactions.length} joined factions.`);
   // Check for faction invitations
   const invitations = Object.values(factionData).filter(f => f.invited);
+  const factionAugs = Object.fromEntries(Object.values(factionData).map(f => [f.name, f.augmentations]));
   log(ns, `Outstanding invitations from ${invitations.length} factions: ${JSON.stringify(invitations.map(f => f.name))}`);
   let joined = 0;
-  // Join all factions with remaining augmentations we care about
+  // Active routes retain their existing selection; extra memberships must be harmless.
   for (const faction of invitations.sort(factionSortOrder)) {
+    const forced = forceJoinFactions.includes(faction.name);
+    if (!forced && reservedInvitationFactions.has(faction.name)) continue;
     let unownedAugs = faction.unownedAugmentations(true); // Filter out augmentations we've already purchased
     let newAugs = unownedAugs.filter(aug => !accessibleAugmentations.has(aug)); //  Filter out augmentations we can purchase from another faction we've already joined
     let desiredAugs = newAugs.filter(aug => augmentationData[aug].desired); //  Filter out augmentations we have no interest in
+    const safePassiveJoin = canJoinFactionPassively({faction: faction.name, factionEnemies, factionAugs,
+      ownedAugs: ownedAugmentations, joinedFactions, reservedFactions: reservedInvitationFactions});
     log(ns, `${faction.name} has ${faction.augmentations.length} augs, ${unownedAugs.length} unpurchased, ${newAugs.length} not offered by joined factions, ` +
-      `${desiredAugs.length} with desirable stats` + (desiredAugs.length == 0 ? ' (not joining)' : `: ${JSON.stringify(desiredAugs)}`));
-    if (desiredAugs.length == 0 && !forceJoinFactions.includes(faction.name)) continue;
-    if (manualJoin.includes(faction.name) && !forceJoinFactions.includes(faction.name))
+      `${desiredAugs.length} with desirable stats${safePassiveJoin ? '; safe to join for passive reputation' : ''}.`);
+    if (desiredAugs.length == 0 && !forced && !safePassiveJoin) continue;
+    if (manualJoin.includes(faction.name) && !forced && !safePassiveJoin)
       log(ns, `INFO: You have an invite from faction ${faction.name}, but it will not be automatically joined, ` +
         `because this would prevent you from joining some other factions.`, printToTerminal, printToTerminal ? 'info' : undefined);
     else {
       log(ns, `Joining faction ${faction.name} which has ${desiredAugs.length} desired augmentations: ${desiredAugs}`);
       let response;
-      if (response = await singRun(ns, 'joinFaction', faction.name)) {
+      if ((response = await singRun(ns, 'joinFaction', faction.name)) === true) {
         faction.joined = true;
         faction.augmentations.forEach(aug => accessibleAugmentations.add(aug));
         joinedFactions.push(faction.name);

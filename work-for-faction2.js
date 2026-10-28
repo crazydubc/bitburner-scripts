@@ -7,7 +7,7 @@ import { recordRunEvents } from './logger.js';
 import {
   DEFAULT_PRIORITY_AUGS, DEFAULT_DESIRED_AUGS, getDefaultDesiredStats, buildDesiredAugSet,
   buildAugUtilityMap, getUsefulAugsForFaction, planBestFactionRepRoute,
-  rankFactionInviteRoutes, selectBestExclusiveFactionGroup, chooseBestRoute
+  rankFactionInviteRoutes, selectBestExclusiveFactionGroup, chooseBestRoute, canJoinFactionPassively
 } from './faction-route-planner.js';
 
 const LOOP_SLEEP = 30000;
@@ -202,6 +202,7 @@ export async function main(ns) {
   let ownedAugs = [];
   let installedAugs = [];
   let factionAugs = {};
+  let factionEnemies = {};
   let factionRep = {};
   let factionFavor = {};
   let augRepReqs = {};
@@ -286,20 +287,22 @@ export async function main(ns) {
     playerInfo.factions.push(faction);
     pendingInvites = pendingInvites.filter(invite => invite !== faction);
     refreshDonationFactions();
-    log(ns, `Joined productive faction "${faction}".`, false, "success");
+    log(ns, `Joined faction "${faction}".`, false, "success");
     return true;
   }
 
   async function joinUsefulInvitations() {
     if (pendingInvites.length === 0) return false;
     let joined = false;
-    // Non-city factions have no mutually-exclusive downside, so accept useful invitations immediately.
-    // City invitations are deferred until the route planner compares all exclusive city groups.
-    for (const faction of pendingInvites.filter(faction => !CITY_FACTIONS.has(faction))) {
+    // Useful exclusive joins remain the route planner's choice. Also accept harmless
+    // invitations now, even after their augs are owned, for passive reputation/favor.
+    for (const faction of [...pendingInvites]) {
       // farm-intel consumes these invitations after the preparation reset; do not autojoin them here.
       if (collectAllCompanyInvites && COMPANY_FACTIONS.includes(faction)) continue;
       const forceGangFaction = crimeFocused && GANG_FACTIONS.includes(faction) && !playerInGang;
-      if (!forceGangFaction && factionUtility(faction) <= 0) continue;
+      const safePassiveJoin = canJoinFactionPassively({faction, factionEnemies, factionAugs, ownedAugs,
+        joinedFactions: playerInfo.factions});
+      if (!safePassiveJoin && (CITY_FACTIONS.has(faction) || !forceGangFaction && factionUtility(faction) <= 0)) continue;
       joined = await joinFaction(faction) || joined;
     }
     return joined;
@@ -321,7 +324,7 @@ export async function main(ns) {
     if (nextStaticKey !== staticFactionKey || nextGangFaction !== staticGangFaction) {
       factionAugs = await buildLibSing("getAugmentationsFromFaction", allKnownFactions);
       for (const faction of allKnownFactions) {
-        factionAugs[faction] = asArray(factionAugs[faction]);
+        factionAugs[faction] = requireArray(factionAugs[faction], `getAugmentationsFromFaction(${faction})`);
       }
       // The game can report The Red Pill as a gang augmentation outside BN2 even though it cannot be bought there.
       if (nextGangFaction && resetInfo.currentNode !== 2)
@@ -373,6 +376,11 @@ export async function main(ns) {
       desiredAugSet, augStats, augPrereqs, desiredAugs: namedDesiredAugs, priorityAugs
     });
     refreshDonationFactions();
+
+    if (pendingInvites.length && allKnownFactions.some(faction => !Array.isArray(factionEnemies[faction]))) {
+      try { factionEnemies = await buildLibSing('getFactionEnemies', allKnownFactions); }
+      catch (error) { log(ns, `Passive faction joins deferred: enemy data unavailable (${String(error)}).`); }
+    }
 
     await joinUsefulInvitations();
   }

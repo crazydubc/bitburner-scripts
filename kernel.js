@@ -28,6 +28,14 @@ export function validateBatchPlan(batch, hostname) {
     throw new Error(`Invalid batch plan for ${hostname}: ${JSON.stringify(batch)}. ` +
       'Check the calculator error; pull updated files on home and restart kernel.js to reload its dependencies.');
 }
+
+/** Compare modeled take within a chosen limit, not RAM utilization alone. */
+export function selectLimitedBatch(current, candidate, threads, limit) {
+  const count = batch => Math.min(limit, Math.floor(threads / (batch.H1 + batch.W1 + batch.G1 + batch.W2)));
+  const candidateCount = count(candidate), currentCount = count(current);
+  return candidateCount > 0 && Number.isFinite(candidate.Take) && Number.isFinite(current.Take) &&
+    candidate.Take * candidateCount >= current.Take * currentCount ? candidate : current;
+}
 /** @param {NS} ns */
 export async function main(ns) {
   const options = getConfiguration(ns, argsSchema);
@@ -194,6 +202,22 @@ export async function main(ns) {
         }
       }
       let batchesTotal = Math.floor(threadsLeft / (batchInfo.H1 + batchInfo.W1 + batchInfo.G1 + batchInfo.W2))
+      // A deliberate lower process limit should resize the first wave too. Waiting
+      // for dispatch feedback first would spend a whole wave on tiny capped batches.
+      if (options['max-batches'] < 99999 && batchesTotal > options['max-batches']) {
+        const limit = options['max-batches'];
+        const resized = await getHackP(ns, target.hostname, limit, threadsLeft, batchInfo.H1);
+        validateBatchPlan(resized, target.hostname);
+        const resizedCount = Math.min(limit, Math.floor(threadsLeft / (resized.H1 + resized.W1 + resized.G1 + resized.W2)));
+        // Compare expected money within the chosen limit. Never replace a usable
+        // plan with an unaffordable or lower-yield candidate just to fill RAM.
+        if (selectLimitedBatch(batchInfo, resized, threadsLeft, limit) === resized) {
+          batchInfo = resized;
+          batchesTotal = resizedCount;
+          overflowed = true;
+          log(ns, `INFO: Planned ${batchesTotal} larger batches before dispatch (limit ${limit}).`);
+        }
+      }
       if (botnetStatus && botsRequired !== botsSent) batchesTotal = Math.max(batchesTotal - 2, 0)
 
       let results = await serverRun(ns, false, target.hostname, prepWeaken1, prepGrow1, prepWeaken2, prepHack1, prepWeaken3,
@@ -273,7 +297,9 @@ export async function main(ns) {
       }
 
       if (recalcbad) {
-        batchInfo = await getHackP(ns, target.hostname, results.batches, threadsMax, batchInfo.H1);
+        const resized = await getHackP(ns, target.hostname, results.batches, threadsMax, batchInfo.H1);
+        batchInfo = options['max-batches'] < 99999
+          ? selectLimitedBatch(batchInfo, resized, threadsMax, Math.min(results.batches, options['max-batches'])) : resized;
         recalcbad = false;
         overflowed = true
       } else if (recalcgood && !overflowed) {

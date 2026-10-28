@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {getStocksValue} from '../../../utils.js';
 import {main as snapshotMain} from '../../../bin/getStockValue.js';
 import {evaluateAugmentationReset} from '../../../augmentation-reset-policy.js';
+import {getIntelFarmReadiness} from '../../../progression.js';
 import {harness} from './stock-market-fixture.mjs';
 
 const expected=10_000*100-100_000+20_000*(400-180)-100_000;
@@ -92,7 +93,7 @@ function factionFixture() {
   const definitions=section(manager,'// PLAYER CONFIGURATION CONSTANTS','export function autocomplete')+
     section(manager,'export async function main(ns)','async function getGangInfo(ns)').replace('export ','')+
     section(manager,'async function purchaseDesiredAugs(ns)','function displayJoinedFactionSummary(ns)');
-  const bindings={getStocksValue,FACTIONS_WITHOUT_DONATIONS:new Set(),SOA_AUGS:[],INFILTRATION_TARGET:'target',
+  const bindings={getStocksValue,getIntelFarmReadiness,FACTIONS_WITHOUT_DONATIONS:new Set(),SOA_AUGS:[],INFILTRATION_TARGET:'target',
     getConfiguration:(_,schema)=>({...Object.fromEntries(structuredClone(schema)),...live.flags}),
     findPids:async()=>[42],getPlayerInfo:async()=>({money:100e6,factions:['CyberSec'],skills:{hacking:200}}),
     getReset:async()=>({currentNode:4,lastAugReset:1000,lastNodeReset:1000}),getActiveSourceFiles:async()=>({4:1}),

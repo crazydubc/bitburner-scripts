@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
 import {main as dispatch} from '../../../bin/serverRun.js';
 import {main as calculate} from '../../../bin/getHackP.js';
 import {serverRun} from '../../../utils.js';
+import {selectLimitedBatch, validateBatchPlan} from '../../../kernel.js';
 
 const oldSource = execFileSync('git', ['show', 'c5ed3aa:bin/serverRun.js'],
   {cwd: new URL('../../../', import.meta.url), encoding: 'utf8'});
@@ -52,6 +54,31 @@ async function plan(batches = -1, threads = -1, first = 1) {
   exit(); return value;
 }
 const threads = batch => batch.H1 + batch.W1 + batch.G1 + batch.W2;
+const kernel = readFileSync(new URL('../../../kernel.js', import.meta.url), 'utf8');
+const oldKernel = execFileSync('git', ['show', '0c68b91:kernel.js'],
+  {cwd: new URL('../../../', import.meta.url), encoding: 'utf8'});
+async function firstWave(limit, {code = kernel, candidate, ram = 1048576} = {}) {
+  const loop = code.slice(code.indexOf('  async function doTargetingLoop('), code.indexOf('  async function runbotnet('));
+  const STOP = Symbol('first dispatch'), plans = [];
+  let input;
+  const bindings = {selectLimitedBatch, validateBatchPlan,
+    getOptimalTarget: async () => ({...server}), getServ: async () => ({...server, hackDifficulty: 24}),
+    getPlayerInfo: async () => player, initialPlayer: player,
+    getServers: async () => [{hostname: 'home', hasAdminRights: true, maxRam: ram}],
+    getServerAvailRam: async () => ram, getGrowThreads: async () => 100,
+    getHackP: async (_ns, hostname, batches, budget, first) => {
+      plans.push({hostname, batches, budget, first});
+      return plans.length > 1 && candidate ? candidate : await plan(batches, budget, first);
+    },
+    sharing: {update: async () => false, reclaimableRam: () => 0, handoff: () => ''},
+    log() {}, serverRun: async (...values) => {input = values.slice(1); throw STOP;}, STOP};
+  const run = Function(...Object.keys(bindings), `
+    let player=initialPlayer,target,nextTarget,threadsLeft=0,botnetStatus=false,botsRequired=-1,botsSent=0;
+    const weakenStrength=0.05,reservedRam=32,useHacknet=false,options={'max-batches':${limit}};
+    ${loop};return doTargetingLoop;`)(...Object.values(bindings));
+  await assert.rejects(run({sleep: async () => {}, getHackTime: () => 10000}), error => error === STOP);
+  return {input, plans, batch: {H1: input[9], W1: input[10], G1: input[11], W2: input[12]}};
+}
 
 try {
   // Real BN5 planner inputs at the reported 1 PB capacity select a four-thread HGW batch.
@@ -79,6 +106,34 @@ try {
   assert.equal(nextResult.recalc, false);
   assert.equal(nextResult.batches, nextCount);
   assert(next.launches.length <= 8000);
+
+  // Execute the entire kernel preparation path. Resizing now happens before its first
+  // limited dispatch and budgets only capacity left AFTER prep, not the full server.
+  const first = await firstWave(2000), prepThreads = first.input.slice(2, 9).reduce((a, b) => a + b, 0);
+  assert.equal(first.plans.length, 2);
+  assert.equal(first.plans[1].batches, 2000);
+  assert.equal(first.plans[1].budget, capacity - prepThreads);
+  assert(first.input[13] > 0 && first.input[13] <= 2000);
+  assert(threads(first.batch) > threads(initial));
+  assert((first.input[13] * threads(first.batch) + prepThreads) / capacity > 0.99);
+  const firstDispatch = harness();
+  const firstResult = await firstDispatch.run(dispatch, first.input);
+  assert.equal(firstResult.batches, first.input[13]);
+  assert(firstDispatch.launches.length < 8100, 'First wave already uses thousands, not hundreds of thousands, of workers');
+
+  for (const candidate of [
+    {...recalculated, Take: 0}, {...recalculated, Take: NaN},
+    {...recalculated, H1: capacity + 1, Take: 1e20},
+  ]) {
+    assert.equal(selectLimitedBatch(initial, candidate, capacity, 2000), initial);
+    const rejected = await firstWave(2000, {candidate});
+    assert.deepEqual(rejected.batch, {H1: initial.H1, W1: initial.W1, G1: initial.G1, W2: initial.W2});
+  }
+  assert.equal(selectLimitedBatch(initial, recalculated, capacity, 0), initial, 'No dispatched batches must not select a new plan');
+  // Default first-wave counts/prep are byte-for-byte unchanged; small servers avoid the extra planner call.
+  assert.deepEqual((await firstWave(99999)).input, (await firstWave(99999, {code: oldKernel})).input);
+  assert.equal((await firstWave(99999)).plans.length, 1);
+  assert.equal((await firstWave(2000, {ram: 128})).plans.length, 1);
 
   // Ordinary waves retain identical operations, thread counts, relative delays and replies.
   for (const batch of [initial, {H1: 5, W1: 1, G1: 20, W2: 2}]) {
@@ -119,5 +174,5 @@ try {
   await serverRun(transport, ...input); assert.deepEqual(sent, input);
   await serverRun(transport, ...input, 2000); assert.deepEqual(sent, [...input, 2000]);
   console.log(`BN5/1 PB fixture: ${old.launches.length} allowed worker launches; opt-in 2000-batch limit launches ${current.launches.length}, ` +
-    `then adapts to ${nextCount} larger batches. Default volume/pacing (including timer overhead), deadlines, validation and opt-in cooperative yields passed.`);
+    `with kernel preflight already resizing its first wave. Default volume/pacing (including timer overhead), prep budgets, modeled take, deadlines, validation and opt-in cooperative yields passed.`);
 } finally { globalThis.performance = realPerformance; }

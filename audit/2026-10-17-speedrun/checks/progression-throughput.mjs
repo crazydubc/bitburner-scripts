@@ -46,6 +46,12 @@ for(const cost of [1,4,16,64,256]) {
   assert.equal(h.launches.length,1);assert.equal(h.launches[0].options.ramOverride,Math.max(6.6,1.6+cost));
 }
 {
+  const enemies={'Sector-12':['Chongqing','New Tokyo','Ishima','Volhaven'],CyberSec:[]};
+  const h=bulkHarness({getFactionEnemies:name=>enemies[name]},48);
+  assert.deepEqual(await singReadMany(h.ns,'getFactionEnemies',Object.keys(enemies)),enemies);
+  assert.equal(h.launches.length,1);assert.equal(h.launches[0].options.ramOverride,49.6);
+}
+{
   const h=bulkHarness({getAugmentationStats:name=>({hacking:name.length})});
   const names=Array.from({length:600},(_,i)=>'Aug'+i),values=await singReadMany(h.ns,'getAugmentationStats',names);
   assert.equal(h.launches.length,2);assert.equal(Object.keys(values).length,600);
@@ -153,7 +159,7 @@ if(process.argv[2]) {
   const dynamic=readFileSync(resolve(engine,'src/Netscript/NetscriptHelpers.tsx'),'utf8').match(/function updateDynamicRam[\s\S]+?\n}/)[0];
   const enforce=Function('RamCostConstants',`const log=()=>{},errorMessage=(_ctx,msg)=>new Error(msg),formatRam=String,
     killWorkerScript=ws=>{ws.killed=true;};${stripTypeScriptTypes(dynamic)};return updateDynamicRam;`)(RamCostConstants);
-  const methods=['getAugmentationsFromFaction','getFactionRep','getFactionFavor','getAugmentationRepReq',
+  const methods=['getAugmentationsFromFaction','getFactionRep','getFactionFavor','getFactionEnemies','getAugmentationRepReq',
     'getAugmentationPrice','getAugmentationStats','getAugmentationPrereq','getCrimeChance'];
   for(const [node,sf4] of [[1,1],[1,2],[1,3],[4,0]])for(const method of methods) {
     Player.bitNodeN=node;Player.sf4=sf4;

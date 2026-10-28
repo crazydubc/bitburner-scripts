@@ -1,5 +1,5 @@
 // One read API per process: repeated calls share its RAM charge, even at SF4.1/4.2.
-const reads = new Set(['getAugmentationsFromFaction', 'getFactionFavor', 'getFactionRep',
+const reads = new Set(['getAugmentationsFromFaction', 'getFactionFavor', 'getFactionRep', 'getFactionEnemies',
   'getAugmentationRepReq', 'getAugmentationStats', 'getAugmentationPrereq', 'getAugmentationPrice', 'getCrimeChance']);
 
 /** @param {NS} ns */

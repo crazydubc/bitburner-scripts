@@ -1,5 +1,7 @@
 # Bitburner progression and speedrun audit — 2026-10-17
 
+**October 28 follow-up:** [Passive memberships](2026-10-28-passive-factions.md) let both Singularity faction managers accept exhausted ordinary factions while protecting unowned augmentations in opposing cities and company invitations reserved for intelligence farming. The [live BN5 diagnostic](2026-10-28-bn5-responsiveness.md) reports 300,081 processes despite 52,383 GB free RAM. The optional lower batch limit now resizes before the first wave and compares modeled take within that limit. Defaults remain unchanged; no live income guarantee is claimed. Focused regression checks and the 51-entry-point RAM comparison pass.
+
 The highest-value work is fixing progression stalls and making the early-game launch/spending rules reliable. Keep the current hacking batcher as the performance baseline. Two confined batcher defects are documented separately; neither calls for replacing its scheduling design.
 
 **The `testing/bn1-go-audit` branch / [PR #34](https://github.com/crazydubc/bitburner-scripts/pull/34) now contains implemented fixes and positive offline checks for all 18 original findings.** It combines BN1.1 prompts, focused Go fixes, resource/purchase repairs, corporation lifecycle/expansion fixes, the revised BN route, and the remaining infrastructure/batcher corrections. See [remaining-fixes.md](remaining-fixes.md) for the final backlog pass and its limits. Batch timing/scheduling and the $8b reserve formula are unchanged. Live validation and route/performance measurements remain necessary.
