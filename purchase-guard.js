@@ -22,7 +22,11 @@ export function purchaseRam(ns, namespace, method) {
 export function executePurchase(ns, namespace, method, args, policy = {}) {
   if (ns.getHostname() !== 'home') throw new Error('Purchase checks must run on home');
   const budget = policy.budget ?? Number.MAX_VALUE;
-  const reserve = policy.reserve ?? Number(ns.read('reserve.txt') || 0);
+  // ns.flags parses nullable --reserve defaults as strings, including ascend's '0'.
+  // Normalize that numeric override without accepting blank strings, booleans or arrays.
+  const configuredReserve = policy.reserve ?? Number(ns.read('reserve.txt') || 0);
+  const reserve = typeof configuredReserve === 'string' && configuredReserve.trim() !== ''
+    ? Number(configuredReserve) : configuredReserve;
   if (!Number.isFinite(budget) || budget < 0 || !Number.isFinite(reserve) || reserve < 0)
     throw new Error('Invalid purchase budget/reserve');
   const api = ns[namespace], costMethod = costMethods[namespace]?.[method];

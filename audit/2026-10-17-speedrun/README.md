@@ -1,5 +1,7 @@
 # Bitburner progression and speedrun audit — 2026-10-17
 
+**October 29 reset purchase fix:** [Reserve argument regression](2026-10-29-reset-purchase-reserve.md) reproduces the gang startup failure during augmentation installation. Nullable `--reserve` flags produce numeric strings, which the shared guard now accepts without relaxing invalid-value, budget, cash or casino checks. Actual reset gang/sleeve buyers and the purchase regression suites pass; no script RAM cost changes.
+
 **October 28 follow-up:** [Passive memberships](2026-10-28-passive-factions.md) let both Singularity faction managers accept exhausted ordinary factions while protecting unowned augmentations in opposing cities and company invitations reserved for intelligence farming. The [live BN5 diagnostic](2026-10-28-bn5-responsiveness.md) reports 300,081 processes despite 52,383 GB free RAM. The optional lower batch limit now resizes before the first wave and compares modeled take within that limit. Defaults remain unchanged; no live income guarantee is claimed. Focused regression checks and the 51-entry-point RAM comparison pass.
 
 The highest-value work is fixing progression stalls and making the early-game launch/spending rules reliable. Keep the current hacking batcher as the performance baseline. Two confined batcher defects are documented separately; neither calls for replacing its scheduling design.
