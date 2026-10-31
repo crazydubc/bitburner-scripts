@@ -1,3 +1,14 @@
+export function prepareCorporationResultForPort(fn, result) {
+  if (fn !== 'getDivision' || result === null || typeof result !== 'object' || Array.isArray(result))
+    return result;
+  // Ports clone enumerable values, which invokes the deprecated .type getter.
+  // Filter keys before reading values; spread/Object.entries would invoke it too.
+  const division = {};
+  for (const key of Object.keys(result))
+    if (key !== 'type') division[key] = result[key];
+  return division;
+}
+
 /** @param {NS} ns */
 export async function main(ns) {
   ns.ramOverride(23.6);
@@ -19,7 +30,7 @@ export async function main(ns) {
     const f = ns.corporation?.[fn];
     if (typeof f !== "function") throw new Error(`Invalid corporation function: ${String(fn)}`);
 
-    response = await f(...args);
+    response = prepareCorporationResultForPort(fn, await f(...args));
   } catch (error) {
     response = `ERROR:${String(error?.stack ?? error)}`;
   }
