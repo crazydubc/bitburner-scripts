@@ -1064,8 +1064,10 @@ async function updateMisc(ns) {
   }
 }
 
-async function doResearch(ns, rp, div, research, ratio) {
+async function doResearch(ns, div, research, ratio) {
   if (!researchedDB[div + research]) {
+    // Earlier purchases in this list have already spent research that also boosts product ratings.
+    const rp = (await corpRun(ns, 'getDivision', div)).researchPoints
     if (rp / ratio > await corpRun(ns, 'getResearchCost', div, research)) {
       await corpRun(ns, 'research', div, research);
       researchedDB[div + research] = true
@@ -1077,9 +1079,8 @@ async function doResearch(ns, rp, div, research, ratio) {
 }
 
 async function runResearchList(ns, div, list, ratio) {
-  const rp = (await corpRun(ns, 'getDivision', div)).researchPoints
   for (const item of list) {
-    if (await doResearch(ns, rp, div, item, ratio)) return true;
+    if (await doResearch(ns, div, item, ratio)) return true;
   }
   return false;
 }
@@ -1165,50 +1166,48 @@ async function manageProducts(ns) {
         calculating++
     }
 
+    // Keep the current lineup while any project is unfinished or its snapshot is unavailable.
+    if (completedProducts.length !== division.products.length) continue
+
+    let worstProduct = null
     if (active + calculating === division.maxProducts) {
-      let worstProduct = null
 
       if (calculating <= 1) {
         const priceCandidates = []
         for (const entry of completedProducts) {
-const sellPrice = await getSellPrice(ns, div, "Sector-12", entry.name)
-if (Number.isFinite(sellPrice) && sellPrice > 0)
-  priceCandidates.push({ name: entry.name, score: sellPrice })
+          const sellPrice = await getSellPrice(ns, div, "Sector-12", entry.name)
+          if (Number.isFinite(sellPrice) && sellPrice > 0)
+            priceCandidates.push({ name: entry.name, score: sellPrice })
         }
         worstProduct = selectLowestScoredProduct(priceCandidates)
       } else {
         worstProduct = selectLowestScoredProduct(completedProducts.map(entry => ({
-name: entry.name,
-score: Number(entry.product.stats?.quality),
+          name: entry.name,
+          score: Number(entry.product.stats?.quality),
         })))
       }
 
       // If every completed product is still waiting for a valid price/quality, keep all slots intact and retry.
-      if (await discontinueManagedProduct(ns, div, worstProduct))
-        division = await corpRun(ns, 'getDivision', div)
+      if (!worstProduct) continue
     }
 
-    let researching = false
-    for (const productName of division.products) {
-      const product = await corpRun(ns, 'getProduct', div, "Sector-12", productName)
-      if (product?.developmentProgress < 100) {
-        researching = true
-        break
-      }
-    }
+    if (!worstProduct && division.products.length >= division.maxProducts) continue
 
-    if (researching || division.products.length >= division.maxProducts) continue
-
+    // Price the next version before retiring anything, including when the newest product is weakest.
     const version = await getLatestProductVersion(ns, div)
     const investment = 1e9 * 2 ** version
     const corp = await getCorp(ns)
     const reserve = Number(investOffer?.round) === 2 && div === div3
       ? ROUND_TWO_TOBACCO_RESERVE
       : 0
-    if (Number.isFinite(investment) &&
-      canAffordCorporationPurchase(corp.funds, investment * 2, reserve)) {
-      await corpRun(ns, 'makeProduct', div, "Sector-12", 'Prod v' + (version + 1), investment, investment)
-    }
+    if (!Number.isFinite(investment) ||
+      !canAffordCorporationPurchase(corp.funds, investment * 2, reserve)) continue
+
+    // An unfunded replacement must not remove an existing source of revenue.
+    if (await discontinueManagedProduct(ns, div, worstProduct))
+      division = await corpRun(ns, 'getDivision', div)
+    if (division.products.length >= division.maxProducts) continue
+    await corpRun(ns, 'makeProduct', div, "Sector-12", 'Prod v' + (version + 1), investment, investment)
   }
 }
 /**
