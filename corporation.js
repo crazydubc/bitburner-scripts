@@ -2274,6 +2274,60 @@ async function getSellPrice(ns, div, city, prod) {
   const price = (ta2.markupLimit + (5 * product.productionCost)) * 10
   return Number.isFinite(price) && price > 0 ? price : 0
 }
+
+function isFiniteNonnegative(price) {
+  return Number.isFinite(price) && price >= 0
+}
+
+/** Price one stocked item. An unusable observation resets only that item's calibration. */
+async function manualSalePrice(ns, div, city, name, item, isProduct, exported = 0) {
+  const key = div + city + name
+  const { stored, productionAmount, actualSellAmount } = item
+  const marketPrice = isProduct ? 5 * item.productionCost : item.marketPrice
+  const quantity = stored + exported * 10
+  const useMarketPrice = () => { delete ta2DB[key]; return "MP" }
+  const setTrialPrice = price => {
+    if (!isFiniteNonnegative(price)) return useMarketPrice()
+    ta2DB[key] = { sellingPrice: price, sellingQuantity: quantity, markupLimit: 0 }
+    return String(price)
+  }
+
+  if (!(stored > 0) || !Number.isFinite(stored) || !isFiniteNonnegative(marketPrice) ||
+      !isFiniteNonnegative(quantity) || !Number.isFinite(productionAmount) || !isFiniteNonnegative(actualSellAmount))
+    return useMarketPrice()
+
+  const entry = ta2DB[key]
+  if (!entry) {
+    if (!isProduct) return setTrialPrice(marketPrice)
+    const multiplier = 2 ** (parseVersion(name) - 1)
+    // The game validates MP expressions with test prices up to 1.2e123 before using the real price.
+    if (!isFiniteNonnegative(item.rating) || !Number.isFinite(multiplier * 1.2e123) ||
+        !Number.isFinite(multiplier * item.productionCost)) return useMarketPrice()
+    setTrialPrice(item.rating)
+    return `MP*${multiplier}`
+  }
+  if (!isFiniteNonnegative(entry.sellingPrice) || !isFiniteNonnegative(entry.sellingQuantity) ||
+      !Number.isFinite(entry.markupLimit)) return useMarketPrice()
+
+  if (entry.markupLimit === 0) {
+    if (actualSellAmount >= entry.sellingQuantity / 10)
+      return setTrialPrice(entry.sellingPrice * (isProduct ? 1000 : 1.2))
+    if (actualSellAmount <= entry.sellingQuantity / 10 * (isProduct ? 0.15 : 0.1))
+      return setTrialPrice(isProduct ? entry.sellingPrice / 3 : entry.sellingPrice * 0.9)
+    const mult = await getMult(ns, div, city)
+    const production = mult[isProduct ? 1 : 0]
+    if (!Number.isFinite(production) || production <= 0) return useMarketPrice()
+    const markup = (entry.sellingPrice - marketPrice) * Math.sqrt(actualSellAmount / production)
+    if (!Number.isFinite(markup)) return useMarketPrice()
+    entry.markupLimit = markup
+  }
+
+  const price = (entry.markupLimit + marketPrice) * 10 * Math.min(1, (productionAmount - exported) / stored)
+  if (!Number.isFinite(price)) return useMarketPrice()
+  if (price < 0) return setTrialPrice(entry.sellingPrice * (isProduct ? 10 : 2))
+  return String(price)
+}
+
 /** @param {NS} ns */
 async function sell(ns) {
   for (const div of industries) {
@@ -2287,8 +2341,8 @@ async function sell(ns) {
         if (indDataDB[hasDivDB[div].industry].makesProducts) {
           const division = (await corpRun(ns, 'getDivision', div))
           for (const prod of division.products) {
-            if ((await corpRun(ns, 'getProduct', div, city, prod)).developmentProgress !== 100) continue
-            if ((await corpRun(ns, 'getProduct', div, city, prod)).stored === 0) continue
+            const product = await corpRun(ns, 'getProduct', div, city, prod)
+            if (product.developmentProgress !== 100 || product.stored === 0) continue
             //Setting Market TA II if researchedDB
             if (hasMTAII) { //I don't research it, but it could be there from manual purchase
               await corpRun(ns, 'setProductMarketTA2', div, prod, true)
@@ -2296,54 +2350,8 @@ async function sell(ns) {
               continue
             }
 
-            let ta2 = ta2DB[div + city + prod]
-            const product = await corpRun(ns, 'getProduct', div, city, prod)
-            if (ta2 === undefined) { //No TA2 data
-              ta2DB[div + city + prod] = {
-                "sellingPrice": product.rating,
-                "sellingQuantity": product.stored,
-                "markupLimit": 0
-              }
-              const version = parseVersion(prod);
-              await corpRun(ns, 'sellProduct', div, city, prod, "MAX", 'MP*' + (2 ** (version - 1)))
-              continue
-            }
-            const prodMarketPrice = 5 * product.productionCost
-            if (ta2.markupLimit === 0) { //Not calculated yet
-              const actualSellAmount = product.actualSellAmount
-              if (actualSellAmount >= ta2.sellingQuantity / 10) { // We failed to set it high enough.  Set it higher and try again
-                const oldSalePrice = ta2DB[div + city + prod].sellingPrice
-                ta2DB[div + city + prod].sellingPrice = oldSalePrice * 1000
-                ta2DB[div + city + prod].sellingQuantity = product.stored
-                await corpRun(ns, 'sellProduct', div, city, prod, "MAX", (oldSalePrice * 1000).toString())
-                continue
-              }
-              else if (actualSellAmount <= ta2.sellingQuantity / 10 * .15) { //Not enough sold, lower the price!
-                const oldSalePrice = ta2DB[div + city + prod].sellingPrice
-                ta2DB[div + city + prod].sellingPrice = oldSalePrice / 3
-                ta2DB[div + city + prod].sellingQuantity = product.stored
-                await corpRun(ns, 'sellProduct', div, city, prod, "MAX", (oldSalePrice / 3).toString())
-                continue
-              }
-              const mult = await getMult(ns, div, city)
-              const m = mult[1]
-              const markupLimit = (ta2.sellingPrice - prodMarketPrice) * Math.sqrt(actualSellAmount / m)
-              ta2DB[div + city + prod].markupLimit = markupLimit
-              ta2 = ta2DB[div + city + prod]
-            }
-            const prodStored = product.stored
-            let sellingPrice = (((ta2.markupLimit * Math.sqrt(prodStored)) / Math.sqrt(prodStored)) + prodMarketPrice) * 10
-            const priceMult = product.productionAmount / prodStored
-            if (priceMult !== Infinity) sellingPrice *= priceMult >= 1 ? 1 : priceMult
-            if (sellingPrice < 0 || isNaN(sellingPrice)) {
-              const oldSalePrice = ta2DB[div + city + prod].sellingPrice
-              ta2DB[div + city + prod].sellingPrice = oldSalePrice * 10
-              ta2DB[div + city + prod].sellingQuantity = prodStored
-              ta2DB[div + city + prod].markupLimit = 0
-              await corpRun(ns, 'sellProduct', div, city, prod, "MAX", (oldSalePrice * 10).toString())
-              continue
-            }
-            await corpRun(ns, 'sellProduct', div, city, prod, "MAX", sellingPrice.toString())
+            const price = await manualSalePrice(ns, div, city, prod, product, true)
+            await corpRun(ns, 'sellProduct', div, city, prod, "MAX", price)
           } //Products
         } //Product check
         if (indDataDB[hasDivDB[div].industry].producedMaterials)
@@ -2359,52 +2367,8 @@ async function sell(ns) {
               await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", "0")
               continue
             }
-            let ta2 = ta2DB[div + city + mat]
-            if (ta2 === undefined) { //No TA2 data              
-              ta2DB[div + city + mat] = {
-                "sellingPrice": material.marketPrice,
-                "sellingQuantity": material.stored + (exported * 10),
-                "markupLimit": 0
-              }
-              await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", material.marketPrice.toString())
-              continue
-            }
-            const prodMarketPrice = material.marketPrice
-            const mult = await getMult(ns, div, city)
-            const m = mult[0]
-            if (ta2.markupLimit === 0) { //Not calculated yet
-              const actualSellAmount = material.actualSellAmount
-              if (actualSellAmount >= (ta2.sellingQuantity) / 10) { // We failed to set it high enough.  Set it higher and try again
-                const oldSalePrice = ta2DB[div + city + mat].sellingPrice
-                ta2DB[div + city + mat].sellingPrice = oldSalePrice * 1.2
-                ta2DB[div + city + mat].sellingQuantity = material.stored + (exported * 10)
-                await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", (oldSalePrice * 1.2).toString())
-                continue
-              }
-              else if (actualSellAmount <= (ta2.sellingQuantity) / 10 * .1) { //Not enough sold, lower the price!
-                const oldSalePrice = ta2DB[div + city + mat].sellingPrice
-                ta2DB[div + city + mat].sellingPrice = oldSalePrice * .9
-                ta2DB[div + city + mat].sellingQuantity = material.stored + (exported * 10)
-                await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", (oldSalePrice * .9).toString())
-                continue
-              }
-              const markupLimit = (ta2.sellingPrice - prodMarketPrice) * Math.sqrt(actualSellAmount / m)
-              ta2DB[div + city + mat].markupLimit = markupLimit
-              ta2 = ta2DB[div + city + mat]
-            }
-            const prodStored = material.stored
-            let sellingPrice = (((ta2.markupLimit * Math.sqrt(prodStored)) / Math.sqrt(prodStored)) + prodMarketPrice) * 10
-            const priceMult = (material.productionAmount - exported) / prodStored
-            if (priceMult !== Infinity) sellingPrice *= priceMult >= 1 ? 1 : priceMult
-            if (sellingPrice < 0 || isNaN(sellingPrice)) {
-              const oldSalePrice = ta2DB[div + city + mat].sellingPrice
-              ta2DB[div + city + mat].sellingPrice = oldSalePrice * 2
-              ta2DB[div + city + mat].sellingQuantity = prodStored + (exported * 10)
-              ta2DB[div + city + mat].markupLimit = 0
-              await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", (oldSalePrice * 2).toString())
-              continue
-            }
-            await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", sellingPrice.toString())
+            const price = await manualSalePrice(ns, div, city, mat, material, false, exported)
+            await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", price)
           }
       } //TA2
       else { // No TA2
@@ -2421,7 +2385,7 @@ async function sell(ns) {
             const maxProd = await maxProduction(ns, div, city)
             const priceMult = maxProd[0] / (material.stored)
             price *= priceMult >= 1 ? 1 : priceMult >= .6 ? priceMult : priceMult / 10
-            await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", price)
+            await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", isFiniteNonnegative(price) ? price : "MP")
           }
         }
       }

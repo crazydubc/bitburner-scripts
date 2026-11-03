@@ -1,5 +1,7 @@
 # Bitburner progression and speedrun audit — 2026-10-17
 
+**November 3 corporation sell-price fix:** [BN10.1 `INFINITY` reproduction](2026-11-03-corporation-sale-prices.md) traces the round-two crash through the remote manager, home helper and game parser. Invalid custom material or product quotes now fall back to `MP` for that item and can relearn; ordinary prices and Market-TA.II behavior are preserved. Pull the testing branch and relaunch the corporation manager to load the change.
+
 **November 2 corporation products:** [Ratings and spending safeguards](2026-11-02-corporation-products.md) distinguishes design rating from the material- and inventory-dependent effective rating. Research decisions now refresh the points balance after earlier purchases, and product replacements verify funding before retiring a seller and capture the next version before deletion. Actual manager/engine regressions and the corporation checks pass, with unchanged RAM costs. These fixes do not establish the cause of the reported v1/v2 effective-rating difference. Restart `corporation.js` after pulling.
 
 **October 31 corporation warning:** [Division reply transport](2026-10-31-corporation-division-port.md) explains why the deprecated `.type` warning persisted after all direct reads used `.industry`: port cloning invoked the game's legacy getter. The helper now excludes that key before reading values. The official getter/port reproduction and corporation checks pass, with unchanged RAM costs.
