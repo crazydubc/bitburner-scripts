@@ -221,20 +221,20 @@ nf = await neuroflux({money: 500e6, disableDonations: true}); assert.deepEqual(n
 // Downloader excludes audit/runtime debug files on both GitHub and fallback paths, but explicit diagnostics work.
 assert.deepEqual(filterDownloadableFiles(['/audit/check.js', '/Temp/old.js', '/bin/a.js', 'Tempest.js'], ['.js'], ['audit/', 'Temp/']), ['bin/a.js', 'Tempest.js']);
 async function downloadCase(fallback = false, explicit = []) {
-  const requests = [], downloads = [];
+  const requests = [], downloads = [], disk = new Map();
   const oldFetch = globalThis.fetch;
   globalThis.fetch = async url => {
     requests.push(url); if (fallback) throw Error('rate limit');
-    const files = url.includes('/contents/bin?') ? [{type: 'file', path: 'bin/a.js'}] :
-      [{type: 'dir', path: 'audit'}, {type: 'dir', path: 'Temp'}, {type: 'dir', path: 'bin'},
-        ...['autopilot.js', 'dev.js', 'stock-diagnostic.js'].map(path => ({type: 'file', path}))];
-    return {json: async () => files};
+    return {ok: true, json: async () => url.includes('/commits/') ? {sha: 'a'.repeat(40)} :
+      {truncated: false, tree: ['audit/check.js', 'Temp/old.js', 'bin/a.js', 'autopilot.js', 'dev.js', 'stock-diagnostic.js']
+        .map(path => ({type: 'blob', path}))}};
   };
   try {
     await pull({flags: schema => ({...Object.fromEntries(schema), 'new-file': [], download: explicit}),
-      getScriptName: () => 'git-pull.js', print: noop, tprint: noop,
+      getScriptName: () => 'git-pull.js', getHostname: () => 'home', print: noop, tprint: noop,
+      read: file => disk.get(file) ?? '', write: async (file, text) => disk.set(file, text),
       ls: () => ['/audit/check.js', '/Temp/old.js', '/bin/a.js', 'autopilot.js', 'hacks.js', 'performance-diagnostic.js'],
-      wget: async (_, file) => {downloads.push(file); return true;}});
+      wget: async (_, file) => {downloads.push(file); disk.set(file, 'downloaded source'); return true;}});
   } finally {globalThis.fetch = oldFetch;}
   assert(!requests.some(url => /contents\/(audit|Temp)/.test(url)));
   return downloads.sort();
