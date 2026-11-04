@@ -10,7 +10,8 @@ const costMethods = {
   stock: {buyStock: 'getPurchaseCost', buyShort: 'getPurchaseCost'},
 };
 const fixedPurchases = new Set(['stock.purchaseWseAccount', 'stock.purchaseTixApi', 'stock.purchase4SMarketData',
-  'stock.purchase4SMarketDataTixApi', 'singularity.purchaseTor', 'corporation.createCorporation']);
+  'stock.purchase4SMarketDataTixApi', 'singularity.purchaseTor', 'corporation.createCorporation',
+  'sleeve.travel', 'singularity.donateToFaction']);
 export function purchaseRam(ns, namespace, method) {
   if (!costMethods[namespace]?.[method] && !fixedPurchases.has(`${namespace}.${method}`))
     throw new Error(`Unsupported guarded purchase: ${namespace}.${method}`);
@@ -40,6 +41,8 @@ export function executePurchase(ns, namespace, method, args, policy = {}) {
   else if (costMethod) cost = api[costMethod](...args);
   else if (namespace === 'corporation' && method === 'createCorporation') cost = args[1] === false ? 0 : 150e9;
   else if (namespace === 'singularity' && method === 'purchaseTor') cost = 200e3;
+  else if (namespace === 'sleeve' && method === 'travel') cost = 200e3;
+  else if (namespace === 'singularity' && method === 'donateToFaction') cost = args[1];
   else if (fixedPurchases.has(`${namespace}.${method}`)) cost = policy.quotedCost; // Fixed BN-scaled stock access price, supplied by its caller.
   else throw new Error(`Unsupported guarded purchase: ${namespace}.${method}`);
   const money = ns.getServerMoneyAvailable('home');

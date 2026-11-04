@@ -764,7 +764,10 @@ false, "info");
     if (collectAllCompanyInvites && ns.args.includes("--intel-farm-preparation") &&
         !getIntelFarmReadiness(playerInfo, installedAugs, [], resetInfo.ownedSF, await intelFarmState(ns)).needed)
       collectAllCompanyInvites = false;
-    if (collectAllCompanyInvites) return await collectCompanyInvitations();
+    // Preparation needs CashRoot installed before the reset loop can run. Keep normal augmentation
+    // routes available until then instead of indefinitely preempting them with company invitations.
+    if (collectAllCompanyInvites && (!ns.args.includes("--intel-farm-preparation") ||
+        installedAugs.includes("CashRoot Starter Kit"))) return await collectCompanyInvitations();
     if (await isBladeburnerInterruption()) return true;
     if (crimeFocused && !playerInGang) {
       requestedReplanDelay = INVITE_REPLAN_INTERVAL;

@@ -1,5 +1,5 @@
 import {
-  log, getConfiguration, disableLogs, getActiveSourceFiles, singRun, gangRun, hnRun,
+  log, getConfiguration, disableLogs, getActiveSourceFiles, singRun, singReadMany, gangRun, hnRun,
   formatMoney, formatDuration, getPlayerInfo, getReset, findPids, sleeveRun, bbRun, getOwnedAugs, getReserve, purchase
 } from './utils.js'
 import { hasBladeburnerAccess } from './progression.js'
@@ -46,11 +46,11 @@ const NON_SLEEVE_WORK_FACTIONS = new Set([
 ]);
 const trainingReserveFile = '/Temp/sleeves-training-reserve.txt';
 const works = ['security', 'field', 'hacking']; // When doing faction work, we prioritize physical work since sleeves tend towards having those stats be highest
-const trainStats = ['str', 'def', 'dex', 'agi'];
+const trainStats = ['strength', 'defense', 'dexterity', 'agility'];
 const trainSmarts = ['hacking', 'charisma'];
 const sleeveBbContractNames = ["Tracking", "Bounty Hunter", "Retirement"];
 const minBbContracts = 2; // There should be this many contracts remaining before sleeves attempt them
-const minBbProbability = 0.99; // Player chance should be this high before sleeves attempt contracts
+const minBbProbability = 0.99; // The assigned sleeve's lower success estimate must exceed this threshold
 const waitForContractCooldown = 60 * 1000; // 1 minute - Cooldown when contract count or probability gets too low
 
 let cachedCrimeStats, workByFaction; // Cache of crime statistics and which factions support which work
@@ -61,7 +61,7 @@ let stagedShockRecoveryState, sleeveRepAssignments;
 let factionPlanRefreshedAt, factionPlanStaticKey, factionPlanPreference, factionPlanRoutes;
 let factionAugs, factionWorkTypes, augRepReqs, augStats, augPrereqs;
 let factionWorkFailureCount, factionWorkUnavailableUntil, lastFactionPlanWarning;
-let options;
+let options, crimeSuccessMultiplier = 1;
 
 
 export function isSleeveApiError(value) {
@@ -161,8 +161,9 @@ export function assignSleeveRepTargets(
 /**
  * Coordinate shock recovery across the whole sleeve fleet.
  *
- * While every synchronized sleeve still has shock, exactly one sleeve recovers so the fleet reaches its
- * first fully recovered worker as quickly as possible. Once at least one synchronized sleeve has zero shock,
+ * While every synchronized sleeve still has shock, one sleeve recovers while the others contribute work.
+ * This preserves early output; it does not accelerate recovery compared with recovering every sleeve.
+ * Once at least one synchronized sleeve has zero shock,
  * every remaining shocked sleeve recovers while the recovered sleeves perform normal work.
  */
 export function getStagedShockRecoveryPlan(sleeves, cachedTasks = [], previousState = {}) {
@@ -297,24 +298,18 @@ async function manageSleeveAugs(ns, i, budget) {
 /** @param {NS} ns
  * @returns {Promise<Task>} */
 async function getCurrentWorkInfo(ns) {
-  return (await singRun(ns, 'getCurrentWork')) ?? {};
+  return 4 in ownedSourceFiles ? (await singRun(ns, 'getCurrentWork')) ?? {} : {};
 }
 
 
 async function buildSingularityMap(ns, fn, items) {
-  const result = {};
-  for (const item of items) {
-    const value = await singRun(ns, fn, item);
-    if (isSleeveApiError(value)) throw new Error(`${fn}(${String(item)}) failed: ${value}`);
-    result[item] = value;
-  }
-  return result;
+  return await singReadMany(ns, fn, items);
 }
 
 /** Build desired, non-overlapping faction targets for all currently usable sleeves. */
 async function refreshSleeveFactionRoutes(ns, playerInfo, resetInfo, playerWorkInfo, routeLimit) {
   const maxRoutes = Math.max(0, Math.floor(Number(routeLimit) || 0));
-  if (options['disable-follow-player'] || maxRoutes === 0) return [];
+  if (!(4 in ownedSourceFiles) || options['disable-follow-player'] || maxRoutes === 0) return [];
   const now = Date.now();
 
   try {
@@ -443,30 +438,33 @@ async function mainLoop(ns) {
     const inGangResult = await gangRun(ns, 'inGang');
     playerInGang = inGangResult === true; // ERROR strings from the RAM-dodge helper must not count as gang membership
   }
+  const resetInfo = await getReset(ns);
+  // Crime success has a separate penalty in BN14, including when SF5 is not available.
+  crimeSuccessMultiplier = resetInfo.currentNode === 14 ? 0.4 : 1;
   const gangKarmaPriority = shouldPrioritizeGangKarma(
     playerInGang,
     options['disable-gang-homicide-priority'],
-    2 in ownedSourceFiles,
+    2 in ownedSourceFiles && resetInfo.currentNode !== 8,
     ns.heart.break(),
   );
   let globalReserve = await getReserve(ns);
   let budget = (playerInfo.money - (options['reserve'] ?? globalReserve)) * options['aug-budget'];
   // Estimate the cost of sleeves training over the next time interval to see if (ignoring income) we would drop below our reserve.
-  const costByNextLoop = interval / 1000 * task.filter(t => t?.startsWith("train")).length * 12000; // TODO: Training cost/sec seems to be a bug. Should be 1/5 this ($2400/sec)
+  // Cover every potential new assignment, including studying, with a conservative five-second margin.
+  const costByNextLoop = 5 * numSleeves * 12000;
   // Get time in current bitnode (to cap how long we'll train sleeves)
-  const resetInfo = await getReset(ns);
   const timeInBitnode = Date.now() - resetInfo.lastNodeReset
+  const trainingReserve = Number(options['training-reserve'] ?? (ns.read(trainingReserveFile) || globalReserve));
   let canTrain = !options['disable-training'] &&
     // To avoid training forever when mults are crippling, stop training if we've been in the bitnode a certain amount of time
     (options['training-cap-seconds'] * 1000 > timeInBitnode) &&
     // Don't train if we have no money (unless player has given permission to train into debt)
-    (playerInfo.money - costByNextLoop) > (options['training-reserve'] ||
-      (ns.read(trainingReserveFile)) || globalReserve);
+    Number.isFinite(trainingReserve) && (playerInfo.money - costByNextLoop) > trainingReserve;
   // If any sleeve is training at the gym, see if we can purchase a gym upgrade to help them
-  if (canTrain && task.some(t => t?.startsWith("train")) && !options['disable-spending-hashes-for-gym-upgrades'])
+  if (9 in ownedSourceFiles && canTrain && task.some(t => t?.startsWith("train")) && !options['disable-spending-hashes-for-gym-upgrades'])
     if (await hnRun(ns, 'spendHashes', "Improve Gym Training"))
       log(ns, `SUCCESS: Bought "Improve Gym Training" to speed up Sleeve training.`, false, 'success');
-  if (canTrain && task.some(t => t?.startsWith("study")) && !options['disable-spending-hashes-for-study-upgrades'])
+  if (9 in ownedSourceFiles && canTrain && task.some(t => t?.startsWith("study")) && !options['disable-spending-hashes-for-study-upgrades'])
     if (await hnRun(ns, 'spendHashes', "Improve Studying"))
       log(ns, `SUCCESS: Bought "Improve Studying" to speed up Sleeve studying.`, false, 'success');
   if (playerInBladeburner && hasBladeburnerAccess(ownedSourceFiles)) {
@@ -475,7 +473,10 @@ async function mainLoop(ns) {
     bladeburnerContractChances = {};
     bladeburnerContractCounts = {};
     for (const cName of sleeveBbContractNames) {
-      bladeburnerContractChances[cName] = (await bbRun(ns, 'getActionEstimatedSuccessChance', "Contracts", cName))[0];
+      const sleeveIndex = {Retirement: 1, 'Bounty Hunter': 2, Tracking: 3}[cName];
+      if (sleeveIndex >= numSleeves) continue;
+      const estimate = await bbRun(ns, 'getActionEstimatedSuccessChance', "Contracts", cName, sleeveIndex);
+      bladeburnerContractChances[cName] = Number.isFinite(estimate?.[0]) ? estimate[0] : 0;
       bladeburnerContractCounts[cName] = (await bbRun(ns, 'getActionCountRemaining', "Contracts", cName));
     }
   } else
@@ -498,7 +499,7 @@ async function mainLoop(ns) {
     playerWorkInfo,
     factionRoutes,
     factionWorkTypes,
-    options['disable-follow-player'] || gangKarmaPriority,
+    !(4 in ownedSourceFiles) || options['disable-follow-player'] || gangKarmaPriority || !!options.crime,
   );
 
   for (let i = 0; i < numSleeves; i++) {
@@ -586,6 +587,8 @@ async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrai
     }
   }  // Gang karma is a true priority: after mandatory/periodic recovery, do not let training or player-follow
   // work consume the only usable sleeve while the player is still unlocking gangs.
+  if (options.crime)
+    return await crimeTask(ns, options.crime, i, sleeve, 'the requested --crime override');
   if (gangKarmaPriority)
     return await crimeTask(ns, 'Homicide', i, sleeve, 'we want gang karma');
 
@@ -629,9 +632,10 @@ async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrai
     if (untrainedStats.length > 0) {
       if (sleeve.city != ns.enums.CityName.Sector12) {
         log(ns, `Moving Sleeve ${i} from ${sleeve.city} to Sector-12 so that they can train at Powerhouse Gym.`);
-        const traveled = await sleeveRun(ns, 'travel', i, ns.enums.CityName.Sector12);
-        if (!isSleeveAssignmentSuccessful(traveled))
-log(ns, `WARNING: Failed to move Sleeve ${i} to Sector-12: ${String(traveled)}`, false, 'warning');
+        const traveled = await purchase(ns, 'sleeve', 'travel', [i, ns.enums.CityName.Sector12],
+          options.reserve == null ? {} : {reserve: options.reserve});
+        if (!isSleeveAssignmentSuccessful(traveled.result))
+          return await crimeTask(ns, 'Mug', i, sleeve, 'training travel would exceed available cash');
       }
       var trainStat = untrainedStats.reduce((min, s) => sleeve.skills[s] < sleeve.skills[min] ? s : min, untrainedStats[0]);
       var gym = ns.enums.LocationName.Sector12PowerhouseGym;
@@ -645,9 +649,10 @@ log(ns, `WARNING: Failed to move Sleeve ${i} to Sector-12: ${String(traveled)}`,
     } else if (untrainedSmarts.length > 0) {
       if (sleeve.city != ns.enums.CityName.Volhaven) {
         log(ns, `Moving Sleeve ${i} from ${sleeve.city} to Volhaven so that they can study at ZB Institute.`);
-        const traveled = await sleeveRun(ns, 'travel', i, ns.enums.CityName.Volhaven);
-        if (!isSleeveAssignmentSuccessful(traveled))
-log(ns, `WARNING: Failed to move Sleeve ${i} to Volhaven: ${String(traveled)}`, false, 'warning');
+        const traveled = await purchase(ns, 'sleeve', 'travel', [i, ns.enums.CityName.Volhaven],
+          options.reserve == null ? {} : {reserve: options.reserve});
+        if (!isSleeveAssignmentSuccessful(traveled.result))
+          return await crimeTask(ns, 'Mug', i, sleeve, 'training travel would exceed available cash');
       }
       var trainSmart = untrainedSmarts.reduce((min, s) => sleeve.skills[s] < sleeve.skills[min] ? s : min, untrainedSmarts[0]);
       var univ = ns.enums.LocationName.VolhavenZBInstituteOfTechnology;
@@ -673,7 +678,7 @@ log(ns, `WARNING: Failed to move Sleeve ${i} to Volhaven: ${String(traveled)}`, 
             /*7*/options['enable-bladeburner-team-building'] ? ["Recruitment"] : ["Infiltrate Synthoids"]
     ];
     let [action, contractName] = bbTasks[i];
-    const contractChance = bladeburnerContractChances[contractName] ?? 1;
+    const contractChance = bladeburnerContractChances[contractName] ?? (contractName ? 0 : 1);
     const contractCount = bladeburnerContractCounts[contractName] ?? Infinity;
     const onCooldown = () => Date.now() <= bladeburnerCooldown[i]; // Function to check if we're on cooldown
     // Detect if the sleeve recently failed the task. If so, put them on a "cooldown" before trying again
@@ -688,7 +693,7 @@ log(ns, `WARNING: Failed to move Sleeve ${i} to Volhaven: ${String(traveled)}`, 
       bladeburnerCooldown[i] = Date.now() + waitForContractCooldown;
       log(ns, `Delaying sleeve ${i} designated bladeburner task '${action} - ${contractName}' - ` +
         (contractCount < minBbContracts ? `Insufficient contract count (${contractCount} < ${minBbContracts})` :
-          `Player chance is too low (${(contractChance * 100).toFixed(2)}% < ${(minBbProbability * 100)}%). `) +
+          `Sleeve chance is too low (${(contractChance * 100).toFixed(2)}% <= ${(minBbProbability * 100)}%). `) +
         `Will try again in ${formatDuration(waitForContractCooldown)}`);
     }
     // As current city chaos gets progressively bad, assign more and more sleeves to Diplomacy to help get it under control
@@ -712,7 +717,7 @@ log(ns, `WARNING: Failed to move Sleeve ${i} to Volhaven: ${String(traveled)}`, 
   //Note: Heist and assassin give intel, homicide is best for karma.
   //Heist is better for stats than assassination.
   const bestCrimesByDifficulty = ["Heist", "Assassination", "Homicide"];
-  const chanceThresholds = [1.0, 1.0, 0.5];
+  const chanceThresholds = [1.0, 1.0, options['homicide-chance-threshold']];
   async function buildLibCrimeTask(ns, sleeve, items) {
     let ret = {};
     for (const item of items) {
@@ -726,7 +731,7 @@ log(ns, `WARNING: Failed to move Sleeve ${i} to Volhaven: ${String(traveled)}`, 
   let crime = "Mug"; //default as it has a decent chance rate.
   for (let i = 0; i < bestCrimesByDifficulty.length; i++) {
     const c = bestCrimesByDifficulty[i];
-    if ((crimeChances[c] ?? 0) > chanceThresholds[i]) { crime = c; break; }
+    if ((crimeChances[c] ?? 0) >= chanceThresholds[i]) { crime = c; break; }
   }
 
   return await crimeTask(ns, crime, i, sleeve, `there appears to be nothing better to do`);
@@ -823,14 +828,17 @@ async function calculateCrimeChance(ns, sleeve, crimeName) {
     crimeName == "Homicide" ? { difficulty: 1, strength_success_weight: 2, defense_success_weight: 2, dexterity_success_weight: 0.5, agility_success_weight: 0.5 } :
       crimeName == "Mug" ? { difficulty: 0.2, strength_success_weight: 1.5, defense_success_weight: 0.5, dexterity_success_weight: 1.5, agility_success_weight: 0.5, } :
         undefined));
+  if (!crimeStats || !Number.isFinite(crimeStats.difficulty) || crimeStats.difficulty <= 0) return 0;
+  const intelligence = Math.max(0, Number(sleeve.skills.intelligence) || 0);
   let chance =
     (crimeStats.hacking_success_weight || 0) * sleeve.skills.hacking +
     (crimeStats.strength_success_weight || 0) * sleeve.skills.strength +
     (crimeStats.defense_success_weight || 0) * sleeve.skills.defense +
     (crimeStats.dexterity_success_weight || 0) * sleeve.skills.dexterity +
     (crimeStats.agility_success_weight || 0) * sleeve.skills.agility +
-    (crimeStats.charisma_success_weight || 0) * sleeve.skills.charisma;
+    (crimeStats.charisma_success_weight || 0) * sleeve.skills.charisma + 0.025 * intelligence;
   chance /= 975;
   chance /= crimeStats.difficulty;
+  chance *= (sleeve.mults?.crime_success ?? 1) * crimeSuccessMultiplier * (1 + intelligence ** 0.8 / 600);
   return Math.min(chance, 1);
 }

@@ -63,6 +63,8 @@ const cases = [
   ['singularity', 'purchaseProgram', ['BruteSSH.exe'], 'getDarkwebProgramCost'],
   ['singularity', 'purchaseAugmentation', ['CyberSec', 'Aug'], 'getAugmentationPrice'],
   ['singularity', 'purchaseTor', [], null],
+  ['singularity', 'donateToFaction', ['CyberSec', 60], null],
+  ['sleeve', 'travel', [0, 'Sector-12'], null],
   ['gang', 'purchaseEquipment', ['member', 'gear'], 'getEquipmentCost'],
   ['sleeve', 'purchaseSleeveAug', [0, 'Aug'], 'getSleevePurchasableAugs'],
   ['sleeve', 'purchaseSleeve', [0], 'getSleeveCost'],
@@ -73,7 +75,7 @@ function runPurchase(testCase, {main = purchaseMain, initialRam, freeRam = Infin
   const [namespace, method, args, quote] = testCase;
   const expectedResult = method === 'purchaseServer' ? 'worker' : method === 'purchaseNode' ? 0 :
     ['buyStock', 'buyShort'].includes(method) ? 10 : true;
-  const cost = method === 'createCorporation' ? 150e9 : method === 'purchaseTor' ? 200e3 : 60;
+  const cost = method === 'createCorporation' ? 150e9 : ['purchaseTor', 'travel'].includes(method) ? 200e3 : 60;
   const replies = [], calls = [], allocations = [];
   let cash = 1e12;
   const ws = {dynamicLoadedFns: {}, dynamicRamUsage: RamCostConstants.Base,
@@ -139,8 +141,9 @@ for (const [node, sf4] of [[1, 0], [1, 1], [1, 2], [1, 3], [4, 0]]) {
   Player.bitNodeN = node; Player.sf4 = sf4;
   for (const testCase of cases) {
     const [namespace, method] = testCase;
-    const oldRam = oldPurchaseRam({getFunctionRamCost: functionCost}, namespace, method);
     const required = purchaseRam({getFunctionRamCost: functionCost}, namespace, method);
+    const oldRam = ['donateToFaction', 'travel'].includes(method) ? required - 0.05 :
+      oldPurchaseRam({getFunctionRamCost: functionCost}, namespace, method);
     // Include an old offloaded caller that still allocates the old amount.
     for (const initialRam of [required, oldRam]) {
       const current = runPurchase(testCase, {initialRam});

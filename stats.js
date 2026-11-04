@@ -1,7 +1,7 @@
 import {
   log, disableLogs, findPids, getConfiguration, getActiveSourceFiles,
   getStocksValue, formatNumberShort, formatNumber, formatMoney, formatRam, getFilePath,
-  formatDuration, getReset, getPlayerInfo, getServers, bbRun, hnRun, gangRun, corpRun, doSCP, getReserve
+  formatDuration, getReset, getPlayerInfo, getServers, bbRun, hnRun, gangRun, corpRun, getReserve
 } from './utils.js'
 
 const argsSchema = [

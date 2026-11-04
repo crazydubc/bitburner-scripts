@@ -1,4 +1,9 @@
-import { log, formatMoney, getPlayerInfo, sleeveRun } from "./utils.js";
+import { log, formatMoney, getPlayerInfo, sleeveRun, getReserve, purchase } from "./utils.js";
+
+async function buySleeveUpgrade(ns, method, args = []) {
+  try { return (await purchase(ns, 'sleeve', method, args)).result; }
+  catch (error) { log(ns, `Sleeve ${method} failed; will retry: ${String(error)}`, false, 'warning'); return false; }
+}
 
 async function sleeveCall(ns, method, ...args) {
   try { return await sleeveRun(ns, method, ...args); }
@@ -20,8 +25,8 @@ export async function main(ns) {
     player = await getPlayerInfo(ns); // Income and competing purchases change cash while we wait.
     if (!Number.isFinite(sleeveCost) || sleeveCost < 0) {
       log(ns, `Unable to read the next sleeve cost: ${String(sleeveCost)}. Will retry.`, true, "warning");
-    } else if (player.money >= sleeveCost) {
-      const result = await sleeveCall(ns, "purchaseSleeve");
+    } else if (player.money - await getReserve(ns) >= sleeveCost) {
+      const result = await buySleeveUpgrade(ns, "purchaseSleeve");
       if (purchaseSucceeded(result)) log(ns, `Purchased a sleeve for ${formatMoney(sleeveCost)}.`, true, "info");
       else log(ns, `Sleeve purchase failed: ${result?.message ?? String(result)}. Will retry.`, true, "warning");
     }
@@ -34,17 +39,19 @@ export async function main(ns) {
     let player = await getPlayerInfo(ns);
 
     const numSleeves = await sleeveCall(ns, "getNumSleeves");
+    let memoryComplete = Number.isInteger(numSleeves) && numSleeves > 0;
     for (let i = 0; i < numSleeves; i++) {
       const sleeve = await sleeveCall(ns, "getSleeve", i);
-      if (!Number.isFinite(sleeve?.memory)) continue;
+      if (!Number.isFinite(sleeve?.memory)) { memoryComplete = false; continue; }
 
       if (sleeve.memory < 100) {
+        memoryComplete = false;
 
-        const amt = await maxAffordableMemoryUpgrades(ns, i, sleeve.memory, player.money);
+        const amt = await maxAffordableMemoryUpgrades(ns, i, sleeve.memory, Math.max(0, player.money - await getReserve(ns)));
         if (amt > 0) {
           const cost = await sleeveCall(ns, "getMemoryUpgradeCost", i, amt);
           if (!Number.isFinite(cost) || cost < 0) continue;
-          const ok = await sleeveCall(ns, "upgradeMemory", i, amt);
+          const ok = await buySleeveUpgrade(ns, "upgradeMemory", [i, amt]);
 
           if (purchaseSucceeded(ok)) {
             // sleeve.memory doesn't auto-update; compute expected new value or re-fetch sleeve
@@ -59,6 +66,7 @@ export async function main(ns) {
       }
     }
 
+    if (memoryComplete) return; // Autopilot can recheck periodically; no permanent one-second polling loop.
     await ns.sleep(1000);
   }
 }

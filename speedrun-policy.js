@@ -1,5 +1,22 @@
 export const MAX_AUGMENTATION_WAIT_MS = 4 * 60 * 60 * 1000;
 
+/** Gang reputation/augmentations remain useful even when cash generation is weak. */
+export function shouldUseGangs(sourceFiles, currentNode, mode = 'auto', multipliers = {}) {
+  return mode !== 'off' && Number(sourceFiles?.[2]) > 0 && Number(currentNode) !== 8 &&
+    !(multipliers.GangSoftcap === 0 && multipliers.GangUniqueAugs === 0);
+}
+
+/** Conservative new-company policy; existing corporations are handled separately and always resume. */
+export function shouldFundNewCorporation(currentNode, mode = 'auto', multipliers = {}) {
+  if (mode === 'off' || Number(currentNode) === 8 || multipliers.CorporationSoftcap === 0) return false;
+  if (Number(currentNode) === 3 || mode === 'on') return true;
+  // BN13/15 severely penalize dividends and startup funding. Avoid speculative $150b starts.
+  // Corporate funds still support bribes; use on to deliberately pursue that route.
+  // Valuation affects funding offers, not operating profit, so it is not an independent cutoff.
+  const softcap = multipliers.CorporationSoftcap ?? ([13, 15].includes(Number(currentNode)) ? 0.4 : 1);
+  return Number.isFinite(softcap) && softcap >= 0.75;
+}
+
 /** A fresh affordable queue bounds cash-production investments before the reset safeguard. */
 export function getHacknetPayoffSeconds(configured, snapshot, reset, now = Date.now(), planned) {
   if (!(configured > 0) || !Number.isFinite(configured)) return 0;

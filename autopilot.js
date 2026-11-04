@@ -1,12 +1,13 @@
 import {
   log, getReset, getPlayerInfo, getBNMults, getErrorInfo, isScriptRunning, getRunningScriptNames, getStocksValue, destroyWD,
-  launchScriptHelper, crackHosts, getActiveSourceFiles, formatDuration, disableLogs, getConfiguration,
-  getOwnedAugs, getFacInvReqs, singRun, formatMoney, getServerMaxRam, getPortCrackers,
+  launchScriptHelper, crackHosts, getActiveSourceFiles, formatDuration, getConfiguration,
+  getOwnedAugs, singRun, formatMoney, getServerMaxRam, getPortCrackers,
   getServers, runScriptSomewhere, runScriptLocal, doSCP, gangRun, sleeveRun, stanekRun, bbRun, getReserve, setReserve
 } from './utils.js';
 
 import { recordBnStart, recordRunEvents, printBnRunSummary } from './logger.js'
 import { evaluateAugmentationReset } from './augmentation-reset-policy.js';
+import { shouldUseGangs, shouldFundNewCorporation } from './speedrun-policy.js';
 import { firstBn1, bn1Paused } from './bn1-policy.js';
 import {
   buildAscendArgs, getFreshDonationFavorProgress, NEUROFLUX
@@ -18,6 +19,8 @@ import {
 
 const argsSchema = [
   ['bn-route', 'current'], // current or unlocks-first; set autopilot.js.config.txt to retain the experiment across resets.
+  ['gang-mode', 'auto'], // auto/on/off: control gang launches and player/sleeve karma preparation.
+  ['corporation-mode', 'auto'], // auto/on/off: auto avoids heavily penalized new startups; on overrides that policy.
   ['disable-go', false], // Prevent Go auto-launch while comparing an external bot; stop an existing go.js yourself first.
   ['disable-bn1-auto', false], // Keep manual guidance instead of the first-BN1 UI controller.
   ['infiltration', true], // Bounded UI automation after casino, including Shadows of Anarchy progression.
@@ -27,9 +30,10 @@ const argsSchema = [
 export function autocomplete(data) { data.flags(argsSchema); return []; }
 
 /** Preserve player reserves and don't repeatedly launch a disabled corporation feature. */
-export function shouldStartCorporation(ns, sourceFiles, currentNode, money, reserve) {
-  if (!(3 in sourceFiles)) return false
+export function shouldStartCorporation(ns, sourceFiles, currentNode, money, reserve, {mode = 'auto', multipliers = {}} = {}) {
+  if (!(3 in sourceFiles) || mode === 'off') return false
   if (ns.corporation.hasCorporation()) return true
+  if (!shouldFundNewCorporation(currentNode, mode, multipliers)) return false
   const selfFund = Number(currentNode) !== 3
   const status = ns.corporation.canCreateCorporation(selfFund)
   if (status !== 'Success' && status !== true) return false
@@ -42,6 +46,12 @@ export async function main(ns) {
   ns.ramOverride(4.2) // Include the reply watchdog's API cost, with a small margin.
   const options = getConfiguration(ns, argsSchema);
   if (!options) return;
+  for (const flag of ['gang-mode', 'corporation-mode']) {
+    if (!['auto', 'on', 'off'].includes(options[flag])) {
+      ns.tprint(`ERROR: --${flag} must be auto, on or off.`);
+      return;
+    }
+  }
   if (!['current', 'unlocks-first'].includes(options['bn-route'])) {
     ns.tprint('ERROR: --bn-route must be current or unlocks-first.');
     return;
@@ -70,6 +80,11 @@ export async function main(ns) {
   const PERIOD = 30000; //timeframe in which we will attempt to rerun routine scripts. (30 sec)
   const MAX_AUGMENTATION_WAIT = 4 * 60 * 60 * 1000;
   let bitNodeMults = 5 in unlockedSFs ? await getBNMults(ns) : getHardCodedBNMultis(resetInfo.currentNode);
+  const useGangs = shouldUseGangs(unlockedSFs, resetInfo.currentNode, options['gang-mode'], bitNodeMults);
+  if (2 in unlockedSFs && !useGangs) log(ns, 'Gang automation and gang-karma preparation are disabled for this run.');
+  if (3 in unlockedSFs && !shouldFundNewCorporation(resetInfo.currentNode, options['corporation-mode'], bitNodeMults))
+    log(ns, options['corporation-mode'] === 'off' ? 'Corporation auto-launch is disabled.' :
+      'Skipping a new corporation because of this BitNode\'s penalties. Existing corporations can resume; --corporation-mode on overrides the startup policy.');
   let installedAugmentations = [];
   let playerInstalledAugCount;
   let nextRecommendedBn;
@@ -135,7 +150,7 @@ export async function main(ns) {
   function getFactionWorkerArgs() {
     if (shouldIntelFarm)
       return ["--fast-crimes-only", "--prioritize-invites", "--all-company-invites", "--intel-farm-preparation"];
-    const args = 2 in unlockedSFs && !playerInGang
+    const args = useGangs && !playerInGang
       ? ["--fast-crimes-only", "--get-invited-to-every-faction", "--crime-focus",
         "--training-stat-per-multi-threshold", 200, "--prioritize-invites"]
       : ["--fast-crimes-only", "--get-invited-to-every-faction"];
@@ -168,18 +183,19 @@ export async function main(ns) {
     },
     {
       name: "corporation.js",
-      shouldRun: () => shouldStartCorporation(ns, unlockedSFs, resetInfo.currentNode, getPlayerMoney(ns), currentMoneyReserve),
+      shouldRun: () => shouldStartCorporation(ns, unlockedSFs, resetInfo.currentNode, getPlayerMoney(ns), currentMoneyReserve,
+        {mode: options['corporation-mode'], multipliers: bitNodeMults}),
       args: () => []
     },
     {
       name: "gangs.js",
-      shouldRun: () => 2 in unlockedSFs, //might need to consider BNmults here
+      shouldRun: () => useGangs,
       args: () => []
     },
     {
       name: "sleeve.js",
-      shouldRun: () => 10 in unlockedSFs && reqRam(1000),
-      args: () => []
+      shouldRun: () => 10 in unlockedSFs && reqRam(128),
+      args: () => useGangs ? [] : ['--disable-gang-homicide-priority']
     },
     {
       name: "go.js",
@@ -213,7 +229,7 @@ export async function main(ns) {
     },
     {
       name: "purchaseSleeves.js",
-      shouldRun: () => resetInfo.currentNode == 10 && reqRam(4000),
+      shouldRun: () => resetInfo.currentNode == 10 && player.factions.includes('The Covenant') && reqRam(64),
       args: () => []
     },
     { name: "stats.js", shouldRun: () => reqRam(1000), args: () => [] }, // Adds stats not usually in the HUD (nice to have)

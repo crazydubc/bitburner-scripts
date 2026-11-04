@@ -1,0 +1,305 @@
+{
+  "baseline": "e3858a73b13a1a1c36ad69b748c57841780b7074",
+  "entrypoints": [
+    {
+      "file": "bn1-auto.js",
+      "before": 8,
+      "after": 8,
+      "withoutOverride": 14.7,
+      "baselineWithoutOverride": 14.7
+    },
+    {
+      "file": "bn1-casino.js",
+      "before": 6.5,
+      "after": 6.5,
+      "withoutOverride": 7.6499999999999995,
+      "baselineWithoutOverride": 7.6499999999999995
+    },
+    {
+      "file": "bin/bn1-stock.js",
+      "before": 9.65,
+      "after": 9.65
+    },
+    {
+      "file": "coinflip.js",
+      "before": 4.1000000000000005,
+      "after": 4.1000000000000005
+    },
+    {
+      "file": "autopilot.js",
+      "before": 4.2,
+      "after": 4.2,
+      "withoutOverride": 5.05,
+      "baselineWithoutOverride": 5.05
+    },
+    {
+      "file": "kernel.js",
+      "before": 5.849999999999999,
+      "after": 5.849999999999999
+    },
+    {
+      "file": "bn1-guide.js",
+      "before": 8,
+      "after": 8
+    },
+    {
+      "file": "scan.js",
+      "before": 4.050000000000001,
+      "after": 4.050000000000001
+    },
+    {
+      "file": "go.js",
+      "before": 3.5,
+      "after": 3.5
+    },
+    {
+      "file": "host-manager.js",
+      "before": 4.8,
+      "after": 4.8
+    },
+    {
+      "file": "stockmaster.js",
+      "before": 6.049999999999999,
+      "after": 6.049999999999999
+    },
+    {
+      "file": "stock-diagnostic.js",
+      "before": 13.35,
+      "after": 13.35
+    },
+    {
+      "file": "performance-diagnostic.js",
+      "before": 3.2500000000000004,
+      "after": 3.2500000000000004
+    },
+    {
+      "file": "stats.js",
+      "before": 3.75,
+      "after": 3.75
+    },
+    {
+      "file": "sleeve.js",
+      "before": 3.3500000000000005,
+      "after": 3.3500000000000005
+    },
+    {
+      "file": "purchaseSleeves.js",
+      "before": 3.1000000000000005,
+      "after": 3.1500000000000004
+    },
+    {
+      "file": "hacknet-upgrade-manager.js",
+      "before": 10.15,
+      "after": 10.15
+    },
+    {
+      "file": "spend-hashes.js",
+      "before": 7.249999999999998,
+      "after": 7.249999999999998
+    },
+    {
+      "file": "gangs.js",
+      "before": 3.3500000000000005,
+      "after": 3.3500000000000005
+    },
+    {
+      "file": "ascend.js",
+      "before": 8.65,
+      "after": 8.65
+    },
+    {
+      "file": "corporation.js",
+      "before": 5.5,
+      "after": 5.5,
+      "withoutOverride": 33.25,
+      "baselineWithoutOverride": 33.25
+    },
+    {
+      "file": "faction-manager.js",
+      "before": 24,
+      "after": 5.5,
+      "withoutOverride": 5.449999999999999,
+      "baselineWithoutOverride": 15.45
+    },
+    {
+      "file": "bladeburner.js",
+      "before": 3.3,
+      "after": 3.3
+    },
+    {
+      "file": "work-for-faction2.js",
+      "before": 8.5,
+      "after": 8.5
+    },
+    {
+      "file": "farm-intel.js",
+      "before": 3.5500000000000007,
+      "after": 3.5500000000000007
+    },
+    {
+      "file": "bin/intel-farm-state.js",
+      "before": 2.6500000000000004,
+      "after": 2.6500000000000004
+    },
+    {
+      "file": "bin/getHackP.js",
+      "before": 5.1,
+      "after": 5.1,
+      "withoutOverride": 10.1,
+      "baselineWithoutOverride": 10.1
+    },
+    {
+      "file": "bin/getGrowThreads.js",
+      "before": 4.1,
+      "after": 4.1,
+      "withoutOverride": 9.1,
+      "baselineWithoutOverride": 9.1
+    },
+    {
+      "file": "bin/serverRun.js",
+      "before": 4.899999999999999,
+      "after": 4.899999999999999
+    },
+    {
+      "file": "bin/getbnmultis.js",
+      "before": 2.6,
+      "after": 2.6,
+      "withoutOverride": 6.6,
+      "baselineWithoutOverride": 6.6
+    },
+    {
+      "file": "bin/singRun.js",
+      "before": 6.6,
+      "after": 6.6,
+      "withoutOverride": 1.6,
+      "baselineWithoutOverride": 1.6
+    },
+    {
+      "file": "bin/singReadMany.js",
+      "before": 6.6,
+      "after": 6.6,
+      "withoutOverride": 1.6,
+      "baselineWithoutOverride": 1.6
+    },
+    {
+      "file": "bin/reserve.js",
+      "before": 1.6500000000000001,
+      "after": 1.6500000000000001
+    },
+    {
+      "file": "bin/sync-script-config.js",
+      "before": 2.9000000000000004,
+      "after": 2.9000000000000004
+    },
+    {
+      "file": "bin/purchase.js",
+      "before": 2.75,
+      "after": 2.75
+    },
+    {
+      "file": "bin/terminate-rpc.js",
+      "before": 2.1,
+      "after": 2.1
+    },
+    {
+      "file": "bin/getBackdoorTime.js",
+      "before": 1.6500000000000001,
+      "after": 1.6500000000000001
+    },
+    {
+      "file": "bin/share.js",
+      "before": 4.1,
+      "after": 4.1
+    },
+    {
+      "file": "bin/share-context.js",
+      "before": 1.6,
+      "after": 1.6,
+      "withoutOverride": 10.1,
+      "baselineWithoutOverride": 10.1
+    },
+    {
+      "file": "bin/getStockValue.js",
+      "before": 9.65,
+      "after": 9.65
+    },
+    {
+      "file": "bin/getGoSnapshot.js",
+      "before": 61.6,
+      "after": 61.6
+    },
+    {
+      "file": "bin/go-context.js",
+      "before": 6.6,
+      "after": 6.6
+    },
+    {
+      "file": "bin/getHacknetPayoff.js",
+      "before": 2.6,
+      "after": 2.6
+    },
+    {
+      "file": "bin/run-log.js",
+      "before": 2.6,
+      "after": 2.6
+    },
+    {
+      "file": "bin/go-stats.js",
+      "before": 1.6,
+      "after": 1.6
+    },
+    {
+      "file": "bin/bribe-faction.js",
+      "before": 42.6,
+      "after": 42.6
+    },
+    {
+      "file": "infiltrate.js",
+      "before": 5.749999999999999,
+      "after": 5.749999999999999
+    },
+    {
+      "file": "bin/infiltration-control.js",
+      "before": 1.7000000000000002,
+      "after": 1.7000000000000002
+    },
+    {
+      "file": "bin/infiltration-locations.js",
+      "before": 16.6,
+      "after": 16.6
+    },
+    {
+      "file": "Tasks/backdoor-all-servers.js",
+      "before": 5.449999999999999,
+      "after": 5.449999999999999
+    },
+    {
+      "file": "Tasks/backdoor-all-servers.js.backdoor-one.js",
+      "before": 7.6,
+      "after": 7.6
+    },
+    {
+      "file": "Tasks/contractor.js.solver.js",
+      "before": 13.85,
+      "after": 13.85
+    }
+  ],
+  "partial_sf4": [
+    {
+      "level": 1,
+      "file": "faction-manager.js",
+      "before": 24,
+      "after": 5.5,
+      "withoutOverride": 5.449999999999999,
+      "baselineWithoutOverride": 165.45
+    },
+    {
+      "level": 2,
+      "file": "faction-manager.js",
+      "before": 24,
+      "after": 5.5,
+      "withoutOverride": 5.449999999999999,
+      "baselineWithoutOverride": 45.45
+    }
+  ]
+}

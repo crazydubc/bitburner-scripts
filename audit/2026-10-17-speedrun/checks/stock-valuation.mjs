@@ -93,7 +93,7 @@ function factionFixture() {
   const definitions=section(manager,'// PLAYER CONFIGURATION CONSTANTS','export function autocomplete')+
     section(manager,'export async function main(ns)','async function getGangInfo(ns)').replace('export ','')+
     section(manager,'async function purchaseDesiredAugs(ns)','function displayJoinedFactionSummary(ns)');
-  const bindings={getStocksValue,getIntelFarmReadiness,FACTIONS_WITHOUT_DONATIONS:new Set(),SOA_AUGS:[],INFILTRATION_TARGET:'target',
+  const bindings={purchase:async(ns,namespace,method,args)=>({result:ns[namespace][method](...args)}),getStocksValue,getIntelFarmReadiness,FACTIONS_WITHOUT_DONATIONS:new Set(),SOA_AUGS:[],INFILTRATION_TARGET:'target',
     getConfiguration:(_,schema)=>({...Object.fromEntries(structuredClone(schema)),...live.flags}),
     findPids:async()=>[42],getPlayerInfo:async()=>({money:100e6,factions:['CyberSec'],skills:{hacking:200}}),
     getReset:async()=>({currentNode:4,lastAugReset:1000,lastNodeReset:1000}),getActiveSourceFiles:async()=>({4:1}),

@@ -13,7 +13,7 @@
 import {
   getConfiguration, log, getErrorInfo, getActiveSourceFiles, whichServerIsRunning,
   getBoard, getGoSnapshot, getReset, recordGoResult, getGoResults, getGoContext, goMove, goCheatChance, play2Moves,
-  destroyND, disableLogs
+  destroyND
 } from './utils.js'
 import { goCohort, selectGoBoard, GO_GOALS, GO_OPPONENTS as POLICY_OPPONENTS, selectAutoGoOpponent, hasHiddenGoOpponent } from './go-policy.js';
 export const GO_OPPONENTS = POLICY_OPPONENTS;
@@ -51,7 +51,6 @@ export function autocomplete(data, args) {
  * Note that to protect against "shared global memory", the entire script is wrapped in the body of the main function.
  * @param {NS} ns */
 export async function main(ns) {
-  //await disableLogs(ns, ["ALL"]);
   let cheats = false;
   let cheatChanceThreshold = 1.0;
   let logtime = false;

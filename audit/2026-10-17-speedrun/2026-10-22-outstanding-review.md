@@ -1,5 +1,7 @@
 # Outstanding review — October 22, 2026
 
+**November 4 update:** the two purchase findings below are now fixed and covered by the [full audit](../2026-11-04-full-audit/README.md). The original observations are retained here as historical evidence.
+
 Reviewed the combined testing branch at `6153dd3`, then reproduced and corrected the newly reported sharing behavior. PR #34 was open and mergeable, with no open GitHub issues or inline review threads at review time. The original 18 findings have fixes; the following are additional findings, not a claim of an exhaustive new audit.
 
 | Finding | Status | Effect |

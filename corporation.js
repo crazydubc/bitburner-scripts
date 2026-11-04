@@ -1228,23 +1228,6 @@ async function getLatestProductVersion(ns, division) {
 }
 
 /**
- * Function to get earliest product version
- *
- * @param {NS} ns
- * @param {string} division
- * @returns {number}
- */
-async function getEarliestVersion(ns, division) {
-  const products = (await corpRun(ns, 'getDivision', division)).products
-  let earliestVersion = Number.MAX_SAFE_INTEGER;
-  for (let product of products) {
-    let version = parseVersion(product);
-    if (version < earliestVersion) earliestVersion = version;
-  }
-  return earliestVersion;
-}
-
-/**
  * Function to parse product version from name
  *
  * @param {string} name

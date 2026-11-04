@@ -112,11 +112,17 @@ for (const buyCost of [NaN, Infinity, -1]) assert.equal((await hostPass({buyCost
 assert.equal((await hostPass({state: {reserve: NaN}})).attempts, 0);
 
 // B06: run the real sleeve buyer through waiting, a cash increase, and the memory phase.
-async function sleeveBuyer({result = {success: true}, alreadyBought = false, memoryResult = {success: true}} = {}) {
+async function sleeveBuyer({result = {success: true}, alreadyBought = false, memoryResult = {success: true}, reserve = 0, memory = 99} = {}) {
   let cash = 50, purchased = alreadyBought, waits = 0, playerReads = 0, attempts = 0, memoryAttempts = 0;
   const messages = [];
   const explicitSuccess = value => value === true || value?.success === true;
-  const ns = rpcMock((file, args) => {
+  function respond(file, args) {
+    if (file === 'bin/purchase.js') {
+      const [namespace, method, params, policy] = args;
+      const methods = ['getSleeveCost', 'purchaseSleeve', 'getMemoryUpgradeCost', 'upgradeMemory'];
+      const sleeve = Object.fromEntries(methods.map(fn => [fn, (...values) => respond('bin/sleeveRun.js', [fn, ...values])]));
+      return executePurchase({...ns, sleeve}, namespace, method, JSON.parse(params), JSON.parse(policy));
+    }
     if (file === 'bin/getPlayer.js') { playerReads++; return {money: cash, factions: ['The Covenant']}; }
     assert.equal(file, 'bin/sleeveRun.js');
     const [method] = args;
@@ -127,18 +133,21 @@ async function sleeveBuyer({result = {success: true}, alreadyBought = false, mem
       return result;
     }
     if (method === 'getNumSleeves') return 1;
-    if (method === 'getSleeve') return {memory: 99};
+    if (method === 'getSleeve') return {memory};
     if (method === 'getMemoryUpgradeCost') return 10;
     if (method === 'upgradeMemory') { memoryAttempts++; return memoryResult; }
     throw Error(`Unexpected sleeve RPC: ${method}`);
-  }, {
+  }
+  const ns = rpcMock(respond, {
+    getHostname: () => 'home', read: () => String(reserve), getServerMoneyAvailable: () => cash,
     enums: {FactionName: {TheCovenant: 'The Covenant'}}, print: line => messages.push(line),
     sleep: async delay => {
       if (delay === 1000 || ++waits === 3) throw STOP;
       assert.equal(delay, 5000); cash = 150;
     },
   });
-  await assert.rejects(purchaseSleeves(ns), error => error === STOP);
+  if (alreadyBought && memory >= 100) await purchaseSleeves(ns);
+  else await assert.rejects(purchaseSleeves(ns), error => error === STOP);
   return {attempts, memoryAttempts, playerReads, messages};
 }
 for (const result of [true, {success: true}]) {
@@ -159,6 +168,10 @@ for (const memoryResult of [{success: false}, 'ERROR: memory unavailable']) {
   assert(!buyer.messages.some(line => line.includes('Sleeve0 +1')));
   assert(buyer.messages.some(line => line.includes('failed to upgrade memory')));
 }
+
+assert.equal((await sleeveBuyer({reserve: 200})).attempts, 0, 'Reserve must protect sleeve startup cash');
+assert.equal((await sleeveBuyer({alreadyBought: true, reserve: 50})).memoryAttempts, 0, 'Memory search must subtract reserve');
+assert.equal((await sleeveBuyer({alreadyBought: true, memory: 100})).memoryAttempts, 0, 'Completed permanent upgrades exit without polling');
 
 // B10: use the real batch function and its cached inventory; reconcile partial failures.
 async function sleeveBatch(augs, settings = {}) {

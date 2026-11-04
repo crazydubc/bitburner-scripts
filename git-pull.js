@@ -4,10 +4,11 @@ const argsSchema = [
     ['repository', 'bitburner-scripts'],
     ['branch', 'main'],
     ['download', []], // By default, all supported files in the repository will be downloaded. Override with just a subset of files here
-    ['new-file', ['performance-diagnostic.js', 'bn1-auto.js', 'bn1-casino.js', 'bn1-ui.js', 'bn1-policy.js', 'bin/bn1-stock.js', 'terminal-ui.js', 'donation-favor.js', 'faction-route-planner.js', 'farm-intel.js', 'bn1-guide.js', 'bin/reserve.js', 'bin/sync-script-config.js', 'progression.js', 'bin/intel-farm-state.js', 'hacking-formulas.js', 'purchase-guard.js', 'bin/purchase.js', 'bin/terminate-rpc.js', 'bin/getBackdoorTime.js', 'Tasks/backdoor-all-servers.js.backdoor-one.js', 'speedrun-policy.js', 'augmentation-reset-policy.js', 'go-policy.js', 'share-controller.js', 'bin/share-context.js', 'infiltration-policy.js', 'infiltration-ui.js', 'infiltration-soa.js', 'bin/infiltration-control.js', 'bin/infiltration-locations.js', 'bin/getStockValue.js', 'bin/getGoSnapshot.js', 'bin/go-context.js', 'bin/getHacknetPayoff.js', 'bin/run-log.js', 'bin/go-stats.js', 'bin/bribe-faction.js', 'bin/singReadMany.js']], // Include new entry points/dependencies when the repository listing is unavailable.
+    ['new-file', [ 'bn1-auto.js', 'bn1-casino.js', 'bn1-ui.js', 'bn1-policy.js', 'bin/bn1-stock.js', 'terminal-ui.js', 'donation-favor.js', 'faction-route-planner.js', 'farm-intel.js', 'bn1-guide.js', 'bin/reserve.js', 'bin/sync-script-config.js', 'progression.js', 'bin/intel-farm-state.js', 'hacking-formulas.js', 'purchase-guard.js', 'bin/purchase.js', 'bin/terminate-rpc.js', 'bin/getBackdoorTime.js', 'Tasks/backdoor-all-servers.js.backdoor-one.js', 'speedrun-policy.js', 'augmentation-reset-policy.js', 'go-policy.js', 'share-controller.js', 'bin/share-context.js', 'infiltration-policy.js', 'infiltration-ui.js', 'infiltration-soa.js', 'bin/infiltration-control.js', 'bin/infiltration-locations.js', 'bin/getStockValue.js', 'bin/getGoSnapshot.js', 'bin/go-context.js', 'bin/getHacknetPayoff.js', 'bin/run-log.js', 'bin/go-stats.js', 'bin/bribe-faction.js', 'bin/singReadMany.js']], // Include new entry points/dependencies when the repository listing is unavailable.
     ['subfolder', ''], // Can be set to download to a sub-folder that is not part of the remote repository structure
     ['extension', ['.js', '.ts', '.ns', '.txt', '.script']], // Files to download by extension
-    ['omit-folder', ['Temp/']], // Folders to omit when getting a list of files to update (TODO: This may be obsolete now that we get a list of files from github itself.)
+    ['omit-folder', ['Temp/', 'audit/']], // Runtime downloads exclude temporary data and repository-only regression fixtures.
+    ['omit-file', ['dev.js', 'hacks.js', 'performance-diagnostic.js', 'stock-diagnostic.js']], // Diagnostics remain available via --download.
 ];
 
 export function autocomplete(data, args) {
@@ -18,9 +19,10 @@ export function autocomplete(data, args) {
     return [];
 }
 
-export function filterDownloadableFiles(files, extensions, omittedFolders) {
-    return files.filter(name => extensions.some(extension => name.endsWith(extension)) &&
-        !omittedFolders.some(folder => name.startsWith(folder)));
+export function filterDownloadableFiles(files, extensions, omittedFolders, omittedFiles = []) {
+    return files.map(name => name.replace(/^\/+/, '')).filter(name => extensions.some(extension => name.endsWith(extension)) &&
+        !omittedFolders.some(folder => name.startsWith(trimSlash(folder) + '/')) &&
+        !omittedFiles.some(file => name === file.replace(/^\/+/, '')));
 }
 
 /** @param {NS} ns
@@ -35,8 +37,11 @@ export async function main(ns) {
     options.subfolder = options.subfolder ? trimSlash(options.subfolder) : // Remove leading slash from any user-specified folder
         ns.getScriptName().substring(0, ns.getScriptName().lastIndexOf('/')); // Default to the current folder
     const baseUrl = `raw.githubusercontent.com/${options.github}/${options.repository}/${options.branch}/`;
-    const filesToDownload = [...new Set(options['new-file'].concat(
-        options.download.length > 0 ? options.download : await repositoryListing(ns)))];
+    const discovered = options.download.length > 0 ? [] : await repositoryListing(ns);
+    const filesToDownload = [...new Set([
+        ...filterDownloadableFiles(options['new-file'].concat(discovered), options.extension, options['omit-folder'], options['omit-file']),
+        ...options.download.map(name => name.replace(/^\/+/, '')), // Explicit requests can fetch an optional diagnostic.
+    ])];
     for (const localFilePath of filesToDownload) {
         let fullLocalFilePath = pathJoin(options.subfolder, localFilePath);
         const remoteFilePath = `https://` + pathJoin(baseUrl, localFilePath);
@@ -93,19 +98,20 @@ async function repositoryListing(ns, folder = '') {
         // Expect an array of objects: [{path:"", type:"[file|dir]" },{...},...]
         response = await response.json(); // Deserialized
         // Sadly, we must recursively retrieve folders, which eats into our 60 free API requests per day.
-        const folders = response.filter(f => f.type == "dir").map(f => f.path);
-        let files = response.filter(f => f.type == "file").map(f => f.path)
-            .filter(f => options.extension.some(ext => f.endsWith(ext)));
+        const folders = response.filter(f => f.type == "dir").map(f => f.path)
+            .filter(path => !options['omit-folder'].some(folder =>
+                path === trimSlash(folder) || path.startsWith(trimSlash(folder) + '/')));
+        let files = filterDownloadableFiles(response.filter(f => f.type == "file").map(f => f.path),
+            options.extension, options['omit-folder'], options['omit-file']);
         ns.print(`The following files exist at ${listUrl}\n${files.join(", ")}`);
         for (const folder of folders)
-            files = files.concat((await repositoryListing(ns, folder))
-                .map(f => `/${f}`)); // Game requires folders to have a leading slash
+            files = files.concat(await repositoryListing(ns, folder));
         return files;
     } catch (error) {
         if (folder !== '') throw error; // Propagate the error if this was a recursive call.
         ns.tprint(`WARNING: Failed to get a repository listing (GitHub API request limit of 60 reached?): ${listUrl}` +
             `\nResponse Contents (if available): ${JSON.stringify(response ?? '(N/A)')}\nError: ${String(error)}`);
         // Fallback, assume the user already has a copy of all files in the repo, and use it as a directory listing
-        return filterDownloadableFiles(ns.ls('home'), options.extension, options['omit-folder']);
+        return filterDownloadableFiles(ns.ls('home'), options.extension, options['omit-folder'], options['omit-file']);
     }
 }
