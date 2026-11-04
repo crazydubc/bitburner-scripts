@@ -44,6 +44,7 @@ function sleeveFixture({files = {10: 1}, flags = {}, count = 1, node = 10, skill
       calls.push([method, ...args]);
       if (method === 'getNumSleeves') return sleeves.length;
       if (method === 'getSleeve') return sleeves[args[0]];
+      if (method === 'getTask') return null;
       if (method === 'getSleevePurchasableAugs') return [];
       if (method.startsWith('setTo')) {assignments.push([method, ...args]); return true;}
       assert.fail(method);

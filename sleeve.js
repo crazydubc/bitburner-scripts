@@ -55,7 +55,8 @@ const waitForContractCooldown = 60 * 1000; // 1 minute - Cooldown when contract 
 
 let cachedCrimeStats, workByFaction; // Cache of crime statistics and which factions support which work
 let task, lastStatusUpdateTime, lastPurchaseTime, lastPurchaseStatusUpdate, availableAugs, cacheExpiry,
-  shockChance, lastRerollTime, lastTaskValidationTime, bladeburnerCooldown, lastSleeveHp, lastSleeveShock; // State by sleeve
+  shockChance, lastRerollTime, bladeburnerCooldown, lastSleeveHp, lastSleeveShock; // State by sleeve
+let observedTasks, taskSnapshotTime;
 let numSleeves, ownedSourceFiles, playerInGang, playerInBladeburner, bladeburnerCityChaos, bladeburnerContractChances, bladeburnerContractCounts;
 let stagedShockRecoveryState, sleeveRepAssignments;
 let factionPlanRefreshedAt, factionPlanStaticKey, factionPlanPreference, factionPlanRoutes;
@@ -75,6 +76,37 @@ export function isSleeveAssignmentSuccessful(value) {
 /** getTask() returns either a task object or null. Wrapper error strings are not active tasks. */
 export function hasActiveSleeveTask(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Compare task identity, ignoring progress counters and completion promises. */
+function expectedSleeveTask(command, args) {
+  const [, target, work] = args;
+  switch (command) {
+    case 'setToFactionWork': return {type: 'FACTION', factionName: target, factionWorkType: work};
+    case 'setToCompanyWork': return {type: 'COMPANY', companyName: target};
+    case 'setToShockRecovery': return {type: 'RECOVERY'};
+    case 'setToSynchronize': return {type: 'SYNCHRO'};
+    case 'setToCommitCrime': return {type: 'CRIME', crimeType: target};
+    case 'setToGymWorkout':
+    case 'setToUniversityCourse': return {type: 'CLASS', location: target, classType: work};
+    case 'setToBladeburnerAction':
+      if (target === 'Infiltrate Synthoids') return {type: 'INFILTRATE'};
+      if (target === 'Support main sleeve') return {type: 'SUPPORT'};
+      return {type: 'BLADEBURNER', actionType: target === 'Take on contracts' ? 'Contracts' : 'General',
+        actionName: target === 'Take on contracts' ? work : target};
+    default: return null;
+  }
+}
+
+function matchesSleeveTask(actual, expected) {
+  return hasActiveSleeveTask(actual) && expected !== null &&
+    Object.entries(expected).every(([key, value]) => actual[key] === value);
+}
+
+function sleeveRepTaskKey(current) {
+  if (current?.type === 'FACTION') return `FACTION:${current.factionName ?? current.faction}`;
+  if (current?.type === 'COMPANY') return `COMPANY:${current.companyName}`;
+  return null;
 }
 
 export function shouldRerollShockRecovery(now, lastReroll = 0, intervalMs = rerollTime) {
@@ -121,15 +153,16 @@ export function assignSleeveRepTargets(
   factionRoutes = [],
   workTypesByFaction = {},
   disabled = false,
+  currentTasks = [],
 ) {
   const assignments = {};
   if (disabled) return assignments;
   const sleeves = asArray(workerSleeves);
-  let nextSleeve = 0;
+  const targets = [];
   const usedFactions = new Set();
 
-  if (playerWorkInfo?.type === 'COMPANY' && typeof playerWorkInfo.companyName === 'string' && sleeves[nextSleeve] != null) {
-    assignments[sleeves[nextSleeve++]] = {type: 'COMPANY', companyName: playerWorkInfo.companyName};
+  if (playerWorkInfo?.type === 'COMPANY' && typeof playerWorkInfo.companyName === 'string' && sleeves.length) {
+    targets.push({type: 'COMPANY', companyName: playerWorkInfo.companyName});
   }
 
   const routes = asArray(factionRoutes).slice();
@@ -141,18 +174,32 @@ export function assignSleeveRepTargets(
   }
 
   for (const route of routes) {
-    if (sleeves[nextSleeve] == null) break;
+    if (targets.length >= sleeves.length) break;
     const faction = typeof route?.faction === 'string' ? route.faction : '';
     const workTypes = getFactionWorkOptions(faction, workTypesByFaction);
     if (!faction || usedFactions.has(faction) || workTypes.length === 0) continue;
-    assignments[sleeves[nextSleeve++]] = {
+    targets.push({
       type: 'FACTION',
       faction,
       targetRep: route.targetRep,
       unlockedAugs: asArray(route.unlockedAugs),
       workTypes,
-    };
+    });
     usedFactions.add(faction);
+  }
+  // Reserve all useful incumbents before allocating new targets, so route reordering does not swap workers.
+  // Keep the existing worker priority (in particular, spare Bladeburner contract specialists where possible).
+  const slots = sleeves.slice(0, targets.length);
+  const pending = [];
+  for (const target of targets) {
+    const incumbent = slots.find(index => !Object.hasOwn(assignments, index) &&
+      sleeveRepTaskKey(currentTasks[index]) === sleeveRepTaskKey(target));
+    if (incumbent === undefined) pending.push(target);
+    else assignments[incumbent] = target;
+  }
+  for (const target of pending) {
+    const index = slots.find(index => !Object.hasOwn(assignments, index));
+    assignments[index] = target;
   }
   return assignments;
 }
@@ -231,8 +278,9 @@ export async function main(ns) {
   disableLogs(ns, ['getServerMoneyAvailable']);
   // Ensure the global state is reset (e.g. after entering a new bitnode)
   task = [], lastStatusUpdateTime = [], lastPurchaseTime = [], lastPurchaseStatusUpdate = [], availableAugs = [],
-    cacheExpiry = [], shockChance = [], lastRerollTime = [], lastTaskValidationTime = [],
+    cacheExpiry = [], shockChance = [], lastRerollTime = [],
     bladeburnerCooldown = [], lastSleeveHp = [], lastSleeveShock = [];
+  observedTasks = [], taskSnapshotTime = 0;
   workByFaction = {}, cachedCrimeStats = {};
   playerInGang = playerInBladeburner = false;
   stagedShockRecoveryState = {active: false, mode: 'none', anchor: -1};
@@ -484,8 +532,21 @@ async function mainLoop(ns) {
 
   // Update all sleeve information and loop over all sleeves to do some individual checks and task assignments
   let sleeveInfo = await getAllSleeves(ns, numSleeves);
+  // Killing a script does not stop sleeve work. Reconcile the whole fleet before planning assignments.
+  if (observedTasks.length !== numSleeves || Date.now() - taskSnapshotTime >= taskValidationInterval) {
+    const snapshot = [];
+    for (let i = 0; i < numSleeves; i++) {
+      const actual = await sleeveRun(ns, 'getTask', i);
+      if (actual !== null && (!hasActiveSleeveTask(actual) || typeof actual.type !== 'string'))
+        throw new Error(`Cannot read sleeve ${i} task: ${String(actual)}`);
+      snapshot.push(actual);
+    }
+    observedTasks = snapshot;
+    taskSnapshotTime = Date.now();
+  }
   stagedShockRecoveryState = getStagedShockRecoveryPlan(
-    sleeveInfo, task, stagedShockRecoveryState,
+    sleeveInfo, observedTasks.map(actual => actual?.type === 'RECOVERY' ? 'recover from shock' : null),
+    stagedShockRecoveryState,
   );
 
   const repWorkerOrder = getSleeveRepWorkerOrder(
@@ -500,8 +561,10 @@ async function mainLoop(ns) {
     factionRoutes,
     factionWorkTypes,
     !(4 in ownedSourceFiles) || options['disable-follow-player'] || gangKarmaPriority || !!options.crime,
+    observedTasks,
   );
 
+  const plannedTasks = [];
   for (let i = 0; i < numSleeves; i++) {
     let sleeve = sleeveInfo[i]; // For convenience, merge all sleeve stats/info into one object
     // Manage sleeve augmentations (if available)
@@ -509,30 +572,34 @@ async function mainLoop(ns) {
       budget -= await manageSleeveAugs(ns, i, budget);
 
     // Decide what we think the sleeve should be doing for the next little while
-    let [designatedTask, command, args, statusUpdate] =
-      await pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrain, gangKarmaPriority,
-        stagedShockRecoveryState, sleeveRepAssignments[i]);
+    plannedTasks.push(await pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrain, gangKarmaPriority,
+      stagedShockRecoveryState, sleeveRepAssignments[i]));
 
     // After picking sleeve tasks, take a note of the sleeve's health at the end of the prior loop so we can detect failures
     [lastSleeveHp[i], lastSleeveShock[i]] = [sleeve.hp.current, sleeve.shock];
+  }
 
-    // Cached task strings can outlive the actual Sleeve API work (manual changes, failed helpers, or resets).
-    // Reconcile periodically so an apparently assigned sleeve cannot remain idle indefinitely.
+  // Release changed faction/company assignments before claiming any targets, including swaps and recovery handoffs.
+  for (let i = 0; i < numSleeves; i++) {
+    const [, command, args] = plannedTasks[i];
+    const held = sleeveRepTaskKey(observedTasks[i]);
+    if (!held || held === sleeveRepTaskKey(expectedSleeveTask(command, args))) continue;
+    taskSnapshotTime = 0; // Re-read the fleet on the next tick, even if a helper fails during the handoff.
+    await sleeveRun(ns, 'setToIdle', i); // This API returns void, not a success boolean.
+    if (await sleeveRun(ns, 'getTask', i) !== null)
+      throw new Error(`Sleeve ${i} did not release its previous assignment; retrying after task refresh`);
+    observedTasks[i] = null;
+    delete task[i];
+  }
+
+  for (let i = 0; i < numSleeves; i++) {
+    const [designatedTask, command, args, statusUpdate] = plannedTasks[i];
+    // Adopt matching live work after a restart; repair idle or mismatched work after a refresh.
+    if (matchesSleeveTask(observedTasks[i], expectedSleeveTask(command, args))) task[i] = designatedTask;
+    else delete task[i];
     let assignSuccess;
-    if (task[i] === designatedTask &&
-      Date.now() - (lastTaskValidationTime[i] || 0) >= taskValidationInterval) {
-      const actualTask = await sleeveRun(ns, 'getTask', i);
-      lastTaskValidationTime[i] = Date.now();
-      if (!hasActiveSleeveTask(actualTask)) {
-        const detail = isSleeveApiError(actualTask) ? actualTask : 'Sleeve API reports no active task';
-        log(ns, `WARNING: Sleeve ${i} lost cached task '${designatedTask}' (${detail}); reassigning.`,
-false, 'warning');
-        delete task[i];
-      }
-    }
     if (task[i] !== designatedTask) {
       assignSuccess = await setSleeveTask(ns, i, designatedTask, command, args);
-      if (assignSuccess === true) lastTaskValidationTime[i] = Date.now();
     }
 
     // For certain tasks, log a periodic status update.
@@ -772,6 +839,7 @@ async function setSleeveTask(ns, i, designatedTask, command, args) {
     // RAM-dodge helpers return serialized ERROR strings. Treat only the API's literal boolean true as success.
     if (isSleeveAssignmentSuccessful(result)) {
       task[i] = designatedTask;
+      observedTasks[i] = expectedSleeveTask(command, args);
       if (designatedTask.startsWith('work for faction')) {
         const faction = args[1];
         factionWorkFailureCount[faction] = 0;
@@ -786,8 +854,14 @@ async function setSleeveTask(ns, i, designatedTask, command, args) {
   }
 
   delete task[i];
-  lastTaskValidationTime[i] = 0;
+  taskSnapshotTime = 0;
   lastRerollTime[i] = 0;
+  // A concurrent/manual assignment is a fleet conflict, not an unsupported faction work type.
+  if ((command === 'setToFactionWork' || command === 'setToCompanyWork') &&
+      /because Sleeve \d+ is already working for them/.test(failureDetail)) {
+    log(ns, `INFO: Cannot ${strAction} while another sleeve owns the target; refreshing assignments next tick.`);
+    return false;
+  }
   const suffix = failureDetail ? ` (${failureDetail})` : '';
   // If working for a faction, it's possible the current work isn't supported, so try the next one.
   if (designatedTask.startsWith('work for faction')) {
