@@ -28,7 +28,7 @@ const argsSchema = [
   ['board-size', 'profile'], // Fixed sizes per opponent from measured favor/time results, auto learns, or force 5/7/9/13.
   ['board-exploration', true], // With --board-size auto: bounded trials only outside winning streaks and favor routes.
   ['opponent', 'auto'], // Follow the current goal, or choose a faction name, "hidden", or "random". Never abandons a board.
-  ['goal', 'auto'], // With --opponent auto: infer work, or use crime/combat/rep/money/hacking (also works before SF4).
+  ['goal', 'auto'], // Infer work and BN6/BN7 combat progress, or choose crime/combat/rep/money/hacking explicitly.
   ['hidden-opponent', true], // Allow the hidden 19x19 opponent in auto/random selection after installing The Red Pill.
 ];
 

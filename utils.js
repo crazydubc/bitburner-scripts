@@ -88,6 +88,17 @@ export async function getGoContext(ns, sourceFiles = {}) {
       }
     } catch { /* Keep the cheap snapshot if the optional work/chance read fails. */ }
   }
+  // Bladeburner uses a separate action slot; Singularity getCurrentWork() can report idle while it is active.
+  if ((sourceFiles[6] ?? 0) > 0 || (sourceFiles[7] ?? 0) > 0) {
+    const fits = fn => free >= Math.max(5.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`bladeburner.${fn}`));
+    try {
+      if (fits('inBladeburner') && await bbRun(ns, 'inBladeburner') === true && fits('getCurrentAction')) {
+        const action = await bbRun(ns, 'getCurrentAction');
+        if (action === null || (action && typeof action === 'object' && !Array.isArray(action) &&
+            typeof action.type === 'string' && typeof action.name === 'string')) context.bladeburnerAction = action;
+      }
+    } catch { /* Keep ordinary goals and the BN6/BN7 combat default if the optional read fails. */ }
+  }
   return context;
 }
 export async function getControlledENodes(ns) { return await runScript(ns, "bin/getControlledEmptyNodes.js", false, []) }

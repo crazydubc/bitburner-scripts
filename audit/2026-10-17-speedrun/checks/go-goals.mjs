@@ -5,6 +5,7 @@ import {selectAutoGoOpponent, selectGoFavorTarget, freshGoWorkTarget, sellsGoHas
 import {getGoContext, favorToRep} from '../../../utils.js';
 import {main as contextMain} from '../../../bin/go-context.js';
 import {main as singularityMain} from '../../../bin/singRun.js';
+import {main as bladeburnerMain} from '../../../bin/bbRun.js';
 import {loadGoBot} from './go-bot-loader.mjs';
 
 const now = Date.now(), reset = {currentNode:4,lastAugReset:now-600_000,lastNodeReset:now-1e6,ownedSF:new Map()};
@@ -44,6 +45,25 @@ for(const changed of [{updatedAt:now-90_001},{updatedAt:now+1},{lastAugReset:0},
 for(const changed of [{updatedAt:now-30_001},{updatedAt:now+1},{lastAugReset:0}])
   assert.equal(select({work:repWork,...changed}).opponent,'The Black Hand');
 assert.equal(selectAutoGoOpponent({reset,now,context:null}).opponent,'The Black Hand');
+// BN6/BN7's default completion route is combat, even when Singularity reports idle or helpers cannot fit.
+for (const currentNode of [6,7]) {
+  const bladeReset={...reset,currentNode};
+  for (const data of [{}, {work:null,workKnown:true}, {work:repWork},
+    {money:0,hacknetCashRate:1e9}, {target}, {updatedAt:now-30_001}])
+    assert.equal(select(data,{reset:bladeReset}).opponent,'Tetrads');
+  assert.equal(selectAutoGoOpponent({reset:bladeReset,now,context:null}).opponent,'Tetrads');
+  assert.equal(select({}, {reset:{...bladeReset,ownedAugs:new Map([['The Red Pill',1]])}}).opponent,'Tetrads');
+  assert.equal(select({work:{type:'CRIME'},crimeChance:0.4},{reset:bladeReset}).opponent,'Slum Snakes');
+  for (const goal of ['hacking','money','rep','combat']) assert.equal(select({}, {reset:bladeReset,goal}).goal,goal);
+}
+const bladeAction={type:'Operations',name:'Assassination'};
+for (const type of ['General','Contracts','Operations','Black Operations'])
+  assert.equal(select({work:null,workKnown:true,bladeburnerAction:{...bladeAction,type}}).opponent,'Tetrads');
+assert.equal(select({work:repWork,bladeburnerAction:bladeAction}).opponent,'Daedalus','Other BNs retain concrete ordinary-work priorities');
+for (const bladeburnerAction of [null,'ERROR: unavailable',{}, {type:'Idle',name:''}, {...bladeAction,name:''}])
+  assert.equal(select({bladeburnerAction}).opponent,'The Black Hand');
+assert.equal(select({bladeburnerAction:bladeAction,updatedAt:now-30_001}).opponent,'The Black Hand');
+assert.equal(select({bladeburnerAction:bladeAction},{reset:{...reset,currentNode:8}}).opponent,'Illuminati');
 const unlocked={...reset,ownedAugs:new Map([['The Red Pill',1]])};
 assert.equal(select({}, {reset:unlocked}).opponent,'????????????');
 assert.notEqual(select({}, {reset:unlocked,includeHidden:false}).opponent,'????????????');
@@ -59,6 +79,9 @@ const picked=selectGoFavorTarget(favorArgs);
 assert.equal(picked.opponent,faction);assert.equal(picked.rewards,1);assert(picked.eta<60_000);
 assert(favorToRep(150)-favorToRep(149.95)<500);
 assert.equal(selectAutoGoOpponent(favorArgs).goal,'favor');
+assert.equal(selectAutoGoOpponent({...favorArgs,reset:{...reset,currentNode:7},
+  context:{...funded,favorSnapshot:{...favorSnapshot,current_node:7}}}).goal,'favor',
+  'A funded, measured near-term donation unlock remains ahead of the combat default');
 assert.equal(selectAutoGoOpponent({...favorArgs,goal:'crime'}).goal,'crime','Manual goals remain deliberate overrides');
 const even=selectGoFavorTarget({...favorArgs,liveStats:{[faction]:{rep:1000,winStreak:2}}});
 assert(even.eta>picked.eta,'An odd positive streak is one win closer to the reward');
@@ -137,16 +160,19 @@ assert.equal((await readContext({target:{...target,pid:25},alive:false})).target
 assert.match(await readContext({nodes:hashNodes,fail:true}),/^ERROR:/);
 
 // Real remote caller/home transport. Optional SF4 calls obey effective RAM and never perform work.
-function rpc({free=128,missing=false,work=repWork,chance=0.4,fail=false,costs={}}={}) {
+function rpc({free=128,missing=false,work=repWork,chance=0.4,fail=false,costs={},member=false,action=null,bbFailure=''}={}) {
   const ports=new Map(),running=new Set(),launches=[];let pid=0;
   const ns={print(){},getScriptRam:file=>missing&&file==='bin/go-context.js'?0:6.6,
     getFunctionRamCost:fn=>fn==='baseCost'?1.6:costs[fn]??0.5,isRunning:id=>running.has(id),
     singularity:{getCurrentWork:()=>{if(fail)throw Error('access unavailable');return work;},getCrimeChance:()=>chance},
+    bladeburner:{inBladeburner:()=>{if(bbFailure==='membership')throw Error('BB unavailable');return member;},
+      getCurrentAction:()=>{if(bbFailure==='action')throw Error('BB action unavailable');return action;}},
     getPortHandle:id=>{if(!ports.has(id)){const values=[];let resolve;ports.set(id,{empty:()=>!values.length,read:()=>values.shift(),
       write:value=>{values.push(structuredClone(value));resolve?.();},nextWrite:()=>new Promise(r=>resolve=r)});}return ports.get(id);},
     exec(file,host,options,...args){assert.equal(host,'home');assert(args.every(x=>['string','number','boolean'].includes(typeof x)));
       const id=++pid;running.add(id);launches.push({file,options,args});queueMicrotask(async()=>{
         if(file==='bin/singRun.js'){let exit;await singularityMain({...ns,pid:id,args,atExit:fn=>exit=fn,ramOverride:ram=>ram});exit();}
+        else if(file==='bin/bbRun.js'){let exit;await bladeburnerMain({...ns,pid:id,args,atExit:fn=>exit=fn,ramOverride:ram=>ram});exit();}
         else ns.getPortHandle(id).write(file==='bin/getServerAvailRam.js'?free:context());
         running.delete(id);
       });return id;
@@ -164,6 +190,31 @@ result=await getGoContext(h.ns,{4:1});assert.equal(result.work.type,'CRIME');ass
 assert.equal(h.launches.at(-1).options.ramOverride,9.6);
 h=rpc({fail:true});assert.equal((await getGoContext(h.ns,{4:3})).workKnown,undefined);
 h=rpc({work:null});assert.equal((await getGoContext(h.ns,{4:3})).workKnown,true);
+// Read only via temporary helpers, gated by Bladeburner access and the effective API RAM cost.
+for (const sourceFiles of [{6:1},{7:1},{4:3,7:3}]) {
+  h=rpc({work:null,member:true,action:bladeAction});result=await getGoContext(h.ns,sourceFiles);
+  assert.deepEqual(result.bladeburnerAction,bladeAction);
+  assert.deepEqual(h.launches.filter(row=>row.file==='bin/bbRun.js').map(row=>row.args[0]),['inBladeburner','getCurrentAction']);
+  assert.equal(selectAutoGoOpponent({reset,now,context:result}).opponent,'Tetrads');
+}
+h=rpc({member:true,action:bladeAction});result=await getGoContext(h.ns,{4:3});
+assert.equal(result.bladeburnerAction,undefined);assert(!h.launches.some(row=>row.file==='bin/bbRun.js'));
+for (const member of [false,null,{},'ERROR: unavailable']) {
+  h=rpc({member,action:bladeAction});result=await getGoContext(h.ns,{7:1});
+  assert.equal(result.bladeburnerAction,undefined);assert(!h.launches.some(row=>row.args[0]==='getCurrentAction'));
+}
+for (const bbFailure of ['membership','action']) {
+  h=rpc({member:true,action:bladeAction,bbFailure});result=await getGoContext(h.ns,{4:3,7:1});
+  assert.equal(result.work.factionName,'CyberSec');assert.equal(result.bladeburnerAction,undefined);
+}
+for (const method of ['inBladeburner','getCurrentAction']) {
+  h=rpc({free:20,member:true,action:bladeAction,costs:{['bladeburner.'+method]:80}});
+  result=await getGoContext(h.ns,{7:1});assert.equal(result.bladeburnerAction,undefined);
+  assert(!h.launches.some(row=>row.args[0]===method));
+}
+h=rpc({member:true,action:null});assert.equal((await getGoContext(h.ns,{7:1})).bladeburnerAction,null);
+h=rpc({member:true,action:'ERROR: invalid'});assert.equal((await getGoContext(h.ns,{7:1})).bladeburnerAction,undefined);
+h=rpc({fail:true,member:true,action:bladeAction});assert.deepEqual((await getGoContext(h.ns,{4:3,7:1})).bladeburnerAction,bladeAction);
 
 // Execute the real Go loop: route only after completed games, re-evaluate goals, preserve explicit choices.
 const main=await loadGoBot(readFileSync(new URL('../../../go.js',import.meta.url),'utf8'));
@@ -175,7 +226,7 @@ async function loop(options={},failContext=false,scenario={}){
     go:{getOpponent:()=>opponent,opponentNextTurn:async()=>({type:'move'}),getGameState:()=>({blackScore:20,whiteScore:1,bonusCycles:0}),
       analysis:{getStats:()=>({...scenario.liveStats,[opponent]:{...scenario.liveStats?.[opponent],wins:plays,winStreak:1}})},
       resetBoardState:(who,size)=>{assert(plays>0);resets.push({who,size});opponent=who;if(resets.length===2)throw STOP;}},
-    audit:{options:{runOnce:false,...options},reset,stats:scenario.stats??{},log:message=>logs.push(message),
+    audit:{options:{runOnce:false,...options},reset:scenario.reset??reset,stats:scenario.stats??{},log:message=>logs.push(message),
       context:()=>{observations++;assert(plays>0,'Never sample/change goals mid-game');
         if(options.opponent&&options.opponent!=='auto')assert.fail('Explicit opponent must skip the goal helper');
         if(failContext)throw Error('home busy');return scenario.context??context({work:plays===1?repWork:{type:'CRIME'}});},
@@ -190,6 +241,11 @@ assert(played.resets.every(row=>row.size===5),'Default mode executes the fixed p
 played=await loop({opponent:'Tetrads','board-size':'7'});assert(played.resets.every(row=>row.who==='Tetrads'&&row.size===7));
 assert.equal(played.observations,0);
 played=await loop({},true);assert(played.resets.every(row=>row.who==='The Black Hand'));
+played=await loop({},false,{reset:{...reset,currentNode:7},context:context({work:null,workKnown:true})});
+assert(played.resets.every(row=>row.who==='Tetrads'&&row.size===5));
+assert(played.logs.some(message=>message.includes('BN7 Bladeburner progression')));
+played=await loop({},true,{reset:{...reset,currentNode:7}});assert(played.resets.every(row=>row.who==='Tetrads'));
+played=await loop({goal:'hacking'},false,{reset:{...reset,currentNode:7}});assert(played.resets.every(row=>row.who==='The Black Hand'));
 played=await loop({'board-size':'auto'},false,{stats:routeStats,liveStats,context:funded});
 assert(played.resets.every(row=>row.who===faction&&row.size===5),'Execute the forecast board, not the unconstrained reliability choice');
 assert(played.logs.some(message=>message.includes('funded donation unlock')));

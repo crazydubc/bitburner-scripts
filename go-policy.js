@@ -101,9 +101,17 @@ export function selectAutoGoOpponent({goal = 'auto', context = null, reset, incl
     if (work?.type === 'CRIME') { goal = 'crime'; reason = `crime work (${work.crimeType ?? 'active crime'})`; }
     else if (work?.type === 'CLASS' && ['str', 'def', 'dex', 'agi'].includes(work.classType)) {
       goal = 'combat'; reason = `combat training (${work.classType})`;
+    } else if ([6, 7].includes(reset?.currentNode)) {
+      // These nodes favor a Bladeburner finish. Ordinary-work reads do not include Bladeburner actions.
+      // This default must also work when optional context helpers cannot fit on home.
+      goal = 'combat'; reason = `BN${reset.currentNode} Bladeburner progression`;
     } else if (['FACTION', 'COMPANY'].includes(work?.type)) {
       goal = 'rep'; reason = `reputation work (${work.factionName ?? work.companyName ?? 'active work'})`;
     } else if (!state.workKnown && target) { goal = 'rep'; reason = `worker reputation target (${target.faction})`; }
+    else if (reset?.currentNode !== 8 && ['General', 'Contracts', 'Operations', 'Black Operations'].includes(state.bladeburnerAction?.type) &&
+      typeof state.bladeburnerAction.name === 'string' && state.bladeburnerAction.name.length > 0) {
+      goal = 'combat'; reason = `active Bladeburner work (${state.bladeburnerAction.name})`;
+    }
     else if (hasHiddenGoOpponent(reset)) { goal = 'hacking'; reason = 'installed Red Pill: build hacking level'; }
     else if (cashLow) { goal = 'money'; reason = 'cash below reserve / early cash cushion'; }
     else { goal = 'hacking'; reason = fresh ? 'background hacking progress' : 'goal data unavailable: hacking fallback'; }
