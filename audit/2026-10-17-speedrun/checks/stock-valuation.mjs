@@ -222,16 +222,16 @@ assert.equal(await delay({...h.ns,stock:{...h.stock,has4SData:()=>false}},{money
 // The main loop passes availability to the installer while continuing to schedule automation.
 const cycleCode=section(autopilot,'    let stocksValue = null;','    return shouldWeKeepRunning(ns);');
 const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
-for(const available of [false,true]) {
+for(const available of [false,true]) for(const hold of [false,true]) {
   const seen=[];
   const bindings={ns:{},player:{factions:[]},servers:[],getStocksValue:async()=>{
     if(!available)throw Error('unreadable');return expected;
   },manageReservedMoney:async(_,__,value)=>seen.push(['reserve',value]),
   checkOnDaedalusStatus:async(_,__,value)=>seen.push(['daedalus',value]),
-  checkIfBnIsComplete:async()=>{},maybeAcceptStaneksGift:async()=>{},getRunningScriptNames:()=>new Set(),
+  waitingForFinalStudy:false,checkIfBnIsComplete:async()=>hold?'sleeve-study':false,maybeAcceptStaneksGift:async()=>{},getRunningScriptNames:()=>new Set(),
   checkOnRunningScripts:async()=>seen.push(['scripts']),runPeriodicScripts:async()=>seen.push(['periodic']),
   noteMilestones:async()=>{},maybeInstallAugmentations:async(_,__,value)=>seen.push(['install',value])};
   await AsyncFunction(...Object.keys(bindings),cycleCode)(...Object.values(bindings));
-  assert.deepEqual(seen,[['reserve',available?expected:0],['daedalus',available?expected:null],['scripts'],['periodic'],['install',available]]);
+  assert.deepEqual(seen,[['reserve',available?expected:0],['daedalus',available?expected:null],['scripts'],['periodic'],...(hold?[]:[['install',available]])]);
 }
 console.log('Official ECP reproduction, retries, HUD isolation, faction startup/output/purchase guards, installation pause/recovery and Daedalus reserve checks passed.');

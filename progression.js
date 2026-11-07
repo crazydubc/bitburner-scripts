@@ -81,7 +81,7 @@ export function getIntelFarmStopReason(state, intelligence, now) {
 
 export async function intelFarmState(ns, patch, owner = 'player') {
   const args = patch === undefined ? ['read'] : ['update', JSON.stringify(patch)];
-  if (owner === 'sleeves') {
+  if (owner === 'sleeves' || owner === 'bn10-final') {
     if (patch === undefined) args.push('');
     args.push(owner);
   }
@@ -90,4 +90,50 @@ export async function intelFarmState(ns, patch, owner = 'player') {
   if (!result || typeof result !== 'object' || !['prepare', 'farming', 'complete'].includes(result.status))
     throw new Error(`Could not read/write intelligence-farm state on home: ${String(result)}`);
   return result;
+}
+
+// The third run starts with earned SF10.2; the effective level inside BN10 is not the run number.
+export function bn103StudyNode(reset) {
+  const overrides = reset?.bitNodeOptions?.sourceFileOverrides;
+  return reset?.currentNode === 10 && sourceFileLevel(reset.ownedSF, 10) === 2 &&
+    !(overrides instanceof Map ? overrides.has(10) : Object.hasOwn(overrides ?? {}, 10));
+}
+
+export function canStudySleeveInt(reset, player) {
+  const overrides = reset?.bitNodeOptions?.sourceFileOverrides;
+  const sf5Override = overrides instanceof Map ? overrides.has(5) : Object.hasOwn(overrides ?? {}, 5);
+  return !reset?.bitNodeOptions?.disableSleeveExpAndAugmentation && (player?.skills?.intelligence > 0 ||
+    (!sf5Override && sourceFileLevel(reset?.ownedSF, 5) > 0));
+}
+
+export const FINAL_STUDY_WINDOW = 5 * 60000;
+export const FINAL_STUDY_WINDOWS = 2;
+const levelAtXp = xp => 32 * Math.log(xp + 534.6) - 200;
+const intBonus = level => 1 + Math.max(0, level) ** 0.8 / 600;
+
+// Only call with a fresh verified fleet/task snapshot. A pause, reset, helper outage, or change of
+// policy starts a new window; elapsed offline time is never counted as unproductive study.
+export function sampleFinalStudy(prev, now, xp, augReset, rule) {
+  if (!Number.isFinite(xp) || xp < 0 || !Number.isFinite(now) || !Number.isFinite(augReset)) return {next: null};
+  const fresh = low => ({at: now, xp, seen: now, lastXp: xp, augReset, low,
+    minRate: rule.minRate, minReturn: rule.minReturn});
+  if (!prev || prev.augReset !== augReset || prev.minRate !== rule.minRate || prev.minReturn !== rule.minReturn ||
+      now <= prev.seen || now - prev.seen > 60000 || xp < prev.lastXp) return {next: fresh(0)};
+  if (xp === prev.lastXp) return {next: fresh(0), stalled: true}; // Time during a paused game is not an active study sample.
+  const ms = now - prev.at;
+  if (ms < FINAL_STUDY_WINDOW) return {next: {...prev, seen: now, lastXp: xp}};
+  const hours = ms / 3600000, level = levelAtXp(xp), xpPerHour = (xp - prev.xp) / hours;
+  const levelsPerHour = (level - levelAtXp(prev.xp)) / hours;
+  const returnPercent = 100 * (intBonus(levelAtXp(xp + xpPerHour)) / intBonus(level) - 1);
+  const low = levelsPerHour < rule.minRate && returnPercent < rule.minReturn ? prev.low + 1 : 0;
+  return {next: fresh(low), report: {levelsPerHour, returnPercent, level, xpPerHour, low,
+    minRate: rule.minRate, minReturn: rule.minReturn, augReset}};
+}
+
+export function finalStudyProof(report, minRate, minReturn, augReset) {
+  return !!report && minRate > 0 && minReturn > 0 && report.minRate === minRate && report.minReturn === minReturn &&
+    report.augReset === augReset && Number.isFinite(augReset) && Number.isInteger(report.low) && report.low >= FINAL_STUDY_WINDOWS &&
+    Number.isFinite(report.level) && report.level >= 0 && Number.isFinite(report.xpPerHour) && report.xpPerHour > 0 &&
+    Number.isFinite(report.levelsPerHour) && report.levelsPerHour > 0 && report.levelsPerHour < minRate &&
+    Number.isFinite(report.returnPercent) && report.returnPercent >= 0 && report.returnPercent < minReturn;
 }

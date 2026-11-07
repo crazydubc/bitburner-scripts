@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {BN_ROUTE, selectNextBitNode, hasBladeburnerAccess, hasCompletedBladeburner,
   COMPANY_FACTIONS, getIntelFarmReadiness, getIntelFarmStopReason, INTEL_FARM_MAX_MS,
-  INTEL_FARM_FILE} from '../../../progression.js';
+  INTEL_FARM_FILE, bn103StudyNode} from '../../../progression.js';
 import {main as stateMain} from '../../../bin/intel-farm-state.js';
 import {main as farmMain} from '../../../farm-intel.js';
 import {liquidateHashesForReset, upgradeHomeForReset} from '../../../ascend.js';
@@ -70,7 +70,7 @@ async function finishCase(settings = {}) {
   const ns = {scan: () => caveVisible ? ['w0r1d_d43m0n'] : [], getServerRequiredHackingLevel: () => 3000,
     hasRootAccess: () => settings.root ?? true, getScriptName: () => 'autopilot.js'};
   const check = await extract('autopilot.js', 'async function checkIfBnIsComplete(ns)', 'function getHardCodedBNMultis', {
-    shouldIntelFarm: settings.farm ?? false, resetInfo: {currentNode: settings.node ?? 6},
+    bn103StudyNode, waitingForFinalStudy: false, shouldIntelFarm: settings.farm ?? false, resetInfo: {currentNode: settings.node ?? 6, ownedSF: new Map()},
     sleeveRun: async (_ns, method) => method === 'getSleeveCost' ? settings.sleeveCost ?? Infinity
       : method === 'getNumSleeves' ? settings.count ?? 1 : {memory: settings.memory ?? 100},
     hasCompletedBladeburner: async () => settings.blade ?? false, unlockedSFs: {4: 3, 6: 1},

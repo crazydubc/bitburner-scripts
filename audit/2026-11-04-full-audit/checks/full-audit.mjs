@@ -8,7 +8,7 @@ import {resolve} from 'node:path';
 import {shouldUseGangs, shouldFundNewCorporation} from '../../../speedrun-policy.js';
 import {shouldStartCorporation} from '../../../autopilot.js';
 import {executePurchase} from '../../../purchase-guard.js';
-import {hasBladeburnerAccess, intelFarmState as realFarmState} from '../../../progression.js';
+import {hasBladeburnerAccess, bn103StudyNode, intelFarmState as realFarmState} from '../../../progression.js';
 import {main as farmStateMain} from '../../../bin/intel-farm-state.js';
 import * as planner from '../../../faction-route-planner.js';
 import {main as pull, filterDownloadableFiles} from '../../../git-pull.js';
@@ -32,7 +32,7 @@ function sleeveFixture({files = {10: 1}, flags = {}, count = 1, node = 10, skill
     mults: {crime_success: crimeMult}}));
   const stats = {difficulty: 1, strength_success_weight: 2, defense_success_weight: 2,
     dexterity_success_weight: 0.5, agility_success_weight: 0.5};
-  const bindings = {...planner, hasBladeburnerAccess, log: (_, line) => logs.push(line), disableLogs: noop,
+  const bindings = {...planner, hasBladeburnerAccess, bn103StudyNode, log: (_, line) => logs.push(line), disableLogs: noop,
     getConfiguration: (_, schema) => ({...Object.fromEntries(schema), ...flags}),
     getActiveSourceFiles: async () => files, findPids: async () => [1], getOwnedAugs: async () => [],
     getPlayerInfo: async () => ({money: cash, factions: []}),

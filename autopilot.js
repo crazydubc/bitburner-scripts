@@ -14,11 +14,13 @@ import {
 } from './donation-favor.js'
 import {
   selectNextBitNode, sourceFileLevel, hasBladeburnerAccess, hasCompletedBladeburner,
-  getIntelFarmReadiness, intelFarmState, BN_ROUTE, EARLY_UNLOCK_ROUTE
+  getIntelFarmReadiness, intelFarmState, bn103StudyNode, canStudySleeveInt, finalStudyProof, BN_ROUTE, EARLY_UNLOCK_ROUTE
 } from './progression.js'
 
 const argsSchema = [
   ['bn-route', 'current'], // current or unlocks-first; set autopilot.js.config.txt to retain the experiment across resets.
+  ['bn10-sleeve-int-per-hour', 6], // BN10.3 only: end study once both marginal returns stay below their thresholds; 0 skips this exit gate.
+  ['bn10-sleeve-return-percent', 0.5], // Percent improvement in the general INT multiplier projected for another hour.
   ['gang-mode', 'auto'], // auto/on/off: control gang launches and player/sleeve karma preparation.
   ['corporation-mode', 'auto'], // auto/on/off: auto avoids heavily penalized new startups; on overrides that policy.
   ['disable-go', false], // Prevent Go auto-launch while comparing an external bot; stop an existing go.js yourself first.
@@ -46,6 +48,9 @@ export async function main(ns) {
   ns.ramOverride(4.2) // Include the reply watchdog's API cost, with a small margin.
   const options = getConfiguration(ns, argsSchema);
   if (!options) return;
+  if (!Number.isFinite(options['bn10-sleeve-int-per-hour']) || options['bn10-sleeve-int-per-hour'] < 0 ||
+      !Number.isFinite(options['bn10-sleeve-return-percent']) || options['bn10-sleeve-return-percent'] <= 0)
+    return ns.tprint('ERROR: BN10 sleeve levels/hour must be nonnegative, and return percent must be positive.');
   for (const flag of ['gang-mode', 'corporation-mode']) {
     if (!['auto', 'on', 'off'].includes(options[flag])) {
       ns.tprint(`ERROR: --${flag} must be auto, on or off.`);
@@ -123,6 +128,7 @@ export async function main(ns) {
     getPlayerMoney(ns) > reservedMoney(ns); // Player money exceeds the reserve (otherwise it will sit there buying nothing)
   let playerInGang = false;
   let shouldIntelFarm = false, readyToFarmIntel = false, farmState;
+  let waitingForFinalStudy = false, nextFinalStudyRead = 0, nextFinalStudyNotice = 0;
   let lastIntelPreparationCheck = -Infinity;
   async function refreshIntelFarmReadiness(ns, force = false) {
     // Readiness is live, but expensive invite/state reads need only run once per planning interval.
@@ -196,7 +202,7 @@ export async function main(ns) {
     },
     {
       name: "sleeve.js",
-      shouldRun: () => 10 in unlockedSFs && reqRam(128),
+      shouldRun: () => 10 in unlockedSFs && (reqRam(128) || waitingForFinalStudy),
       args: () => !useGangs ? ['--disable-gang-homicide-priority'] : options['gang-mode'] === 'on' ? ['--force-gang-karma'] : []
     },
     {
@@ -411,7 +417,9 @@ export async function main(ns) {
 
     await manageReservedMoney(ns, player, stocksValue ?? 0); // Reserve conservatively using only confirmed cash during a stock outage.
     await checkOnDaedalusStatus(ns, player, stocksValue);
-    await checkIfBnIsComplete(ns);
+    const finish = await checkIfBnIsComplete(ns);
+    if (finish === 'sleeve-study') waitingForFinalStudy = true;
+    else if (finish === true) waitingForFinalStudy = false;
     await maybeAcceptStaneksGift(ns);
     const runningScripts = getRunningScriptNames(ns, servers);
     await checkOnRunningScripts(ns, runningScripts);
@@ -421,7 +429,7 @@ export async function main(ns) {
       ...(runningScripts.has('kernel.js') ? [{kind: 'hacking-automation-running'}] : []),
       ...(stocksValue > 0 ? [{kind: 'stock-position-observed'}] : []),
     ]);
-    await maybeInstallAugmentations(ns, player, stocksValue !== null);
+    if (!waitingForFinalStudy) await maybeInstallAugmentations(ns, player, stocksValue !== null);
     return shouldWeKeepRunning(ns); // Return false to shut down autopilot.js if we installed augs, or don't have enough home RAM
   }
 
@@ -522,14 +530,16 @@ export async function main(ns) {
      @param {NS} ns */
   async function checkIfBnIsComplete(ns) {
     if (shouldIntelFarm) return false;
+    if (waitingForFinalStudy && Date.now() < nextFinalStudyRead) return 'sleeve-study';
     // Check if there is some reason not to automatically destroy this BN
     if (resetInfo.currentNode == 10) { // Suggest the user doesn't reset until they buy all sleeves and max memory
+      if (!resetInfo.ownedSF || typeof resetInfo.ownedSF !== 'object') return false; // Unknown run number is not permission to exit.
       let sleeveCost = await sleeveRun(ns, 'getSleeveCost');
       if (sleeveCost !== Number.POSITIVE_INFINITY)
         return false;
 
       const numSleeves = await sleeveRun(ns, `getNumSleeves`);
-      if (!Number.isInteger(numSleeves) || numSleeves < 0) return false;
+      if (!Number.isInteger(numSleeves) || numSleeves <= 0 || (bn103StudyNode(resetInfo) && numSleeves !== 8)) return false;
 
       for (let i = 0; i < numSleeves; i++) {
         const sleeve = await sleeveRun(ns, 'getSleeve', i);
@@ -543,6 +553,8 @@ export async function main(ns) {
 
     if (bladeburnerComplete || (Number.isFinite(wdHack) && player.skills.hacking >= wdHack && ns.hasRootAccess("w0r1d_d43m0n"))) {
         await noteMilestones([{kind: 'bn-finish-ready', data: {method: bladeburnerComplete ? 'bladeburner' : 'hacking'}}]);
+        if (bn103StudyNode(resetInfo) && options['bn10-sleeve-int-per-hour'] > 0 && canStudySleeveInt(resetInfo, player) &&
+            await holdForFinalStudy(ns)) return 'sleeve-study';
         //time to leave....
         if (!(4 in unlockedSFs)) {
           log(ns, `You do not own SF4, so you must manually exit the bitnode (` +
@@ -553,6 +565,30 @@ export async function main(ns) {
         }
     }
     return false;
+  }
+
+  // This is reached only after the existing sleeve purchases, memory and victory checks.
+  async function holdForFinalStudy(ns) {
+    if (Date.now() < nextFinalStudyRead) return true;
+    nextFinalStudyRead = Date.now() + 15000;
+    const minRate = options['bn10-sleeve-int-per-hour'], minReturn = options['bn10-sleeve-return-percent'];
+    let detail = 'Waiting for sleeve.js to finish augment preparation and measure full-fleet study.';
+    try {
+      const state = await intelFarmState(ns, undefined, 'bn10-final');
+      if (state.status === 'complete' && state.currentNode === 10 && state.lastNodeReset === resetInfo.lastNodeReset &&
+          state.minRate === minRate && state.minReturn === minReturn &&
+          finalStudyProof(state.report, minRate, minReturn, resetInfo.lastAugReset)) {
+        log(ns, `BN10.3 sleeve study finished at INT ${state.report.level.toFixed(1)}: ${state.report.levelsPerHour.toFixed(2)} levels/h, ${state.report.returnPercent.toFixed(3)}% projected gain/hour. Leaving the BitNode.`, true);
+        return false;
+      }
+      if (state.status !== 'farming' || state.minRate !== minRate || state.minReturn !== minReturn)
+        await intelFarmState(ns, {status: 'farming', minRate, minReturn}, 'bn10-final');
+    } catch (err) { detail = `Study state unavailable; retrying: ${String(err?.message ?? err)}`; }
+    if (Date.now() >= nextFinalStudyNotice) {
+      log(ns, `BN10.3 exit held. ${detail}`, true);
+      nextFinalStudyNotice = Date.now() + 5 * 60000;
+    }
+    return true;
   }
 
   function getHardCodedBNMultis(bn) {

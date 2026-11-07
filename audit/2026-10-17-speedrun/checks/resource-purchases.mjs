@@ -181,7 +181,7 @@ async function sleeveBatch(augs, settings = {}) {
     lastPurchaseTime: [], lastPurchaseStatusUpdate: [], lastSleeveHp: [100], lastSleeveShock: [0],
   };
   let inventory = augs.map(aug => ({...aug})), calls = [], refreshes = 0;
-  const run = await functionFrom('sleeve.js', 'async function manageSleeveAugs(ns, i, budget)',
+  const run = await functionFrom('sleeve.js', 'async function manageSleeveAugs(ns, i, budget, finish = false)',
     '\n/** @param {NS} ns\n * @returns {Promise<Task>}', {
       ...state, purchase: async (ns, space, method, args, policy) => executePurchase(ns, space, method, args, policy), sleeveRun: async (ns, method) => {
         assert.equal(method, 'getSleevePurchasableAugs'); refreshes++;

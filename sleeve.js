@@ -2,7 +2,7 @@ import {
   log, getConfiguration, disableLogs, getActiveSourceFiles, singRun, singReadMany, gangRun, hnRun,
   formatMoney, formatDuration, getPlayerInfo, getReset, findPids, sleeveRun, bbRun, getOwnedAugs, getReserve, purchase
 } from './utils.js'
-import { hasBladeburnerAccess, intelFarmState } from './progression.js'
+import { hasBladeburnerAccess, intelFarmState, bn103StudyNode, canStudySleeveInt, sampleFinalStudy, finalStudyProof } from './progression.js'
 import {
   DEFAULT_DESIRED_AUGS, DEFAULT_PRIORITY_AUGS, buildAugUtilityMap, buildDesiredAugSet,
   getDefaultDesiredStats, planDistinctFactionRepRoutes
@@ -66,6 +66,7 @@ let cachedCrimeStats, workByFaction; // Cache of crime statistics and which fact
 let karmaCrimeStats, retryCrimeStatsAt, lastKarmaDecision, nextKarmaLog;
 let operationSupplyCheckedAt, spareOperationSupply;
 let fleetIntelState, fleetIntelRunning, retryFleetIntelAt;
+let finalRule, nextFinalRead, finalSample, nextFinalAugs, finalAugsReason, lastFinalMessage;
 let task, lastStatusUpdateTime, lastPurchaseTime, lastPurchaseStatusUpdate, availableAugs, cacheExpiry,
   shockChance, lastRerollTime, bladeburnerCooldown, lastSleeveHp, lastSleeveShock; // State by sleeve
 let observedTasks, taskSnapshotTime;
@@ -203,20 +204,106 @@ async function planFleetIntelFarm(ns, sleeves, spendable, urgentCrime) {
     if (playerInBladeburner && (!Number.isFinite(bladeburnerCityChaos) || bladeburnerCityChaos > 30 ||
         !sleeveBbContractNames.every(name => Number.isFinite(bladeburnerContractCounts[name]) && bladeburnerContractCounts[name] > minBbContracts) ||
         !await hasSpareOperationSupply(ns))) return null;
-    for (const i of travelers) {
-      const moved = await purchase(ns, 'sleeve', 'travel', [i, 'Volhaven'], options.reserve == null ? {} : {reserve: options.reserve});
-      if (moved.result !== true) { retryFleetIntelAt = Date.now() + 60000; return null; }
-      sleeves[i].city = 'Volhaven';
-      observedTasks[i] = null; // Travel stops work; plan from the real location if a later trip fails.
-      delete task[i];
-    }
-    if (!qualified) fleetIntelState = await intelFarmState(ns, {status: 'farming', target}, 'sleeves');
-    return sleeves.map((s, i) => ['farm sleeve INT at ZB', 'setToUniversityCourse', [i, 'ZB Institute of Technology', 'Computer Science'],
-      `studying free Computer Science with the fleet (INT ${s.skills.intelligence}; fleet target ${target}).`]);
+    const plans = await zbStudyPlans(ns, sleeves, spendable, 'fleet target ' + target);
+    if (plans && !qualified) fleetIntelState = await intelFarmState(ns, {status: 'farming', target}, 'sleeves');
+    return plans;
   } catch (err) {
     retryFleetIntelAt = Date.now() + 60000;
     log(ns, `Sleeve INT farm deferred: ${String(err?.message ?? err)}. Continuing normal work.`);
     return null;
+  }
+}
+
+
+async function zbStudyPlans(ns, sleeves, spendable, goal) {
+  const travelers = sleeves.map((s, i) => s.city !== 'Volhaven' ? i : -1).filter(i => i >= 0);
+  if (travelers.length && !(spendable > travelers.length * 200e3)) return null;
+  for (const i of travelers) {
+    const moved = await purchase(ns, 'sleeve', 'travel', [i, 'Volhaven'], options.reserve == null ? {} : {reserve: options.reserve});
+    if (moved.result !== true) { retryFleetIntelAt = Date.now() + 60000; return null; }
+    sleeves[i].city = 'Volhaven';
+    observedTasks[i] = null; // Travel stops work, including after a partial move.
+    delete task[i];
+  }
+  return sleeves.map((s, i) => ['farm sleeve INT at ZB', 'setToUniversityCourse', [i, 'ZB Institute of Technology', 'Computer Science'],
+    `studying free Computer Science with the fleet (INT ${s.skills.intelligence}; ${goal}).`]);
+}
+
+function finalStudyNotice(ns, message) {
+  if (message !== lastFinalMessage) log(ns, 'BN10.3 sleeve study: ' + message);
+  lastFinalMessage = message;
+}
+
+async function readFinalRule(ns) {
+  if (Date.now() < nextFinalRead) return finalRule;
+  nextFinalRead = Date.now() + 15000;
+  try {
+    const state = await intelFarmState(ns, undefined, 'bn10-final');
+    finalRule = ['farming','complete'].includes(state.status) && [state.minRate, state.minReturn].every(n => Number.isFinite(n) && n > 0) ? state : null;
+  } catch (err) {
+    finalSample = null;
+    finalStudyNotice(ns, 'State unavailable; retrying. ' + String(err?.message ?? err));
+  }
+  return finalRule;
+}
+
+// Verify actual implants and the current faction shop, not a quote, cached purchase, or all augs in the game.
+async function finalAugReadiness(ns, force = false) {
+  if (!force && Date.now() < nextFinalAugs) return finalAugsReason;
+  let reason = '';
+  for (let i = 0; i < 8; i++) {
+    const owned = await sleeveRun(ns, 'getSleeveAugmentations', i);
+    const offered = await sleeveRun(ns, 'getSleevePurchasableAugs', i);
+    if (!Array.isArray(owned) || !owned.every(n => typeof n === 'string' && n) || !Array.isArray(offered))
+      throw Error('Invalid augmentation snapshot for sleeve ' + i);
+    if (!owned.length || offered.length) {
+      reason = `Waiting for sleeve ${i}: ${owned.length} installed, ${offered.length} currently offered. Normal purchases and faction work continue.`;
+      break;
+    }
+  }
+  nextFinalAugs = Date.now() + 30000;
+  return finalAugsReason = reason;
+}
+
+async function planFinalStudy(ns, sleeves, spendable, reset, freshTasks, boughtAug) {
+  const wait = why => { finalSample = null; finalStudyNotice(ns, why); return null; };
+  try {
+    if (boughtAug) { nextFinalAugs = 0; finalSample = null; }
+    if (options['disable-training'] || options.crime)
+      return wait('Clear the explicit --disable-training / --crime override, or set autopilot --bn10-sleeve-int-per-hour 0 to skip the exit hold.');
+    if (sleeves.length !== 8 || !sleeves.every(s => s.memory === 100 && s.sync === 100 && s.shock === 0))
+      return wait('Synchronizing and recovering all eight sleeves before fitting augmentations.');
+    if (!sleeves.every(s => Number.isFinite(s.exp?.intelligence) && s.exp.intelligence >= 0))
+      return wait('Waiting for readable Intelligence XP on all eight sleeves.');
+    const reason = await finalAugReadiness(ns);
+    if (reason) return wait(reason);
+    if (Date.now() < retryFleetIntelAt) return wait('Waiting to retry travel to ZB.');
+    const plans = await zbStudyPlans(ns, sleeves, spendable, 'BN10.3 marginal-return measurement');
+    if (!plans) return wait('Waiting for travel cash above the reserve.');
+    if (!observedTasks.every((t,i) => matchesSleeveTask(t,expectedSleeveTask(plans[i][1],plans[i][2])))) {
+      finalSample = null;
+      finalStudyNotice(ns,'Assigning all eight augmented sleeves to free Computer Science at ZB.');
+    } else if (freshTasks) {
+      const m = sampleFinalStudy(finalSample, Date.now(), Math.min(...sleeves.map(s => s.exp.intelligence)), reset.lastAugReset, finalRule);
+      finalSample = m.next;
+      finalStudyNotice(ns, m.stalled ? 'No new XP since the last observation. The exit remains held.' :
+        'Measuring all eight at ZB; two five-minute windows must confirm diminishing returns.');
+      if (m.report) {
+        const r = m.report;
+        log(ns,`BN10.3 sleeve study: lowest INT ${r.level.toFixed(2)}, ${r.levelsPerHour.toFixed(2)} levels/h, ${r.xpPerHour.toFixed(0)} XP/h; next hour +${r.returnPercent.toFixed(3)}% INT multiplier. Low windows: ${r.low}/2.`);
+        if (finalStudyProof(r, finalRule.minRate, finalRule.minReturn, reset.lastAugReset)) {
+          const lastCheck = await finalAugReadiness(ns, true);
+          if (lastCheck) return wait(lastCheck);
+          finalRule = await intelFarmState(ns, {status:'complete', minRate:r.minRate, minReturn:r.minReturn, report:r}, 'bn10-final');
+          finalSample = null;
+          finalStudyNotice(ns,'Low return confirmed. Autopilot may now leave BN10.3.');
+        }
+      }
+    }
+    return plans;
+  } catch (err) {
+    retryFleetIntelAt = Date.now() + 15000;
+    return wait('Could not verify preparation or study; retrying: ' + String(err?.message ?? err));
   }
 }
 
@@ -465,6 +552,7 @@ export async function main(ns) {
   karmaCrimeStats = null, retryCrimeStatsAt = 0, lastKarmaDecision = '', nextKarmaLog = 0;
   operationSupplyCheckedAt = -Infinity, spareOperationSupply = false;
   fleetIntelState = null, fleetIntelRunning = false, retryFleetIntelAt = 0;
+  finalRule = finalSample = null; nextFinalRead = nextFinalAugs = 0; finalAugsReason = lastFinalMessage = '';
   playerInGang = playerInBladeburner = false;
   stagedShockRecoveryState = {active: false, mode: 'none', anchor: -1};
   sleeveRepAssignments = {};
@@ -479,6 +567,7 @@ export async function main(ns) {
   while (true) {
     try { await mainLoop(ns); }
     catch (err) {
+      finalSample = null;
       log(ns, `WARNING: sleeve.js Caught (and suppressed) an unexpected error in the main loop:\n` +
         (err?.stack || '') + (typeof err === 'string' ? err : err.message || JSON.stringify(err)), false, 'warning');
     }
@@ -488,7 +577,7 @@ export async function main(ns) {
 
 /** @param {NS} ns
  * Purchases augmentations for sleeves */
-async function manageSleeveAugs(ns, i, budget) {
+async function manageSleeveAugs(ns, i, budget, finish = false) {
   // Retrieve and cache the set of available sleeve augs (cached temporarily, but not forever, in case rules around this change)
   if (availableAugs[i] == null || Date.now() > cacheExpiry[i]) {
     cacheExpiry[i] = Date.now() + 60000;
@@ -503,7 +592,7 @@ async function manageSleeveAugs(ns, i, budget) {
   if (lastPurchaseStatusUpdate[i] != purchaseUpdate)
     log(ns, `INFO: With budget ${formatMoney(budget)}, ${(lastPurchaseStatusUpdate[i] = purchaseUpdate)} ` +
       `(Min batch size: ${options['min-aug-batch']}, Cooldown: ${formatDuration(cooldownLeft)})`);
-  if (cooldownLeft == 0 && batchCount > 0 && ((batchCount >= availableAugs[i].length - 1) || batchCount >= options['min-aug-batch'])) { // Don't require the last aug it's so much more expensive
+  if (cooldownLeft == 0 && batchCount > 0 && (finish || (batchCount >= availableAugs[i].length - 1) || batchCount >= options['min-aug-batch'])) { // Don't require the last aug it's so much more expensive
     let spent = 0, purchased = 0;
     try {
       for (const aug of availableAugs[i].slice(0, batchCount)) {
@@ -666,6 +755,11 @@ async function mainLoop(ns) {
     playerInBladeburner = await bbRun(ns, 'inBladeburner') === true;
   const playerWorkInfo = await getCurrentWorkInfo(ns);
   const resetInfo = await getReset(ns);
+  const finalNode = bn103StudyNode(resetInfo);
+  const request = finalNode && canStudySleeveInt(resetInfo, playerInfo) ? await readFinalRule(ns) : null;
+  if (request?.status === 'complete' && finalStudyProof(request.report, request.minRate, request.minReturn, resetInfo.lastAugReset))
+    return; // Keep the successful cohort in class until autopilot exits; don't immediately send it back onto a risky contract.
+  const final = request?.status === 'farming' ? request : null;
   if (!playerInGang && (2 in ownedSourceFiles) && !resetInfo.bitNodeOptions?.disableGang) {
     const inGangResult = await gangRun(ns, 'inGang');
     playerInGang = inGangResult === true; // ERROR strings from the RAM-dodge helper must not count as gang membership
@@ -673,7 +767,7 @@ async function mainLoop(ns) {
   // Crime success has a separate penalty in BN14, including when SF5 is not available.
   crimeSuccessMultiplier = resetInfo.currentNode === 14 ? 0.4 : 1;
   const karma = ns.heart.break();
-  const needsGangKarma = !options.crime && shouldPrioritizeGangKarma(
+  const needsGangKarma = !final && !options.crime && shouldPrioritizeGangKarma(
     playerInGang,
     options['disable-gang-homicide-priority'],
     2 in ownedSourceFiles && ![2, 8].includes(resetInfo.currentNode) && !resetInfo.bitNodeOptions?.disableGang,
@@ -687,7 +781,7 @@ async function mainLoop(ns) {
   // Get time in current bitnode (to cap how long we'll train sleeves)
   const timeInBitnode = Date.now() - resetInfo.lastNodeReset
   const trainingReserve = Number(options['training-reserve'] ?? (ns.read(trainingReserveFile) || globalReserve));
-  let canTrain = !options['disable-training'] &&
+  let canTrain = !final && !options['disable-training'] &&
     // To avoid training forever when mults are crippling, stop training if we've been in the bitnode a certain amount of time
     (options['training-cap-seconds'] * 1000 > timeInBitnode) &&
     // Don't train if we have no money (unless player has given permission to train into debt)
@@ -699,7 +793,7 @@ async function mainLoop(ns) {
   if (9 in ownedSourceFiles && canTrain && task.some(t => t?.startsWith("study")) && !options['disable-spending-hashes-for-study-upgrades'])
     if (await hnRun(ns, 'spendHashes', "Improve Studying"))
       log(ns, `SUCCESS: Bought "Improve Studying" to speed up Sleeve studying.`, false, 'success');
-  if (playerInBladeburner && hasBladeburnerAccess(ownedSourceFiles)) {
+  if (!final && playerInBladeburner && hasBladeburnerAccess(ownedSourceFiles)) {
     const bladeburnerCity = await bbRun(ns, 'getCity');
     bladeburnerCityChaos = await bbRun(ns, 'getCityChaos', bladeburnerCity);
     bladeburnerContractChances = {};
@@ -717,7 +811,8 @@ async function mainLoop(ns) {
   // Update all sleeve information and loop over all sleeves to do some individual checks and task assignments
   let sleeveInfo = await getAllSleeves(ns, numSleeves);
   // Killing a script does not stop sleeve work. Reconcile the whole fleet before planning assignments.
-  if (observedTasks.length !== numSleeves || Date.now() - taskSnapshotTime >= taskValidationInterval) {
+  const freshTasks = observedTasks.length !== numSleeves || Date.now() - taskSnapshotTime >= taskValidationInterval;
+  if (freshTasks) {
     const snapshot = [];
     for (let i = 0; i < numSleeves; i++) {
       const actual = await sleeveRun(ns, 'getTask', i);
@@ -749,10 +844,18 @@ async function mainLoop(ns) {
   const urgentCrime = gangKarmaPriority || !!options.crime;
   // The fleet phase takes a turn ahead of ordinary training and rep routes. The player may keep
   // working for a faction throughout the farm; waiting for that work to end could starve the phase.
-  const farmPlans = !options['disable-training'] && !resetInfo.bitNodeOptions?.disableSleeveExpAndAugmentation &&
+  let boughtFinalAug = false;
+  if (final) {
+    for (let i = 0; i < numSleeves; i++) if (sleeveInfo[i].shock === 0) {
+      const spent = await manageSleeveAugs(ns, i, budget, true);
+      boughtFinalAug ||= spent > 0; budget -= spent;
+    }
+  }
+  const farmPlans = final ? await planFinalStudy(ns, sleeveInfo, playerInfo.money - (options.reserve ?? globalReserve), resetInfo, freshTasks, boughtFinalAug)
+    : !finalNode && !options['disable-training'] && !resetInfo.bitNodeOptions?.disableSleeveExpAndAugmentation &&
     (resetInfo.currentNode === 5 || 5 in ownedSourceFiles || playerInfo.skills?.intelligence > 0)
     ? await planFleetIntelFarm(ns, sleeveInfo, playerInfo.money - (options.reserve ?? globalReserve), urgentCrime) : null;
-  if (!!farmPlans !== fleetIntelRunning) {
+  if (!finalNode && !!farmPlans !== fleetIntelRunning) {
     if (farmPlans) log(ns, `Sleeve INT farm: all eight studying at ZB, target INT ${options['sleeve-intel-target']}.`);
     else if (fleetIntelState?.status !== 'complete') log(ns, 'Sleeve INT farm paused; returning sleeves to normal work.');
     fleetIntelRunning = !!farmPlans;
@@ -765,7 +868,7 @@ async function mainLoop(ns) {
   const repJobs = options['shock-policy'] === 'auto' && allWorkers.some(i => sleeveInfo[i].shock > 0)
     ? Object.keys(assignSleeveRepTargets(allWorkers, playerWorkInfo, factionRoutes, factionWorkTypes, repDisabled, observedTasks)).length : 0;
   stagedShockRecoveryState = planSleeveRecovery(sleeveInfo, observedTasks, stagedShockRecoveryState, {
-    policy: options['shock-policy'], order: allWorkers, repJobs, urgentCrime, bladeburner: playerInBladeburner,
+    policy: final ? 'parallel' : options['shock-policy'], order: allWorkers, repJobs, urgentCrime, bladeburner: playerInBladeburner,
     keepBackground: canTrain || playerInfo.money <= (options.reserve ?? globalReserve),
   });
   const repWorkerOrder = getSleeveRepWorkerOrder(sleeveInfo, stagedShockRecoveryState, playerInBladeburner);
@@ -784,7 +887,7 @@ async function mainLoop(ns) {
   for (let i = 0; i < numSleeves; i++) {
     let sleeve = sleeveInfo[i]; // For convenience, merge all sleeve stats/info into one object
     // Manage sleeve augmentations (if available)
-    if (sleeve.shock == 0) // No augs are available augs until shock is 0
+    if (!final && sleeve.shock == 0) // No augs are available augs until shock is 0
       budget -= await manageSleeveAugs(ns, i, budget);
 
     // Decide what we think the sleeve should be doing for the next little while

@@ -6,7 +6,7 @@ import {execFileSync} from 'node:child_process';
 import {stripTypeScriptTypes} from 'node:module';
 import {resolve} from 'node:path';
 import * as planner from '../../../faction-route-planner.js';
-import {hasBladeburnerAccess} from '../../../progression.js';
+import {hasBladeburnerAccess, bn103StudyNode} from '../../../progression.js';
 import {main as sleeveHelper, prepareSleeveResultForPort} from '../../../bin/sleeveRun.js';
 
 const root = new URL('../../../', import.meta.url);
@@ -53,7 +53,7 @@ function fixture({tasks = [null, null, null], routes = [A, B, C], playerWork = n
   };
   const engineApi = Function(...Object.keys(bindings), official + ';return NetscriptSleeve();')(...Object.values(bindings));
   const taskData = i => prepareSleeveResultForPort('getTask', engineApi.getTask({})(i));
-  const mocks = {...planner, hasBladeburnerAccess, disableLogs: noop,
+  const mocks = {...planner, hasBladeburnerAccess, bn103StudyNode, disableLogs: noop,
     getConfiguration: (_, schema) => ({...Object.fromEntries(schema), 'disable-training': true, 'disable-bladeburner': true, ...flags}),
     findPids: async () => [1], getActiveSourceFiles: async () => state.files,
     log: (_, text) => logs.push(text), formatMoney: String, formatDuration: String,
