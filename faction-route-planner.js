@@ -39,6 +39,23 @@ function asSet(values) {
   return values instanceof Set ? values : new Set(values ?? []);
 }
 
+/** Accept spare invitations only when they cannot newly lock out an unowned augmentation.
+ * Check all ordinary augs, not just today's desired stat filters. Queued purchases count as owned.
+ * Missing enemy/offering data is not evidence that an exclusive join is harmless. */
+export function canJoinFactionPassively({faction, factionEnemies = {}, factionAugs = {},
+  ownedAugs = [], joinedFactions = [], reservedFactions = []} = {}) {
+  const joined = asSet(joinedFactions), reserved = asSet(reservedFactions), owned = asSet(ownedAugs);
+  if (!faction || joined.has(faction) || reserved.has(faction) ||
+    ['Bladeburners', 'Church of the Machine God', 'Shadows of Anarchy'].includes(faction)) return false;
+  const enemies = factionEnemies[faction];
+  if (!Array.isArray(enemies) || enemies.some(enemy => typeof enemy !== 'string' || !enemy)) return false;
+  // Joining an ally of a city faction already chosen does not create additional exclusions.
+  const alreadyBlocked = new Set([...joined].flatMap(name => Array.isArray(factionEnemies[name]) ? factionEnemies[name] : []));
+  return enemies.every(enemy => !joined.has(enemy) && (alreadyBlocked.has(enemy) ||
+    Array.isArray(factionAugs[enemy]) && factionAugs[enemy].every(aug =>
+      typeof aug === 'string' && (aug === NEUROFLUX || owned.has(aug)))));
+}
+
 export function getDefaultDesiredStats({ bitNode, ownedAugCount = 0, factions = [], lastAugReset = 0, now = Date.now() } = {}) {
   const takeAnyAug = ownedAugCount > 40 || bitNode === 6 || bitNode === 7 || factions.includes("Bladeburners") ||
     now - lastAugReset < 20 * 60 * 1000;

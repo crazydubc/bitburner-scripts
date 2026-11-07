@@ -1,0 +1,858 @@
+{
+  "baseline": "89bb315d46886c144d6bb3b6f46c62e89deb8bff",
+  "engine": "1da7316ffd9d281b45a86c4c54ec532276557892",
+  "assumptions": "Fresh fully synchronized sleeves, 100 starting shock, constant equal skills/intelligence, no stored cycles, new damage, purchases, training, cash pressure or Bladeburner. Rep slots stay useful. Hours integrate shock-scaled output at fixed base rate; no live BN time prediction.",
+  "hourlyShockPoints": {
+    "0": {
+      "work": 1.8,
+      "recovery": 5.4
+    },
+    "230": {
+      "work": 1.974,
+      "recovery": 5.923
+    }
+  },
+  "initialKarmaWorkersAtFullSync": {
+    "historical": 7,
+    "auto": 8,
+    "parallel": 0
+  },
+  "xpWindows": [
+    {
+      "horizonHours": 10,
+      "initialShock": 100,
+      "intelligence": 0,
+      "afterAug": 1,
+      "recoverHours": 4,
+      "switchAtShock": 78.4,
+      "optimalXpHours": 1.62,
+      "immediateWorkXpHours": 0.9,
+      "fullRecoveryFirstXpHours": 0
+    },
+    {
+      "horizonHours": 15,
+      "initialShock": 100,
+      "intelligence": 0,
+      "afterAug": 1,
+      "recoverHours": 6,
+      "switchAtShock": 67.6,
+      "optimalXpHours": 3.645,
+      "immediateWorkXpHours": 2.025,
+      "fullRecoveryFirstXpHours": 0
+    },
+    {
+      "horizonHours": 24,
+      "initialShock": 100,
+      "intelligence": 0,
+      "afterAug": 1,
+      "recoverHours": 9.6,
+      "switchAtShock": 48.16,
+      "optimalXpHours": 9.331,
+      "immediateWorkXpHours": 5.184,
+      "fullRecoveryFirstXpHours": 5.481
+    },
+    {
+      "horizonHours": 36,
+      "initialShock": 100,
+      "intelligence": 0,
+      "afterAug": 1,
+      "recoverHours": 12.346,
+      "switchAtShock": 33.333,
+      "optimalXpHours": 20.568,
+      "immediateWorkXpHours": 11.664,
+      "fullRecoveryFirstXpHours": 17.481
+    }
+  ],
+  "augmentedExample": {
+    "horizonHours": 24,
+    "initialShock": 100,
+    "intelligence": 0,
+    "afterAug": 2,
+    "recoverHours": 18.519,
+    "switchAtShock": 0,
+    "optimalXpHours": 10.963,
+    "immediateWorkXpHours": 5.184,
+    "fullRecoveryFirstXpHours": 10.963
+  },
+  "remainingTimeExample": {
+    "horizonHours": 5,
+    "initialShock": 73,
+    "intelligence": 0,
+    "afterAug": 1,
+    "recoverHours": 0,
+    "switchAtShock": 73,
+    "optimalXpHours": 1.575,
+    "immediateWorkXpHours": 1.575,
+    "fullRecoveryFirstXpHours": 0
+  },
+  "cases": {
+    "sleeves=8,repJobs=2,INT=0": {
+      "historical": {
+        "initialWorkers": 7,
+        "firstAugEligibleHours": 18.519,
+        "secondAugEligibleHours": 30.864,
+        "allAugEligibleHours": 30.864,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 1.8,
+            "backgroundXpWorkerHours": 4.5,
+            "backgroundCrimeHours": 50
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 4.05,
+            "backgroundXpWorkerHours": 10.125,
+            "backgroundCrimeHours": 75
+          },
+          "24": {
+            "augEligible": 1,
+            "repWorkerHours": 11.654,
+            "backgroundXpWorkerHours": 15.432,
+            "backgroundCrimeHours": 92.593
+          },
+          "36": {
+            "augEligible": 8,
+            "repWorkerHours": 28.79,
+            "backgroundXpWorkerHours": 46.247,
+            "backgroundCrimeHours": 123.407
+          },
+          "60": {
+            "augEligible": 8,
+            "repWorkerHours": 76.79,
+            "backgroundXpWorkerHours": 190.247,
+            "backgroundCrimeHours": 267.407
+          }
+        }
+      },
+      "staged": {
+        "initialWorkers": 7,
+        "firstAugEligibleHours": 18.519,
+        "secondAugEligibleHours": 30.864,
+        "allAugEligibleHours": 30.864,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 1.8,
+            "backgroundXpWorkerHours": 4.5,
+            "backgroundCrimeHours": 50
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 4.05,
+            "backgroundXpWorkerHours": 10.125,
+            "backgroundCrimeHours": 75
+          },
+          "24": {
+            "augEligible": 1,
+            "repWorkerHours": 11.654,
+            "backgroundXpWorkerHours": 15.432,
+            "backgroundCrimeHours": 92.593
+          },
+          "36": {
+            "augEligible": 8,
+            "repWorkerHours": 28.79,
+            "backgroundXpWorkerHours": 46.247,
+            "backgroundCrimeHours": 123.407
+          },
+          "60": {
+            "augEligible": 8,
+            "repWorkerHours": 76.79,
+            "backgroundXpWorkerHours": 190.247,
+            "backgroundCrimeHours": 267.407
+          }
+        }
+      },
+      "auto": {
+        "initialWorkers": 2,
+        "firstAugEligibleHours": 18.519,
+        "secondAugEligibleHours": 18.519,
+        "allAugEligibleHours": 25.925,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 3.182,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 8.099,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 6,
+            "repWorkerHours": 23.063,
+            "backgroundXpWorkerHours": 12.045,
+            "backgroundCrimeHours": 12.045
+          },
+          "36": {
+            "augEligible": 8,
+            "repWorkerHours": 47.063,
+            "backgroundXpWorkerHours": 80.198,
+            "backgroundCrimeHours": 80.198
+          },
+          "60": {
+            "augEligible": 8,
+            "repWorkerHours": 95.063,
+            "backgroundXpWorkerHours": 224.198,
+            "backgroundCrimeHours": 224.198
+          }
+        }
+      },
+      "parallel": {
+        "initialWorkers": 0,
+        "firstAugEligibleHours": 18.519,
+        "secondAugEligibleHours": 18.519,
+        "allAugEligibleHours": 18.519,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 8,
+            "repWorkerHours": 10.963,
+            "backgroundXpWorkerHours": 32.889,
+            "backgroundCrimeHours": 32.889
+          },
+          "36": {
+            "augEligible": 8,
+            "repWorkerHours": 34.963,
+            "backgroundXpWorkerHours": 104.889,
+            "backgroundCrimeHours": 104.889
+          },
+          "60": {
+            "augEligible": 8,
+            "repWorkerHours": 82.963,
+            "backgroundXpWorkerHours": 248.889,
+            "backgroundCrimeHours": 248.889
+          }
+        }
+      },
+      "work": {
+        "initialWorkers": 8,
+        "firstAugEligibleHours": 55.556,
+        "secondAugEligibleHours": 55.556,
+        "allAugEligibleHours": 55.556,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 1.8,
+            "backgroundXpWorkerHours": 5.4,
+            "backgroundCrimeHours": 60
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 4.05,
+            "backgroundXpWorkerHours": 12.15,
+            "backgroundCrimeHours": 90
+          },
+          "24": {
+            "augEligible": 0,
+            "repWorkerHours": 10.368,
+            "backgroundXpWorkerHours": 31.104,
+            "backgroundCrimeHours": 144
+          },
+          "36": {
+            "augEligible": 0,
+            "repWorkerHours": 23.328,
+            "backgroundXpWorkerHours": 69.984,
+            "backgroundCrimeHours": 216
+          },
+          "60": {
+            "augEligible": 8,
+            "repWorkerHours": 64.444,
+            "backgroundXpWorkerHours": 193.333,
+            "backgroundCrimeHours": 360
+          }
+        }
+      }
+    },
+    "sleeves=1,repJobs=1,INT=0": {
+      "historical": {
+        "initialWorkers": 0,
+        "firstAugEligibleHours": 18.519,
+        "secondAugEligibleHours": null,
+        "allAugEligibleHours": 18.519,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 1,
+            "repWorkerHours": 5.481,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "36": {
+            "augEligible": 1,
+            "repWorkerHours": 17.481,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "60": {
+            "augEligible": 1,
+            "repWorkerHours": 41.481,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          }
+        }
+      },
+      "staged": {
+        "initialWorkers": 0,
+        "firstAugEligibleHours": 18.519,
+        "secondAugEligibleHours": null,
+        "allAugEligibleHours": 18.519,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 1,
+            "repWorkerHours": 5.481,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "36": {
+            "augEligible": 1,
+            "repWorkerHours": 17.481,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "60": {
+            "augEligible": 1,
+            "repWorkerHours": 41.481,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          }
+        }
+      },
+      "auto": {
+        "initialWorkers": 1,
+        "firstAugEligibleHours": 55.556,
+        "secondAugEligibleHours": null,
+        "allAugEligibleHours": 55.556,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 0.9,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 2.025,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 0,
+            "repWorkerHours": 5.184,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "36": {
+            "augEligible": 0,
+            "repWorkerHours": 11.664,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "60": {
+            "augEligible": 1,
+            "repWorkerHours": 32.222,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          }
+        }
+      },
+      "parallel": {
+        "initialWorkers": 0,
+        "firstAugEligibleHours": 18.519,
+        "secondAugEligibleHours": null,
+        "allAugEligibleHours": 18.519,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 1,
+            "repWorkerHours": 5.481,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "36": {
+            "augEligible": 1,
+            "repWorkerHours": 17.481,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "60": {
+            "augEligible": 1,
+            "repWorkerHours": 41.481,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          }
+        }
+      },
+      "work": {
+        "initialWorkers": 1,
+        "firstAugEligibleHours": 55.556,
+        "secondAugEligibleHours": null,
+        "allAugEligibleHours": 55.556,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 0.9,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 2.025,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 0,
+            "repWorkerHours": 5.184,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "36": {
+            "augEligible": 0,
+            "repWorkerHours": 11.664,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "60": {
+            "augEligible": 1,
+            "repWorkerHours": 32.222,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          }
+        }
+      }
+    },
+    "sleeves=8,repJobs=2,INT=230": {
+      "historical": {
+        "initialWorkers": 7,
+        "firstAugEligibleHours": 16.883,
+        "secondAugEligibleHours": 28.138,
+        "allAugEligibleHours": 28.138,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 1.974,
+            "backgroundXpWorkerHours": 4.936,
+            "backgroundCrimeHours": 50
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 4.442,
+            "backgroundXpWorkerHours": 11.106,
+            "backgroundCrimeHours": 75
+          },
+          "24": {
+            "augEligible": 1,
+            "repWorkerHours": 12.745,
+            "backgroundXpWorkerHours": 14.069,
+            "backgroundCrimeHours": 84.414
+          },
+          "36": {
+            "augEligible": 8,
+            "repWorkerHours": 32.607,
+            "backgroundXpWorkerHours": 61.242,
+            "backgroundCrimeHours": 131.586
+          },
+          "60": {
+            "augEligible": 8,
+            "repWorkerHours": 80.607,
+            "backgroundXpWorkerHours": 205.242,
+            "backgroundCrimeHours": 275.586
+          }
+        }
+      },
+      "staged": {
+        "initialWorkers": 7,
+        "firstAugEligibleHours": 16.883,
+        "secondAugEligibleHours": 28.138,
+        "allAugEligibleHours": 28.138,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 1.974,
+            "backgroundXpWorkerHours": 4.936,
+            "backgroundCrimeHours": 50
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 4.442,
+            "backgroundXpWorkerHours": 11.106,
+            "backgroundCrimeHours": 75
+          },
+          "24": {
+            "augEligible": 1,
+            "repWorkerHours": 12.745,
+            "backgroundXpWorkerHours": 14.069,
+            "backgroundCrimeHours": 84.414
+          },
+          "36": {
+            "augEligible": 8,
+            "repWorkerHours": 32.607,
+            "backgroundXpWorkerHours": 61.242,
+            "backgroundCrimeHours": 131.586
+          },
+          "60": {
+            "augEligible": 8,
+            "repWorkerHours": 80.607,
+            "backgroundXpWorkerHours": 205.242,
+            "backgroundCrimeHours": 275.586
+          }
+        }
+      },
+      "auto": {
+        "initialWorkers": 2,
+        "firstAugEligibleHours": 16.883,
+        "secondAugEligibleHours": 16.883,
+        "allAugEligibleHours": 23.635,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 3.705,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 8.841,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 8,
+            "repWorkerHours": 25.265,
+            "backgroundXpWorkerHours": 20.194,
+            "backgroundCrimeHours": 20.194
+          },
+          "36": {
+            "augEligible": 8,
+            "repWorkerHours": 49.265,
+            "backgroundXpWorkerHours": 92.194,
+            "backgroundCrimeHours": 92.194
+          },
+          "60": {
+            "augEligible": 8,
+            "repWorkerHours": 97.265,
+            "backgroundXpWorkerHours": 236.194,
+            "backgroundCrimeHours": 236.194
+          }
+        }
+      },
+      "parallel": {
+        "initialWorkers": 0,
+        "firstAugEligibleHours": 16.883,
+        "secondAugEligibleHours": 16.883,
+        "allAugEligibleHours": 16.883,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 8,
+            "repWorkerHours": 14.235,
+            "backgroundXpWorkerHours": 42.704,
+            "backgroundCrimeHours": 42.704
+          },
+          "36": {
+            "augEligible": 8,
+            "repWorkerHours": 38.235,
+            "backgroundXpWorkerHours": 114.704,
+            "backgroundCrimeHours": 114.704
+          },
+          "60": {
+            "augEligible": 8,
+            "repWorkerHours": 86.235,
+            "backgroundXpWorkerHours": 258.704,
+            "backgroundCrimeHours": 258.704
+          }
+        }
+      },
+      "work": {
+        "initialWorkers": 8,
+        "firstAugEligibleHours": 50.648,
+        "secondAugEligibleHours": 50.648,
+        "allAugEligibleHours": 50.648,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 1.974,
+            "backgroundXpWorkerHours": 5.923,
+            "backgroundCrimeHours": 60
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 4.442,
+            "backgroundXpWorkerHours": 13.327,
+            "backgroundCrimeHours": 90
+          },
+          "24": {
+            "augEligible": 0,
+            "repWorkerHours": 11.373,
+            "backgroundXpWorkerHours": 34.118,
+            "backgroundCrimeHours": 144
+          },
+          "36": {
+            "augEligible": 0,
+            "repWorkerHours": 25.588,
+            "backgroundXpWorkerHours": 76.765,
+            "backgroundCrimeHours": 216
+          },
+          "60": {
+            "augEligible": 8,
+            "repWorkerHours": 69.352,
+            "backgroundXpWorkerHours": 208.056,
+            "backgroundCrimeHours": 360
+          }
+        }
+      }
+    },
+    "sleeves=1,repJobs=1,INT=230": {
+      "historical": {
+        "initialWorkers": 0,
+        "firstAugEligibleHours": 16.883,
+        "secondAugEligibleHours": null,
+        "allAugEligibleHours": 16.883,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 1,
+            "repWorkerHours": 7.117,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "36": {
+            "augEligible": 1,
+            "repWorkerHours": 19.117,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "60": {
+            "augEligible": 1,
+            "repWorkerHours": 43.117,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          }
+        }
+      },
+      "staged": {
+        "initialWorkers": 0,
+        "firstAugEligibleHours": 16.883,
+        "secondAugEligibleHours": null,
+        "allAugEligibleHours": 16.883,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 1,
+            "repWorkerHours": 7.117,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "36": {
+            "augEligible": 1,
+            "repWorkerHours": 19.117,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "60": {
+            "augEligible": 1,
+            "repWorkerHours": 43.117,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          }
+        }
+      },
+      "auto": {
+        "initialWorkers": 1,
+        "firstAugEligibleHours": 50.648,
+        "secondAugEligibleHours": null,
+        "allAugEligibleHours": 50.648,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 0.987,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 2.221,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 0,
+            "repWorkerHours": 5.686,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "36": {
+            "augEligible": 0,
+            "repWorkerHours": 12.794,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "60": {
+            "augEligible": 1,
+            "repWorkerHours": 34.676,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          }
+        }
+      },
+      "parallel": {
+        "initialWorkers": 0,
+        "firstAugEligibleHours": 16.883,
+        "secondAugEligibleHours": null,
+        "allAugEligibleHours": 16.883,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 0,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 1,
+            "repWorkerHours": 7.117,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "36": {
+            "augEligible": 1,
+            "repWorkerHours": 19.117,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "60": {
+            "augEligible": 1,
+            "repWorkerHours": 43.117,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          }
+        }
+      },
+      "work": {
+        "initialWorkers": 1,
+        "firstAugEligibleHours": 50.648,
+        "secondAugEligibleHours": null,
+        "allAugEligibleHours": 50.648,
+        "snapshots": {
+          "10": {
+            "augEligible": 0,
+            "repWorkerHours": 0.987,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "15": {
+            "augEligible": 0,
+            "repWorkerHours": 2.221,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "24": {
+            "augEligible": 0,
+            "repWorkerHours": 5.686,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "36": {
+            "augEligible": 0,
+            "repWorkerHours": 12.794,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          },
+          "60": {
+            "augEligible": 1,
+            "repWorkerHours": 34.676,
+            "backgroundXpWorkerHours": 0,
+            "backgroundCrimeHours": 0
+          }
+        }
+      }
+    }
+  }
+}

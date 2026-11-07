@@ -1,4 +1,5 @@
-import { getReset, log, corpRun, getBNMults } from './utils.js'
+import { getReset, log, corpRun, getBNMults, getReserve, purchase as guardedPurchase } from './utils.js'
+import { recordRunEvents } from './logger.js'
 
 //Can we get rid of these?
 const corpName = "Shady-Ent"
@@ -40,6 +41,77 @@ let investOffer
 let corporationConstants
 let lastBootstrapWarning = 0
 let capitalConstrainedBootstrap = false
+let dividendRate = 0.01
+const argsSchema = [['dividend-rate', 0.01], ['help', false]]
+
+export function autocomplete(data) { data.flags(argsSchema); return [] }
+
+/** Creation eligibility is a status string in 3.x; older games returned a boolean. */
+export async function waitForCorporation(ns, currentNode) {
+  const selfFund = Number(currentNode) !== 3
+  let lastNotice = -Infinity
+  while (!ns.corporation.hasCorporation()) {
+    const status = ns.corporation.canCreateCorporation(selfFund)
+    if (status !== 'Success' && status !== true) {
+      log(ns, `Cannot create a corporation (${String(status)}). Requires BN3 or SF3 and corporation access enabled.`, true, 'warning')
+      return false
+    }
+    const reserve = selfFund ? await getReserve(ns) : 0
+    const requiredMoney = selfFund ? 150e9 + reserve : 0
+    if (!selfFund || ns.getServerMoneyAvailable('home') >= requiredMoney) {
+      try { await guardedPurchase(ns, 'corporation', 'createCorporation', [corpName, selfFund], selfFund ? {} : {reserve: 0}) }
+      catch (error) { log(ns, `Corporation creation failed; rechecking funds/access: ${String(error)}`, false, 'warning') }
+      // A reply, including a truthy error, is not proof that creation succeeded.
+      if (ns.corporation.hasCorporation()) return true
+    }
+    if (Date.now() - lastNotice >= 60_000) {
+      log(ns, selfFund
+        ? `Waiting to create a corporation: need $150b plus the home reserve ($${ns.format.number(reserve, 3)}). Keep income scripts running.`
+        : 'BN3 seed-funded creation has not succeeded; retrying.', true, 'info')
+      lastNotice = Date.now()
+    }
+    await ns.sleep(1000)
+  }
+  return true
+}
+
+/** Public corporations no longer receive investment offers, even if they skipped private rounds. */
+export function getCorporationPhase(corporation, offer) {
+  if (!corporation) return 0
+  if (corporation.public === true) return 5
+  const round = Number(offer?.round)
+  return Number.isInteger(round) && round >= 1 && round <= 5 ? round : 0
+}
+
+async function readInvestmentOffer(ns) {
+  const offer = await corpRun(ns, 'getInvestmentOffer')
+  const round = getCorporationPhase(await getCorp(ns), offer)
+  return round ? { ...offer, round } : undefined
+}
+
+/** Keep three market cycles of operating expenses before distributing a small share of profits. */
+export function getSafeDividendRate(corporation, requestedRate, secondsPerCycle) {
+  const { funds, revenue, expenses } = corporation ?? {}
+  if (![funds, revenue, expenses, requestedRate, secondsPerCycle].every(Number.isFinite) ||
+    requestedRate < 0 || requestedRate > 1 || secondsPerCycle <= 0 || expenses < 0 ||
+    revenue <= expenses || funds < Math.max(ROUND_ONE_OPERATING_RESERVE, expenses * secondsPerCycle * 3)) return 0
+  return requestedRate
+}
+
+/** All four offers remain available before the default IPO; no player-owned shares are sold. */
+export async function manageCorporationPayout(ns, round, requestedRate = 0.01) {
+  let corporation = await getCorp(ns)
+  if (!corporation || (corporation.public !== true && Number(round) !== 5)) return
+  if (corporation.public !== true) {
+    if (await corpRun(ns, 'goPublic', 0) !== true) return
+    corporation = await getCorp(ns)
+    if (corporation?.public !== true) return
+    log(ns, 'All private funding rounds complete. Corporation is public; retained all remaining shares.', true, 'info')
+  }
+  const constants = await getCorporationConstants(ns)
+  const rate = getSafeDividendRate(corporation, requestedRate, Number(constants?.secondsPerMarketCycle))
+  if (corporation.dividendRate !== rate) await corpRun(ns, 'issueDividends', rate)
+}
 
 const REQUIRED_CORPORATION_APIS = ["Office API", "Warehouse API"]
 const ROUND_ONE_OPERATING_RESERVE = 5e9
@@ -53,6 +125,13 @@ const BOOST_MATERIALS = ["Hardware", "Robots", "AI Cores", "Real Estate"]
 //I want to impliment helper functions for ram dodge across all corp functions.
 async function getCorp(ns) {
   return (await corpRun(ns, 'getCorporation'));
+}
+
+/** Missing divisions are an expected state; other RPC failures must remain errors. */
+async function getOptionalDivision(ns, name) {
+  const corporation = await getCorp(ns);
+  if (!Array.isArray(corporation?.divisions)) throw new Error('Invalid corporation division list');
+  return corporation.divisions.includes(name) ? await corpRun(ns, 'getDivision', name) : undefined;
 }
 
 /** Keep a corporation purchase from consuming working capital needed to reach the next market cycle. */
@@ -338,7 +417,7 @@ async function ensureCorporationApis(ns) {
 }
 
 async function hireAdVertsUpTo(ns, divisionName, target) {
-  let division = await corpRun(ns, 'getDivision', divisionName)
+  let division = await getOptionalDivision(ns, divisionName)
   if (!division) return false
 
   while (division.numAdVerts < target) {
@@ -358,7 +437,13 @@ async function hireAdVertsUpTo(ns, divisionName, target) {
 
 /** @param {NS} ns */
 export async function main(ns) {
-  ns.ramOverride(5)
+  ns.ramOverride(5.5) // Include the home reserve and player-cash checks at startup.
+  const options = ns.flags(argsSchema)
+  dividendRate = Number(options['dividend-rate'])
+  if (options.help || !Number.isFinite(dividendRate) || dividendRate < 0 || dividendRate > 1) {
+    ns.tprint('Usage: run corporation.js [--dividend-rate 0.01] (0 to 1; 0 retains all profits). BN3 uses seed funding; other BNs require $150b above the home reserve. Dividends begin after all four private offers, or resume for an already-public corporation.')
+    return
+  }
   ns.disableLog("ALL")
   //ns.ui.openTail();
   ns.clearLog()
@@ -372,11 +457,10 @@ export async function main(ns) {
   bnMults = await getBNMults(ns)
   const corporationValuation = Number(bnMults?.CorporationValuation)
   const corporationDivisions = Number(bnMults?.CorporationDivisions)
-  if (!(corporationValuation > 0) || !(corporationDivisions > 0)) {
+  if (!(corporationValuation > 0) || !(corporationDivisions > 0) || !(Number(bnMults?.CorporationSoftcap) >= 0.15)) {
     log(ns, `Corporations are disabled in BN${myBN}; corporation.js is exiting.`, true, 'warning')
     return
   }
-  const selfFund = myBN !== 3
   capitalConstrainedBootstrap = shouldUseCapitalConstrainedBootstrap(myBN, sourceFile3Level)
   const bootstrapMode = capitalConstrainedBootstrap
     ? `paid-API constrained bootstrap (SF3.${sourceFile3Level})`
@@ -385,21 +469,24 @@ export async function main(ns) {
     `Round-one funding scales with valuation but retains a ` +
     `${ns.format.number(ROUND_ONE_MINIMUM_TRANSITION_CAPITAL, 3)} minimum transition floor.`,
     true, 'info')
-  while (!ns.corporation.hasCorporation() && ns.corporation.canCreateCorporation(selfFund)
-    && !(await corpRun(ns, 'createCorporation', corpName, selfFund))) await ns.sleep(1000)
+  if (!(await waitForCorporation(ns, myBN))) return
   log(ns, `Corporation is up, detecting investment round`, true)
-  let round = (await corpRun(ns, 'getInvestmentOffer')).round;
+  investOffer = await readInvestmentOffer(ns)
+  let round = investOffer?.round ?? 0
   log(ns, `Round ${round}!`, true)
   teaNeeded = true
   tobaccoBooster = false
   while (true) {
     while (round === 1) {
-      if (!(await prep(ns))) {
+      const ready = await prep(ns)
+      round = investOffer?.round ?? round
+      if (!ready) {
         await ns.corporation.nextUpdate()
         continue
       }
+      if (round !== 1) continue
       await updateHud(ns)
-      const agriculture = await corpRun(ns, 'getDivision', div1)
+      const agriculture = await getOptionalDivision(ns, div1)
       const advertTarget = getRoundOneAdvertTarget(agriculture?.cities?.length, cities.length)
       if (advertTarget > 0)
         await hireAdVertsUpTo(ns, div1, advertTarget)
@@ -428,10 +515,13 @@ export async function main(ns) {
       await ns.corporation.nextUpdate();
     }
     while (round === 2) {
-      if (!(await prep(ns))) {
+      const ready = await prep(ns)
+      round = investOffer?.round ?? round
+      if (!ready) {
         await ns.corporation.nextUpdate()
         continue
       }
+      if (round !== 2) continue
       await updateHud(ns)
       await manageProducts(ns)
       let hasDiv2 = false
@@ -476,10 +566,13 @@ export async function main(ns) {
       await ns.corporation.nextUpdate();
     }
     while (round === 3 || round === 4) {
-      if (!(await prep(ns))) {
+      const ready = await prep(ns)
+      round = investOffer?.round ?? round
+      if (!ready) {
         await ns.corporation.nextUpdate()
         continue
       }
+      if (round !== 3 && round !== 4) continue
       await updateHud(ns)
       while ((await corpRun(ns, 'getUpgradeLevel', "Smart Factories")) < 20 && (await corpRun(ns, 'getUpgradeLevelCost', "Smart Factories")) <= await corpFunds(ns))
         (await corpRun(ns, 'levelUpgrade', "Smart Factories"))
@@ -507,10 +600,13 @@ export async function main(ns) {
       await ns.corporation.nextUpdate();
     }
     while (round >= 5) {
-      if (!(await prep(ns))) {
+      const ready = await prep(ns)
+      round = investOffer?.round ?? round
+      if (!ready) {
         await ns.corporation.nextUpdate()
         continue
       }
+      if (round < 5) continue
       await updateHud(ns)
       await manageProducts(ns)
       await spendRP(ns)
@@ -534,7 +630,8 @@ export async function main(ns) {
     }
     log(ns, `Unexpected corporation investment round ${String(round)}; refreshing state.`, true, 'warning')
     await ns.sleep(1000)
-    round = (await corpRun(ns, 'getInvestmentOffer'))?.round
+    investOffer = await readInvestmentOffer(ns)
+    round = investOffer?.round ?? 0
   }
 }
 
@@ -548,6 +645,8 @@ async function updateHud(ns) {
   const cObj = await getCorp(ns)
   ns.printf("%s", cObj.name)
   ns.printf("Funds : $%s  Profit: $%s/s", ns.format.number(cObj.funds, 3), ns.format.number(cObj.revenue - cObj.expenses, 3))
+  ns.printf("%s | Player dividends: $%s/s | Rate: %s%%", cObj.public ? "Public" : "Private",
+    ns.format.number(cObj.dividendEarnings || 0, 3), ns.format.number((cObj.dividendRate || 0) * 100, 2))
   const invest = investOffer
   const upgrades = await getUpgradeLevel(ns, "Neural Accelerators")
     + await getUpgradeLevel(ns, "Project Insight")
@@ -631,6 +730,7 @@ function resetInvestmentPeakTracking(round = 0) {
 async function checkInvest(ns) {
   const round = Number(investOffer?.round)
   const corp = await getCorp(ns)
+  if (corp?.public === true) return 5
   if (!corp || !Number.isInteger(round) || round < 1 || round > 4) return round
 
   if (investmentPeakRound !== round) resetInvestmentPeakTracking(round)
@@ -668,6 +768,7 @@ async function checkInvest(ns) {
   }
 
   const nextOffer = await corpRun(ns, 'getInvestmentOffer')
+  await recordRunEvents(ns, [{kind: 'corporation-investment', key: String(round), data: {round, offerFunds}}])
   const nextRound = Number(nextOffer?.round)
   investOffer = nextOffer
   teaNeeded = true
@@ -685,9 +786,12 @@ async function corpFunds(ns) {
 async function expandCities(ns, division, options = {}) {
   const allowExpansion = options.allowExpansion !== false
   const reserve = Number(options.reserve) || 0
-  let divisionInfo = await corpRun(ns, 'getDivision', division)
+  let divisionInfo = await getOptionalDivision(ns, division)
 
   if (!divisionInfo) {
+    const corporation = await getCorp(ns)
+    const limit = Math.ceil(20 * (bnMults?.CorporationDivisions ?? 1))
+    if (!Number.isFinite(limit) || corporation.divisions.length >= limit) return false
     const industryData = await corpRun(ns, 'getIndustryData', division)
     const startingCost = Number(industryData?.startingCost)
     const funds = await corpFunds(ns)
@@ -785,16 +889,17 @@ async function tryPurchaseUnlock(ns, purchase) {
 }
 /** @param {NS} ns */
 async function prep(ns) {
-  investOffer = await corpRun(ns, 'getInvestmentOffer')
+  investOffer = await readInvestmentOffer(ns)
   const round = Number(investOffer?.round)
   if (!Number.isFinite(round)) {
     return false
   }
 
   if (!(await ensureCorporationApis(ns))) return false
+  if (round >= 5) await manageCorporationPayout(ns, round, dividendRate)
 
   if (round >= 1) {
-  const agriculture = await corpRun(ns, 'getDivision', div1)
+  const agriculture = await getOptionalDivision(ns, div1)
   const cityCount = Array.isArray(agriculture?.cities) ? agriculture.cities.length : 0
   const reserve = round === 1
     ? getRoundOneExpansionReserve(cityCount, cities.length, capitalConstrainedBootstrap)
@@ -861,79 +966,10 @@ async function prep(ns) {
     if ((await getCorp(ns)).revenue >= 1e70) {
       await tryPurchaseUnlock(ns, "Government Partnership")
       await tryPurchaseUnlock(ns, "Shady Accounting")
-      if (!(await getCorp(ns)).public) {
-        await corpRun(ns, 'goPublic', 0)
-      }
-      if ((await getCorp(ns)).public) {
-        await corpRun(ns, 'issueDividends', 0.01)
-      }
-      try {
-        const div = (await corpRun(ns, 'getDivision', div5))
-        hasDivDB[div5] = div
-      }
-      catch {
-        try { (await corpRun(ns, 'expandIndustry', div5, div5)) } catch { }
-        try {
-          const div = (await corpRun(ns, 'getDivision', div5))
-          hasDivDB[div5] = div
-        }
-        catch { }
-      }
-      try {
-        const div = (await corpRun(ns, 'getDivision', div6))
-        hasDivDB[div6] = div
-      }
-      catch {
-        try { (await corpRun(ns, 'expandIndustry', div6, div6)) } catch { }
-        try {
-          const div = (await corpRun(ns, 'getDivision', div6))
-          hasDivDB[div6] = div
-        }
-        catch { }
-      }
-      try {
-        const div = (await corpRun(ns, 'getDivision', div7))
-        hasDivDB[div7] = div
-      }
-      catch {
-        try { (await corpRun(ns, 'expandIndustry', div7, div7)) } catch { }
-        try {
-          const div = (await corpRun(ns, 'getDivision', div7))
-          hasDivDB[div7] = div
-        }
-        catch { }
-      }
-      try {
-        const div = (await corpRun(ns, 'getDivision', div8))
-        hasDivDB[div8] = div
-      }
-      catch {
-        try { (await corpRun(ns, 'expandIndustry', div8, div8)) } catch { }
-        try {
-          const div = (await corpRun(ns, 'getDivision', div8))
-          hasDivDB[div8] = div
-        }
-        catch { }
-      }
-      for (const city of cities) {
-        //Set up divs
-        const divs = [div5, div6, div7, div8]
-        for (const div of divs) {
-          if (!hasOfficeDB[div + city]) {
-            try { (await corpRun(ns, 'expandCity', div, city)) } catch { }
-            try {
-              (await corpRun(ns, 'getOffice', div, city))
-              hasOfficeDB[div + city] = true
-            }
-            catch { }
-          }
-          if (!hasWarehouseDB[div + city]) {
-            try { (await corpRun(ns, 'purchaseWarehouse', div, city)) } catch { }
-            if ((await corpRun(ns, 'hasWarehouse', div, city)))
-              hasWarehouseDB[div + city] = true
-          }
-        }
-      }
+      // Reuse the normal creation/expansion path: verify division existence and actual funds explicitly.
+      // Keep the existing late-expansion revenue gate and reserve the same eight real industries.
+      for (const division of [div5, div6, div7, div8]) await expandCities(ns, division);
+
     }
   }
   return true
@@ -1028,8 +1064,10 @@ async function updateMisc(ns) {
   }
 }
 
-async function doResearch(ns, rp, div, research, ratio) {
+async function doResearch(ns, div, research, ratio) {
   if (!researchedDB[div + research]) {
+    // Earlier purchases in this list have already spent research that also boosts product ratings.
+    const rp = (await corpRun(ns, 'getDivision', div)).researchPoints
     if (rp / ratio > await corpRun(ns, 'getResearchCost', div, research)) {
       await corpRun(ns, 'research', div, research);
       researchedDB[div + research] = true
@@ -1041,9 +1079,8 @@ async function doResearch(ns, rp, div, research, ratio) {
 }
 
 async function runResearchList(ns, div, list, ratio) {
-  const rp = (await corpRun(ns, 'getDivision', div)).researchPoints
   for (const item of list) {
-    if (await doResearch(ns, rp, div, item, ratio)) return true;
+    if (await doResearch(ns, div, item, ratio)) return true;
   }
   return false;
 }
@@ -1129,50 +1166,48 @@ async function manageProducts(ns) {
         calculating++
     }
 
+    // Keep the current lineup while any project is unfinished or its snapshot is unavailable.
+    if (completedProducts.length !== division.products.length) continue
+
+    let worstProduct = null
     if (active + calculating === division.maxProducts) {
-      let worstProduct = null
 
       if (calculating <= 1) {
         const priceCandidates = []
         for (const entry of completedProducts) {
-const sellPrice = await getSellPrice(ns, div, "Sector-12", entry.name)
-if (Number.isFinite(sellPrice) && sellPrice > 0)
-  priceCandidates.push({ name: entry.name, score: sellPrice })
+          const sellPrice = await getSellPrice(ns, div, "Sector-12", entry.name)
+          if (Number.isFinite(sellPrice) && sellPrice > 0)
+            priceCandidates.push({ name: entry.name, score: sellPrice })
         }
         worstProduct = selectLowestScoredProduct(priceCandidates)
       } else {
         worstProduct = selectLowestScoredProduct(completedProducts.map(entry => ({
-name: entry.name,
-score: Number(entry.product.stats?.quality),
+          name: entry.name,
+          score: Number(entry.product.stats?.quality),
         })))
       }
 
       // If every completed product is still waiting for a valid price/quality, keep all slots intact and retry.
-      if (await discontinueManagedProduct(ns, div, worstProduct))
-        division = await corpRun(ns, 'getDivision', div)
+      if (!worstProduct) continue
     }
 
-    let researching = false
-    for (const productName of division.products) {
-      const product = await corpRun(ns, 'getProduct', div, "Sector-12", productName)
-      if (product?.developmentProgress < 100) {
-        researching = true
-        break
-      }
-    }
+    if (!worstProduct && division.products.length >= division.maxProducts) continue
 
-    if (researching || division.products.length >= division.maxProducts) continue
-
+    // Price the next version before retiring anything, including when the newest product is weakest.
     const version = await getLatestProductVersion(ns, div)
     const investment = 1e9 * 2 ** version
     const corp = await getCorp(ns)
     const reserve = Number(investOffer?.round) === 2 && div === div3
       ? ROUND_TWO_TOBACCO_RESERVE
       : 0
-    if (Number.isFinite(investment) &&
-      canAffordCorporationPurchase(corp.funds, investment * 2, reserve)) {
-      await corpRun(ns, 'makeProduct', div, "Sector-12", 'Prod v' + (version + 1), investment, investment)
-    }
+    if (!Number.isFinite(investment) ||
+      !canAffordCorporationPurchase(corp.funds, investment * 2, reserve)) continue
+
+    // An unfunded replacement must not remove an existing source of revenue.
+    if (await discontinueManagedProduct(ns, div, worstProduct))
+      division = await corpRun(ns, 'getDivision', div)
+    if (division.products.length >= division.maxProducts) continue
+    await corpRun(ns, 'makeProduct', div, "Sector-12", 'Prod v' + (version + 1), investment, investment)
   }
 }
 /**
@@ -1190,23 +1225,6 @@ async function getLatestProductVersion(ns, division) {
     if (v > latest) latest = v;
   }
   return latest;
-}
-
-/**
- * Function to get earliest product version
- *
- * @param {NS} ns
- * @param {string} division
- * @returns {number}
- */
-async function getEarliestVersion(ns, division) {
-  const products = (await corpRun(ns, 'getDivision', division)).products
-  let earliestVersion = Number.MAX_SAFE_INTEGER;
-  for (let product of products) {
-    let version = parseVersion(product);
-    if (version < earliestVersion) earliestVersion = version;
-  }
-  return earliestVersion;
 }
 
 /**
@@ -2239,6 +2257,60 @@ async function getSellPrice(ns, div, city, prod) {
   const price = (ta2.markupLimit + (5 * product.productionCost)) * 10
   return Number.isFinite(price) && price > 0 ? price : 0
 }
+
+function isFiniteNonnegative(price) {
+  return Number.isFinite(price) && price >= 0
+}
+
+/** Price one stocked item. An unusable observation resets only that item's calibration. */
+async function manualSalePrice(ns, div, city, name, item, isProduct, exported = 0) {
+  const key = div + city + name
+  const { stored, productionAmount, actualSellAmount } = item
+  const marketPrice = isProduct ? 5 * item.productionCost : item.marketPrice
+  const quantity = stored + exported * 10
+  const useMarketPrice = () => { delete ta2DB[key]; return "MP" }
+  const setTrialPrice = price => {
+    if (!isFiniteNonnegative(price)) return useMarketPrice()
+    ta2DB[key] = { sellingPrice: price, sellingQuantity: quantity, markupLimit: 0 }
+    return String(price)
+  }
+
+  if (!(stored > 0) || !Number.isFinite(stored) || !isFiniteNonnegative(marketPrice) ||
+      !isFiniteNonnegative(quantity) || !Number.isFinite(productionAmount) || !isFiniteNonnegative(actualSellAmount))
+    return useMarketPrice()
+
+  const entry = ta2DB[key]
+  if (!entry) {
+    if (!isProduct) return setTrialPrice(marketPrice)
+    const multiplier = 2 ** (parseVersion(name) - 1)
+    // The game validates MP expressions with test prices up to 1.2e123 before using the real price.
+    if (!isFiniteNonnegative(item.rating) || !Number.isFinite(multiplier * 1.2e123) ||
+        !Number.isFinite(multiplier * item.productionCost)) return useMarketPrice()
+    setTrialPrice(item.rating)
+    return `MP*${multiplier}`
+  }
+  if (!isFiniteNonnegative(entry.sellingPrice) || !isFiniteNonnegative(entry.sellingQuantity) ||
+      !Number.isFinite(entry.markupLimit)) return useMarketPrice()
+
+  if (entry.markupLimit === 0) {
+    if (actualSellAmount >= entry.sellingQuantity / 10)
+      return setTrialPrice(entry.sellingPrice * (isProduct ? 1000 : 1.2))
+    if (actualSellAmount <= entry.sellingQuantity / 10 * (isProduct ? 0.15 : 0.1))
+      return setTrialPrice(isProduct ? entry.sellingPrice / 3 : entry.sellingPrice * 0.9)
+    const mult = await getMult(ns, div, city)
+    const production = mult[isProduct ? 1 : 0]
+    if (!Number.isFinite(production) || production <= 0) return useMarketPrice()
+    const markup = (entry.sellingPrice - marketPrice) * Math.sqrt(actualSellAmount / production)
+    if (!Number.isFinite(markup)) return useMarketPrice()
+    entry.markupLimit = markup
+  }
+
+  const price = (entry.markupLimit + marketPrice) * 10 * Math.min(1, (productionAmount - exported) / stored)
+  if (!Number.isFinite(price)) return useMarketPrice()
+  if (price < 0) return setTrialPrice(entry.sellingPrice * (isProduct ? 10 : 2))
+  return String(price)
+}
+
 /** @param {NS} ns */
 async function sell(ns) {
   for (const div of industries) {
@@ -2252,8 +2324,8 @@ async function sell(ns) {
         if (indDataDB[hasDivDB[div].industry].makesProducts) {
           const division = (await corpRun(ns, 'getDivision', div))
           for (const prod of division.products) {
-            if ((await corpRun(ns, 'getProduct', div, city, prod)).developmentProgress !== 100) continue
-            if ((await corpRun(ns, 'getProduct', div, city, prod)).stored === 0) continue
+            const product = await corpRun(ns, 'getProduct', div, city, prod)
+            if (product.developmentProgress !== 100 || product.stored === 0) continue
             //Setting Market TA II if researchedDB
             if (hasMTAII) { //I don't research it, but it could be there from manual purchase
               await corpRun(ns, 'setProductMarketTA2', div, prod, true)
@@ -2261,54 +2333,8 @@ async function sell(ns) {
               continue
             }
 
-            let ta2 = ta2DB[div + city + prod]
-            const product = await corpRun(ns, 'getProduct', div, city, prod)
-            if (ta2 === undefined) { //No TA2 data
-              ta2DB[div + city + prod] = {
-                "sellingPrice": product.rating,
-                "sellingQuantity": product.stored,
-                "markupLimit": 0
-              }
-              const version = parseVersion(prod);
-              await corpRun(ns, 'sellProduct', div, city, prod, "MAX", 'MP*' + (2 ** (version - 1)))
-              continue
-            }
-            const prodMarketPrice = 5 * product.productionCost
-            if (ta2.markupLimit === 0) { //Not calculated yet
-              const actualSellAmount = product.actualSellAmount
-              if (actualSellAmount >= ta2.sellingQuantity / 10) { // We failed to set it high enough.  Set it higher and try again
-                const oldSalePrice = ta2DB[div + city + prod].sellingPrice
-                ta2DB[div + city + prod].sellingPrice = oldSalePrice * 1000
-                ta2DB[div + city + prod].sellingQuantity = product.stored
-                await corpRun(ns, 'sellProduct', div, city, prod, "MAX", (oldSalePrice * 1000).toString())
-                continue
-              }
-              else if (actualSellAmount <= ta2.sellingQuantity / 10 * .15) { //Not enough sold, lower the price!
-                const oldSalePrice = ta2DB[div + city + prod].sellingPrice
-                ta2DB[div + city + prod].sellingPrice = oldSalePrice / 3
-                ta2DB[div + city + prod].sellingQuantity = product.stored
-                await corpRun(ns, 'sellProduct', div, city, prod, "MAX", (oldSalePrice / 3).toString())
-                continue
-              }
-              const mult = await getMult(ns, div, city)
-              const m = mult[1]
-              const markupLimit = (ta2.sellingPrice - prodMarketPrice) * Math.sqrt(actualSellAmount / m)
-              ta2DB[div + city + prod].markupLimit = markupLimit
-              ta2 = ta2DB[div + city + prod]
-            }
-            const prodStored = product.stored
-            let sellingPrice = (((ta2.markupLimit * Math.sqrt(prodStored)) / Math.sqrt(prodStored)) + prodMarketPrice) * 10
-            const priceMult = product.productionAmount / prodStored
-            if (priceMult !== Infinity) sellingPrice *= priceMult >= 1 ? 1 : priceMult
-            if (sellingPrice < 0 || isNaN(sellingPrice)) {
-              const oldSalePrice = ta2DB[div + city + prod].sellingPrice
-              ta2DB[div + city + prod].sellingPrice = oldSalePrice * 10
-              ta2DB[div + city + prod].sellingQuantity = prodStored
-              ta2DB[div + city + prod].markupLimit = 0
-              await corpRun(ns, 'sellProduct', div, city, prod, "MAX", (oldSalePrice * 10).toString())
-              continue
-            }
-            await corpRun(ns, 'sellProduct', div, city, prod, "MAX", sellingPrice.toString())
+            const price = await manualSalePrice(ns, div, city, prod, product, true)
+            await corpRun(ns, 'sellProduct', div, city, prod, "MAX", price)
           } //Products
         } //Product check
         if (indDataDB[hasDivDB[div].industry].producedMaterials)
@@ -2324,52 +2350,8 @@ async function sell(ns) {
               await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", "0")
               continue
             }
-            let ta2 = ta2DB[div + city + mat]
-            if (ta2 === undefined) { //No TA2 data              
-              ta2DB[div + city + mat] = {
-                "sellingPrice": material.marketPrice,
-                "sellingQuantity": material.stored + (exported * 10),
-                "markupLimit": 0
-              }
-              await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", material.marketPrice.toString())
-              continue
-            }
-            const prodMarketPrice = material.marketPrice
-            const mult = await getMult(ns, div, city)
-            const m = mult[0]
-            if (ta2.markupLimit === 0) { //Not calculated yet
-              const actualSellAmount = material.actualSellAmount
-              if (actualSellAmount >= (ta2.sellingQuantity) / 10) { // We failed to set it high enough.  Set it higher and try again
-                const oldSalePrice = ta2DB[div + city + mat].sellingPrice
-                ta2DB[div + city + mat].sellingPrice = oldSalePrice * 1.2
-                ta2DB[div + city + mat].sellingQuantity = material.stored + (exported * 10)
-                await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", (oldSalePrice * 1.2).toString())
-                continue
-              }
-              else if (actualSellAmount <= (ta2.sellingQuantity) / 10 * .1) { //Not enough sold, lower the price!
-                const oldSalePrice = ta2DB[div + city + mat].sellingPrice
-                ta2DB[div + city + mat].sellingPrice = oldSalePrice * .9
-                ta2DB[div + city + mat].sellingQuantity = material.stored + (exported * 10)
-                await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", (oldSalePrice * .9).toString())
-                continue
-              }
-              const markupLimit = (ta2.sellingPrice - prodMarketPrice) * Math.sqrt(actualSellAmount / m)
-              ta2DB[div + city + mat].markupLimit = markupLimit
-              ta2 = ta2DB[div + city + mat]
-            }
-            const prodStored = material.stored
-            let sellingPrice = (((ta2.markupLimit * Math.sqrt(prodStored)) / Math.sqrt(prodStored)) + prodMarketPrice) * 10
-            const priceMult = (material.productionAmount - exported) / prodStored
-            if (priceMult !== Infinity) sellingPrice *= priceMult >= 1 ? 1 : priceMult
-            if (sellingPrice < 0 || isNaN(sellingPrice)) {
-              const oldSalePrice = ta2DB[div + city + mat].sellingPrice
-              ta2DB[div + city + mat].sellingPrice = oldSalePrice * 2
-              ta2DB[div + city + mat].sellingQuantity = prodStored + (exported * 10)
-              ta2DB[div + city + mat].markupLimit = 0
-              await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", (oldSalePrice * 2).toString())
-              continue
-            }
-            await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", sellingPrice.toString())
+            const price = await manualSalePrice(ns, div, city, mat, material, false, exported)
+            await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", price)
           }
       } //TA2
       else { // No TA2
@@ -2386,7 +2368,7 @@ async function sell(ns) {
             const maxProd = await maxProduction(ns, div, city)
             const priceMult = maxProd[0] / (material.stored)
             price *= priceMult >= 1 ? 1 : priceMult >= .6 ? priceMult : priceMult / 10
-            await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", price)
+            await corpRun(ns, 'sellMaterial', div, city, mat, "MAX", isFiniteNonnegative(price) ? price : "MP")
           }
         }
       }

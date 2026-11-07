@@ -24,6 +24,6 @@ export async function main(ns) {
         c.data = ns.codingcontract.getData(c.contract, c.hostname);
     }
 
-    // Let this script die to free up ram, and start up a new script (after a delay) that will solve all these contracts using the minimum ram footprint of 11.6 GB
-    await runScriptLocal(ns, scriptSolver, true, [JSON.stringify(contractsDb)]);
+    // Start the home solver with the gathered data; its remaining-tries and quarantine checks need 13.85 GB.
+    await runScriptLocal(ns, scriptSolver, true, [JSON.stringify(contractsDb), ...ns.args.filter(arg => ['--retry-failed', '--allow-last-attempt'].includes(arg))]);
 }

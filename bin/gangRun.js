@@ -14,6 +14,8 @@ export async function main(ns) {
   });
 
   try {
+    const required = Math.max(5.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`gang.${fn}`));
+    if (ns.ramOverride(required) < required) throw new Error(`Insufficient RAM for gang.${fn}: ${required} GB required`);
     const f = ns.gang?.[fn];
     if (typeof f !== "function") throw new Error(`Invalid gang function: ${String(fn)}`);
 

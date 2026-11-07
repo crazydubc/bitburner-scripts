@@ -1,0 +1,83 @@
+{
+  "auditedCommit": "a05225d5c63d877e35ba7d34d70d7adbbff9cc69",
+  "findingsCovered": 18,
+  "checks": [
+    {
+      "id": "B01",
+      "message": "runScriptLocal retries an impossible launch until the fixture interrupts it."
+    },
+    {
+      "id": "B01",
+      "message": "A successfully launched but dead child leaves its caller waiting for a port reply."
+    },
+    {
+      "id": "B02",
+      "message": "A fresh remote stockmaster receives no reserve/config; an empty local reserve reads as zero."
+    },
+    {
+      "id": "B03",
+      "message": "Cracker inventory omits BruteSSH-only ownership and reports FTP-only as BruteSSH."
+    },
+    {
+      "id": "B04",
+      "message": "$1m cash / $900k reserve still buys nine $110k servers, leaving $10k."
+    },
+    {
+      "id": "B05",
+      "message": "Intel readiness is never refreshed in the loop; the finish gate remains tied to startup intent."
+    },
+    {
+      "id": "B06",
+      "message": "Sleeve purchaser makes zero attempts after live cash rises above price; player was read once."
+    },
+    {
+      "id": "B07",
+      "message": "Both reset-time hash liquidation and home-RAM upgrade targets are missing files."
+    },
+    {
+      "id": "B08",
+      "message": "BN6/SF6-only access is rejected by both Bladeburner launch and entry gates."
+    },
+    {
+      "id": "B09",
+      "message": "alwaysRun=true suppresses the periodic launch even when the script is absent."
+    },
+    {
+      "id": "B10",
+      "message": "A one-augmentation batch calls no purchase API but reports the entire $100 budget as spent."
+    },
+    {
+      "id": "B11",
+      "message": "An API failure is truthy to the ascend upgrade loop; strict result validation is required."
+    },
+    {
+      "id": "B12",
+      "message": "Hash server upgrades receive an object unless --spend-on-server supplies a hostname."
+    },
+    {
+      "id": "B13",
+      "message": "Remote backdoor task bundle omits Tasks/backdoor-all-servers.js.backdoor-one.js."
+    },
+    {
+      "id": "B14",
+      "message": "The failure file suppresses notices but does not prevent a second attempt on the same contract."
+    },
+    {
+      "id": "B15",
+      "message": "Post-batch leftover threads become NaN; the target-switch call also lacks await/hostname."
+    },
+    {
+      "id": "B16",
+      "message": "Batch calculator fixture adds 0.18 security and budgets 0.05 weakening at BN1/one core."
+    },
+    {
+      "id": "B17",
+      "message": "maxRun selects 512 GB on an unrooted host and ignores the rooted 128/64 GB hosts."
+    },
+    {
+      "id": "B18",
+      "message": "Stasis branch requests 22 threads / 540.1 GB from 128 GB free."
+    }
+  ],
+  "limitation": "Mixed mocked execution, source assertions, and arithmetic checks. No wall-clock speedrun result or live Netscript RAM simulation."
+}
