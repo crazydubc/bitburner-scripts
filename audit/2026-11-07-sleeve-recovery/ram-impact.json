@@ -18,11 +18,6 @@
       "after": 1.6
     },
     {
-      "file": "cheats.js",
-      "before": null,
-      "after": 1.6
-    },
-    {
       "file": "autopilot.js",
       "before": 4.2,
       "after": 4.2,

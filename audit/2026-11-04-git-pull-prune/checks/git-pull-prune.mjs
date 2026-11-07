@@ -112,7 +112,7 @@ assert.equal(JSON.parse(h.disk.get(h.writes.find(p => p.includes('/backups/'))))
 
 // Bootstrap known legacy files, preserving unrecognized personal scripts and all data/configs.
 const retired = ['performance-diagnostic.js', 'stock-diagnostic.js'];
-const utilities = ['dev.js', 'hacks.js', 'cheats.js'];
+const utilities = ['dev.js', 'hacks.js'];
 const installed = Object.fromEntries(utilities.map(file => [file, readFileSync(new URL(file, root), 'utf8')]));
 const legacyFiles = Object.fromEntries(retired.map(file => [file, execFileSync('git', ['show', '89bb315:' + file], {cwd: root, encoding: 'utf8'})]));
 for (const file of utilities) assert(!Object.hasOwn(catalog.files, file));
@@ -130,7 +130,6 @@ assert.equal(h.disk.get('stock-diagnostic.js'), '// local custom probe'); assert
 h = fixture({remote: installed, files: legacyFiles}); h.state.defaultHints = true; h.state.failure = 'http'; await h.run();
 for (const file of utilities) assert.equal(h.disk.get(file), installed[file], 'Fallback must restore missing manual utilities');
 assert(!h.updates.some(({path}) => retired.includes(path))); assert.equal(h.removals.length, 0);
-assert.equal((await import('../../../cheats.js')).main, (await import('../../../hacks.js')).main, 'The alias exposes the original manual entry point');
 
 async function managed(settings = {}) {
   const x = fixture({...settings, remote: {'main.js': '// current', 'old.js': '// old'}});

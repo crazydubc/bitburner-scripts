@@ -229,22 +229,22 @@ async function downloadCase(fallback = false, explicit = []) {
   globalThis.fetch = async url => {
     requests.push(url); if (fallback) throw Error('rate limit');
     return {ok: true, json: async () => url.includes('/commits/') ? {sha: 'a'.repeat(40)} :
-      {truncated: false, tree: ['audit/check.js', 'Temp/old.js', 'bin/a.js', 'autopilot.js', 'dev.js', 'hacks.js', 'cheats.js']
+      {truncated: false, tree: ['audit/check.js', 'Temp/old.js', 'bin/a.js', 'autopilot.js', 'dev.js', 'hacks.js']
         .map(path => ({type: 'blob', path}))}};
   };
   try {
     await pull({flags: schema => ({...Object.fromEntries(schema), 'new-file': [], download: explicit}),
       getScriptName: () => 'git-pull.js', getHostname: () => 'home', print: noop, tprint: noop,
       read: file => disk.get(file) ?? '', write: async (file, text) => disk.set(file, text),
-      ls: () => ['/audit/check.js', '/Temp/old.js', '/bin/a.js', 'autopilot.js', 'hacks.js', 'cheats.js', 'dev.js', 'performance-diagnostic.js', 'stock-diagnostic.js'],
+      ls: () => ['/audit/check.js', '/Temp/old.js', '/bin/a.js', 'autopilot.js', 'hacks.js', 'dev.js', 'performance-diagnostic.js', 'stock-diagnostic.js'],
       wget: async (_, file) => {downloads.push(file); disk.set(file, 'downloaded source'); return true;}});
   } finally {globalThis.fetch = oldFetch;}
   assert(!requests.some(url => /contents\/(audit|Temp)/.test(url)));
   return downloads.sort();
 }
-assert.deepEqual(await downloadCase(), ['autopilot.js', 'bin/a.js', 'cheats.js', 'dev.js', 'hacks.js']);
-assert.deepEqual(await downloadCase(true), ['autopilot.js', 'bin/a.js', 'cheats.js', 'dev.js', 'hacks.js']);
+assert.deepEqual(await downloadCase(), ['autopilot.js', 'bin/a.js', 'dev.js', 'hacks.js']);
+assert.deepEqual(await downloadCase(true), ['autopilot.js', 'bin/a.js', 'dev.js', 'hacks.js']);
 assert.deepEqual(await downloadCase(false, ['dev.js']), ['dev.js']);
-for (const file of ['dev.js', 'hacks.js', 'cheats.js']) assert(existsSync(new URL(file, root)));
+for (const file of ['dev.js', 'hacks.js']) assert(existsSync(new URL(file, root)));
 for (const file of ['performance-diagnostic.js', 'stock-diagnostic.js']) assert(!existsSync(new URL(file, root)));
 console.log('Full audit checks passed: real sleeve decisions and crime formula, subsystem policies, NF planning/purchases, and production downloads.');

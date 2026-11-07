@@ -60,7 +60,7 @@ Staged, auto and parallel all produce a first eligible sleeve at **18.52 h** her
 
 ## Restored tools and diagnostic cleanup
 
-`dev.js` and `hacks.js` are restored from their last historical versions (the only source normalization is whitespace in a comment). `cheats.js` is an alias for `hacks.js`. They are downloaded by a normal pull and run only when invoked. The original cheat behavior is retained; none of the optional commented-out changes were enabled.
+`dev.js` and `hacks.js` are restored from their last historical versions (the only source normalization is whitespace in a comment). They are downloaded by a normal pull and run only when invoked. The original cheat behavior is retained; none of the optional commented-out changes were enabled.
 
 Removed the standalone `performance-diagnostic.js` and `stock-diagnostic.js` scripts and their obsolete standalone tests. HUD stats, stock valuation, Go stats, run logs, and the gameplay regressions still have active uses. The retirement catalog now recognizes both old diagnostics and no longer lists the restored tools. A complete successful sync verifies a backup and removes unchanged diagnostic scripts on the current host/deployment. Edited or running scripts and previously saved diagnostic data remain protected. A failed or partial listing cannot delete files.
 
@@ -72,7 +72,7 @@ run git-pull.js --branch testing/bn1-go-audit
 
 ## Reproduction and sources
 
-The source-based checks call the official per-cycle processing and recovery methods, XP/shock scaling, successful crime handling and zero-shock augmentation gate. A one-minute grid independently checks the closed-form XP optimum across 336 combinations of starting shock, remaining time, Intelligence and hypothetical augmentation effects. Integration tests exercise the real manager, helper calls, faction exclusivity, handoffs, retirement backups and fallback downloads. The manual exploit entry points were inspected and imported, not run against a save. Of 41 discovered regression suites, 39 passed; the two unrelated BN1/scan React UI fixtures were skipped because their separate dependencies were not installed here. All 120 deployed JavaScript files parsed. [Suite results](validation.json) and the [official RAM comparison](ram-impact.json) are included. `sleeve.js` remains 3.35 GB, `git-pull.js` 2.45 GB, and each restored manual entry point measures 1.60 GB when invoked.
+The source-based checks call the official per-cycle processing and recovery methods, XP/shock scaling, successful crime handling and zero-shock augmentation gate. A one-minute grid independently checks the closed-form XP optimum across 336 combinations of starting shock, remaining time, Intelligence and hypothetical augmentation effects. Integration tests exercise the real manager, helper calls, faction exclusivity, handoffs, retirement backups and fallback downloads. The restored manual utilities were compared with their Git history without running them against a save. Of 41 discovered regression suites, 39 passed; the two unrelated BN1/scan React UI fixtures were skipped because their separate dependencies were not installed here. All 119 deployed JavaScript files parsed. [Suite results](validation.json) and the [official RAM comparison](ram-impact.json) are included. `sleeve.js` remains 3.35 GB, `git-pull.js` 2.45 GB, and each restored manual entry point measures 1.60 GB when invoked.
 
 ```sh
 python audit/2026-11-04-full-audit/run-checks.py ../bitburner-engine - audit/2026-11-07-sleeve-recovery/validation.json
