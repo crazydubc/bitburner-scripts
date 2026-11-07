@@ -4,7 +4,7 @@
 
 ## The XP calculation
 
-The [BN7 follow-up](../2026-11-07-karma-and-sleeve-intel/README.md) describes how the manager now decides whether gang karma is urgent and when a full roster can spare a sleeve for permanent Intelligence.
+The [BN7 follow-up](../2026-11-07-karma-and-sleeve-intel/README.md) describes how the manager now decides whether gang karma is urgent and when a fully recovered roster studies together for permanent Intelligence.
 
 For shock `S` on the game's 0–100 scale, work XP efficiency is `q = 1 − S/100`. A synchronized sleeve gives the player its shock-adjusted XP; at lower sync, the transfer is also multiplied by `sync/100`. A recovering sleeve can still receive XP from other working sleeves, scaled by its own recovery ratio. The single-sleeve table measures direct work XP, excluding incoming shared XP. Faction reputation is multiplied by `q`. The usual player augmentation installation does not reset sleeve shock; changing BitNodes does.
 

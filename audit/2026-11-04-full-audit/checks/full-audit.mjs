@@ -8,7 +8,8 @@ import {resolve} from 'node:path';
 import {shouldUseGangs, shouldFundNewCorporation} from '../../../speedrun-policy.js';
 import {shouldStartCorporation} from '../../../autopilot.js';
 import {executePurchase} from '../../../purchase-guard.js';
-import {hasBladeburnerAccess} from '../../../progression.js';
+import {hasBladeburnerAccess, intelFarmState as realFarmState} from '../../../progression.js';
+import {main as farmStateMain} from '../../../bin/intel-farm-state.js';
 import * as planner from '../../../faction-route-planner.js';
 import {main as pull, filterDownloadableFiles} from '../../../git-pull.js';
 
@@ -23,7 +24,8 @@ const NF = 'NeuroFlux Governor';
 
 function sleeveFixture({files = {10: 1}, flags = {}, count = 1, node = 10, skills = {}, crimeMult = 1,
   city = 'Sector-12', cash = 1e12, reserve = 8e9, contractChance = {1: 0.5, 2: 0.995, 3: 1},
-  bb = true, stock = 100, operationStock = 100, karma = -1, work = null, age = 1000, advanced = {}, catalog = null, baseline = false} = {}) {
+  bb = true, stock = 100, operationStock = 100, karma = -1, work = null, age = 1000, advanced = {}, catalog = null, baseline = false,
+  farmFiles = new Map(), nodeReset = 10, travelFailsAt = -1, liveTasks = []} = {}) {
   const calls = [], logs = [], assignments = [];
   const sleeves = Array.from({length: count}, () => ({sync: 100, shock: 0, hp: {current: 100, max: 100}, city,
     skills: {hacking: 10, strength: 10, defense: 10, dexterity: 10, agility: 10, charisma: 10, intelligence: 0, ...skills},
@@ -41,12 +43,19 @@ function sleeveFixture({files = {10: 1}, flags = {}, count = 1, node = 10, skill
       if (method === 'getCrimeStats') return catalog?.[name] ?? stats;
       assert.fail(method);},
     singReadMany: async (_, method, names) => {calls.push(['bulk', method, names]); return Object.fromEntries(names.map(n => [n, method === 'getCrimeStats' ? catalog?.[n] : 0]));},
+    intelFarmState: Function('runScriptLocal','getFilePath','return ('+realFarmState.toString()+')')(async (_,file,persistent,args) => {
+      assert.equal(file,'bin/intel-farm-state.js');assert.equal(persistent,false);assert.equal(args[2],'sleeves');let finish,reply;
+      await farmStateMain({pid:1,args,
+        getHostname:()=>'home',getResetInfo:()=>({currentNode:node,lastNodeReset:nodeReset}),read:path=>farmFiles.get(path)??'',
+        write:async(path,value)=>farmFiles.set(path,value),atExit:fn=>finish=fn,getPortHandle:()=>({write:v=>reply=v})});
+      finish();assert.equal(typeof reply,'object');return reply;
+    }, f=>f),
     gangRun: async () => false, hnRun: async () => assert.fail('Do not spend hashes without SF9'),
     sleeveRun: async (_, method, ...args) => {
       calls.push([method, ...args]);
       if (method === 'getNumSleeves') return sleeves.length;
       if (method === 'getSleeve') return sleeves[args[0]];
-      if (method === 'getTask') return null;
+      if (method === 'getTask') return liveTasks[args[0]] ?? null;
       if (method === 'getSleevePurchasableAugs') return [];
       if (method.startsWith('setTo')) {assignments.push([method, ...args]); return true;}
       assert.fail(method);
@@ -65,7 +74,7 @@ function sleeveFixture({files = {10: 1}, flags = {}, count = 1, node = 10, skill
       assert.fail(method);
     },
     purchase: async (_, namespace, method, args, policy) => executePurchase({getHostname: () => 'home',
-      getServerMoneyAvailable: () => cash, read: () => String(reserve), sleeve: {travel: () => {cash -= 200e3; return true;}}},
+      getServerMoneyAvailable: () => cash, read: () => String(reserve), sleeve: {travel: (i, to) => {calls.push(['travel',i,to]); if(i===travelFailsAt)return false; cash -= 200e3; sleeves[i].city=to; return true;}}},
       namespace, method, args, policy),
   };
   const code = baseline ? execFileSync('git',['show','7a1f189:sleeve.js'],{cwd:root,encoding:'utf8'}) : source('sleeve.js');
@@ -155,16 +164,43 @@ current=await atShock({...bladeStart,files:{10:3,7:1,2:1},karma:-53995,skills:{s
 assert(current.assignments.every(a=>a[2]==='Shoplift'));
 const spare={count:8,files:{5:1,10:3},age:4*3600000};
 const intelClass = h=>h.assignments.filter(a=>a[0]==='setToUniversityCourse'&&a[3]==='Computer Science');
-current=await atShock(spare,0);assert.deepEqual(intelClass(current),[['setToUniversityCourse',0,'Rothman University','Computer Science']]);
+const folder=new Map([['/data/intel-farm-state.json','untouched player farm']]);
+const fleetPath='/data/sleeve-intel-farm-state.json';
+current=await atShock({...spare,farmFiles:folder},0);
+assert.deepEqual(intelClass(current),Array.from({length:8},(_,i)=>['setToUniversityCourse',i,'ZB Institute of Technology','Computer Science']));
+assert.equal(current.calls.filter(c=>c[0]==='travel').length,8);assert.equal(JSON.parse(folder.get(fleetPath)).status,'farming');
+assert.equal(folder.get('/data/intel-farm-state.json'),'untouched player farm');
+for(const change of [sl=>sl.shock=.01,sl=>sl.sync=99.99,sl=>sl.skills.intelligence=50,sl=>sl.skills.intelligence=NaN]) {
+  const h=sleeveFixture(spare);change(h.sleeves[7]);await h.run();assert.equal(intelClass(h).length,0);assert(!h.calls.some(c=>c[0]==='travel'));
+}
 for(const opts of [{count:7},{files:{10:3}},{flags:{'sleeve-intel-target':0}},{flags:{'disable-training':true}},
-  {skills:{intelligence:230}},{cash:8e9},{city:'Ishima'},{advanced:{disableSleeveExpAndAugmentation:true}},{flags:{crime:'Mug'}},{age:0}])
-  assert.equal(intelClass(await atShock({...spare,...opts},0)).length,0);
+  {skills:{intelligence:50}},{cash:8e9+1599999},{advanced:{disableSleeveExpAndAugmentation:true}},{flags:{crime:'Mug'}}]) {
+  const h=await atShock({...spare,...opts},0);assert.equal(intelClass(h).length,0);assert(!h.calls.some(c=>c[0]==='travel'&&c[2]==='Volhaven'));
+}
 assert.equal(intelClass(await atShock(spare,96)).length,0);
-current=await atShock({...spare,files:{7:1,10:3,5:1},node:7},0);
-assert.equal(intelClass(current).length,1);assert(current.assignments.some(a=>a[2]==='Infiltrate Synthoids'));
-assert(current.assignments.some(a=>a.at(-1)==='Tracking'));
-assert.equal(intelClass(await atShock({...spare,files:{7:1,10:3,5:1},node:7,stock:1},0)).length,0);
-for (const operationStock of [0, NaN]) assert.equal(intelClass(await atShock({...spare,files:{7:1,10:3,5:1},node:7,operationStock},0)).length,0);
+for (const work of [{type:'FACTION',factionName:'CyberSec'},{type:'COMPANY',companyName:'ECorp'},null]) {
+  const x=await atShock({...spare,files:{4:3,5:1,10:3},work,age:0},0);
+  assert.equal(intelClass(x).length,8,'Routine work cannot starve the whole-fleet farm');
+}
+let h=sleeveFixture({...spare,farmFiles:folder,city:'Volhaven'});h.sleeves[2].skills.intelligence=50;await h.run();
+assert.equal(intelClass(h).length,8,'After restart the faster donors continue until the slowest reaches the target');assert(!h.calls.some(c=>c[0]==='travel'));
+const liveStudy=Array.from({length:8},()=>({type:'CLASS',location:'ZB Institute of Technology',classType:'Computer Science'}));
+h=sleeveFixture({...spare,farmFiles:folder,city:'Volhaven',liveTasks:liveStudy});h.sleeves[2].skills.intelligence=51;await h.run();
+assert.equal(h.assignments.length,0,'Adopt every existing course after restart without resetting work');assert(!h.calls.some(c=>c[0]==='travel'));
+h=sleeveFixture({...spare,farmFiles:folder,nodeReset:11});h.sleeves[2].skills.intelligence=50;await h.run();
+assert.equal(intelClass(h).length,0,'An earlier BN cannot qualify a fresh mixed roster');
+h=sleeveFixture({...spare,farmFiles:folder});h.sleeves[2].shock=1;await h.run();assert.equal(intelClass(h).length,0,'Even an active phase pauses if any sleeve gains shock');
+h=await atShock({...spare,farmFiles:folder,skills:{intelligence:50},city:'Volhaven',liveTasks:liveStudy},0);
+assert.equal(intelClass(h).length,0);assert.equal(JSON.parse(folder.get(fleetPath)).status,'complete');
+assert.equal(h.assignments.filter(a=>a[0]==='setToCommitCrime').length,8,'Hand the entire fleet back to normal work');
+assert.equal(folder.get('/data/intel-farm-state.json'),'untouched player farm');
+const ab=sleeveFixture({...spare,travelFailsAt:2});await ab.run();assert.equal(intelClass(ab).length,0);
+assert.deepEqual(ab.sleeves.slice(0,3).map(s=>s.city),['Volhaven','Volhaven','Sector-12'],'Failed travel must not assign an unreachable class');
+const bbFarm={...spare,files:{7:1,10:3,5:1},node:7};
+assert.equal(intelClass(await atShock(bbFarm,0)).length,8);
+for(const opts of [{stock:1},{operationStock:0},{operationStock:NaN}]) {
+  h=await atShock({...bbFarm,...opts},0);assert.equal(intelClass(h).length,0);assert(h.assignments.some(a=>a[2]==='Infiltrate Synthoids'));
+}
 
 // New startup policy preserves BN3 free funding, BN10, and existing businesses in penalized nodes.
 for (const node of [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 14]) {

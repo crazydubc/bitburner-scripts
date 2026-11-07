@@ -79,9 +79,14 @@ export function getIntelFarmStopReason(state, intelligence, now) {
   return (bonus(projected) / bonus(intelligence) - 1) * 100 < 0.5 ? 'low-roi' : null;
 }
 
-export async function intelFarmState(ns, patch) {
+export async function intelFarmState(ns, patch, owner = 'player') {
+  const args = patch === undefined ? ['read'] : ['update', JSON.stringify(patch)];
+  if (owner === 'sleeves') {
+    if (patch === undefined) args.push('');
+    args.push(owner);
+  }
   const result = await runScriptLocal(ns, getFilePath('bin/intel-farm-state.js'), false,
-    patch === undefined ? ['read'] : ['update', JSON.stringify(patch)]);
+    args);
   if (!result || typeof result !== 'object' || !['prepare', 'farming', 'complete'].includes(result.status))
     throw new Error(`Could not read/write intelligence-farm state on home: ${String(result)}`);
   return result;

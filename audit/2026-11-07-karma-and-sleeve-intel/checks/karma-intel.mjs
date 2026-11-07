@@ -75,7 +75,7 @@ const Crimes=build(source('src/Crime/Crimes.ts'),{Crime,CrimeType,CONSTANTS},'Cr
 let finish,reply;const names=Object.values(CrimeType);await bulkRead({pid:13,args:['getCrimeStats',JSON.stringify(names)],atExit:cb=>finish=cb,
   ramOverride:n=>n,getFunctionRamCost:n=>n==='baseCost'?1.6:0.5,getPortHandle:()=>({write:v=>reply=structuredClone(v)}),singularity:{getCrimeStats:n=>Crimes[n]}});finish();
 assert.deepEqual(Object.keys(reply).sort(),names.sort());assert.equal(Crimes.Homicide.intelligence_exp,0);
-const prod=Function(bare(bot('sleeve.js'))+';return {estimateKarma,basicCrimeStats,assignSpareIntelCourse};')();
+const prod=Function(bare(bot('sleeve.js'))+';return {estimateKarma,basicCrimeStats};')();
 for(const [name,stats] of Object.entries(prod.basicCrimeStats)) for(const k of Object.keys(stats))assert.equal(stats[k],Crimes[name][k]);
 const fleet=Array.from({length:8},()=>({skills:{hacking:2,strength:2,defense:2,dexterity:2,agility:2,charisma:2,intelligence:0},sync:100,shock:96,mults:{crime_success:1}}));
 const ids=fleet.map((_,i)=>i);
@@ -85,18 +85,24 @@ for(const changes of [{},{charisma:1000},{dexterity:12,agility:15},{hacking:1000
 }
 const slow=prod.estimateKarma(fleet,ids,reply,0,1);assert.equal(slow.choices[0].crime,'Homicide');near(slow.perHour,295.38461538461536);near(slow.hours,182.8125);
 assert.equal(prod.estimateKarma(fleet,[],reply,-100,1).hours,Infinity);
-// No stolen primary work, duplicate students, or repeated restarts of the incumbent.
-const crimePlan=i=>['background','setToCommitCrime',[i,'Mug'],'fallback'];
-const bodies=fleet.map(s=>({...s,city:'Sector-12',shock:0}));const live=ids.map(()=>null);
-const noRead=()=>assert.fail('Do not check operation supply for an ordinary spare or sole supplier');
-let plans=ids.map(crimePlan);live[5]={type:'CLASS',classType:'Computer Science'};await prod.assignSpareIntelCourse(plans,bodies,live,230,{},noRead);
-assert.equal(plans[5][1],'setToUniversityCourse');assert.equal(plans.filter(p=>p[1]==='setToUniversityCourse').length,1);
-plans=ids.map(crimePlan);bodies[3].city='Volhaven';bodies[4].city='Aevum';await prod.assignSpareIntelCourse(plans,bodies,live,230,{},noRead);
-assert.deepEqual(plans[3][2],[3,'ZB Institute of Technology','Computer Science'],'Prefer the fastest available local school');
-plans=ids.map(i=>['rep','setToFactionWork',[i,'F'+i,'hacking'],'rep']);await prod.assignSpareIntelCourse(plans,bodies,live,230,{},noRead);assert(plans.every(p=>p[1]==='setToFactionWork'));
-plans[5]=['class','setToGymWorkout',[5,'Powerhouse Gym','str'],'training'];plans[7]=['BB','setToBladeburnerAction',[7,'Infiltrate Synthoids',''],'only supplier'];
-await prod.assignSpareIntelCourse(plans,bodies,live,230,{Tracking:50,Retirement:50,'Bounty Hunter':50},noRead);assert.equal(plans[5][1],'setToGymWorkout');assert.equal(plans[7][1],'setToBladeburnerAction');
+// Run every student through the real class processor. INT is additive per donor; it is not divided by eight.
+const studyUpgrade=part(source('src/Hacknet/data/HashUpgradesMetadata.tsx'),'name: HashUpgradeEnum.ImproveStudying,','  },');
+const value=Number(studyUpgrade.match(/value: (\d+)/)[1]);assert.equal(value,20);
+const HashManager=build(source('src/Hacknet/HashManager.ts'),{HashUpgrades:{Study:{value}},HashUpgradeEnum:{ImproveStudying:'Study'},constructorsForReviver},'HashManager');
+Player.hashManager=new HashManager();
+for(const [shock,upgrades,expectedPerBody,expectedPlayer] of [[0,0,1152,1152],[0,5,2304,2304],[96,0,7.3728,46.08]]) {
+  Player.hashManager.upgrades.Study=upgrades;
+  const from=Player.sleeves.map(s=>s.persistentIntelligenceData.exp),pStart=Player.persistentIntelligenceData.exp;
+  for (const s of Player.sleeves) {
+    s.shock=shock;s.sync=100;assert(s.travel('Volhaven'));assert(s.takeUniversityCourse('ZB Institute of Technology','Computer Science'));
+  }
+  Player.sleeves.forEach((s,i)=>near(s.persistentIntelligenceData.exp,from[i])); // Neither travel nor enrolling awards instant INT.
+  for(const s of Player.sleeves) s.currentWork.process(s,3600*1000/CONSTANTS.MilliPerCycle);
+  Player.sleeves.forEach((s,i)=>near(s.persistentIntelligenceData.exp-from[i],expectedPerBody));
+  near(Player.persistentIntelligenceData.exp-pStart,expectedPlayer);
+}
+assert.equal(Math.round(calculateExp(50)/1152*60),101);assert.equal(Math.round(calculateExp(230)/1152/24),25);
 const auto=bot('autopilot.js');const argsCode=part(auto,'  function getFactionWorkerArgs()', '\n  //in order by importance!');
 const args=(node,mode,intel=false)=>Function('resetInfo','options','useGangs','playerInGang','shouldIntelFarm',argsCode+';return getFactionWorkerArgs();')({currentNode:node},{'gang-mode':mode},mode!=='off',false,intel);
 assert(!args(7,'auto').includes('--crime-focus'));assert(args(7,'on').includes('--crime-focus'));assert(args(4,'auto').includes('--crime-focus'));assert(args(7,'auto',true).includes('--intel-farm-preparation'));
-console.log('Engine-verified: 12 crime rates, player-only invite/travel INT, per-sleeve persistence, no retroactive XP, free class and shock-scaled sharing (72 / 2.88 XP). Separate karma/INT priorities passed.');
+console.log('Engine-verified: 12 crime rates, player-only invite/travel INT, per-sleeve persistence, no retroactive XP, free class and shock-scaled sharing (72 / 2.88 XP). Eight ZB students: 1152 INT XP/body/hour, 2304 at 5 study upgrades, 7.3728 at fixed 96 shock.');

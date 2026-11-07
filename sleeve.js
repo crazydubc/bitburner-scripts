@@ -2,7 +2,7 @@ import {
   log, getConfiguration, disableLogs, getActiveSourceFiles, singRun, singReadMany, gangRun, hnRun,
   formatMoney, formatDuration, getPlayerInfo, getReset, findPids, sleeveRun, bbRun, getOwnedAugs, getReserve, purchase
 } from './utils.js'
-import { hasBladeburnerAccess } from './progression.js'
+import { hasBladeburnerAccess, intelFarmState } from './progression.js'
 import {
   DEFAULT_DESIRED_AUGS, DEFAULT_PRIORITY_AUGS, buildAugUtilityMap, buildDesiredAugSet,
   getDefaultDesiredStats, planDistinctFactionRepRoutes
@@ -16,7 +16,7 @@ const argsSchema = [
   ['homicide-chance-threshold', 0.5], // Sleeves on crime will automatically start homicide once their chance of success exceeds this ratio
   ['disable-gang-homicide-priority', false], // Disable gang-karma priority (original flag name retained).
   ['force-gang-karma', false], // Pursue the gang even when its estimated unlock is distant in BN6/7.
-  ['sleeve-intel-target', 230], // After all eight sleeves are owned, one spare recovered sleeve may study up to this personal INT level; 0 disables.
+  ['sleeve-intel-target', 50], // Start fleet study only if all eight are fully recovered, synchronized and below this INT level; 0 disables.
   ['aug-budget', 0.1], // Spend up to this much of current cash on augs per tick (Default is high, because these are permanent for the rest of the BN)
   ['buy-cooldown', 60 * 1000], // Must wait this may milliseconds before buying more augs for a sleeve
   ['min-aug-batch', 20], // Must be able to afford at least this many augs before we pull the trigger (or fewer if buying all remaining augs)
@@ -59,17 +59,13 @@ const basicCrimeStats = {
   Mug: {time: 4000, karma: 0.25, difficulty: 0.2, strength_success_weight: 1.5, defense_success_weight: 0.5, dexterity_success_weight: 1.5, agility_success_weight: 0.5},
   Shoplift: {time: 2000, karma: 0.1, difficulty: 0.05, dexterity_success_weight: 1, agility_success_weight: 1},
 };
-const sleeveUniversities = {
-  'Sector-12': {name: 'Rothman University', expMult: 2},
-  Aevum: {name: 'Summit University', expMult: 3},
-  Volhaven: {name: 'ZB Institute of Technology', expMult: 4},
-};
 const minBbProbability = 0.99; // The assigned sleeve's lower success estimate must exceed this threshold
 const waitForContractCooldown = 60 * 1000; // 1 minute - Cooldown when contract count or probability gets too low
 
 let cachedCrimeStats, workByFaction; // Cache of crime statistics and which factions support which work
 let karmaCrimeStats, retryCrimeStatsAt, lastKarmaDecision, nextKarmaLog;
 let operationSupplyCheckedAt, spareOperationSupply;
+let fleetIntelState, fleetIntelRunning, retryFleetIntelAt;
 let task, lastStatusUpdateTime, lastPurchaseTime, lastPurchaseStatusUpdate, availableAugs, cacheExpiry,
   shockChance, lastRerollTime, bladeburnerCooldown, lastSleeveHp, lastSleeveShock; // State by sleeve
 let observedTasks, taskSnapshotTime;
@@ -165,8 +161,7 @@ async function getKarmaCrimeStats(ns) {
   return karmaCrimeStats ?? basicCrimeStats;
 }
 
-// Synthoid infiltration replenishes every operation as well as every contract. Only read these counts
-// when about to borrow a supplier; an unknown or low inventory keeps that sleeve in Bladeburner.
+// Synthoid infiltration replenishes every operation and contract. Unknown or low inventory keeps the fleet on its normal route.
 async function hasSpareOperationSupply(ns) {
   if (Date.now() - operationSupplyCheckedAt < 30000) return spareOperationSupply;
   operationSupplyCheckedAt = Date.now();
@@ -183,22 +178,46 @@ async function hasSpareOperationSupply(ns) {
   return spareOperationSupply;
 }
 
-// One free local course. Only replace discretionary crime or a surplus synthoid supplier, never a required task.
-async function assignSpareIntelCourse(plans, sleeves, live, target, contractCounts, checkOperations) {
-  if (sleeves.length !== 8 || !(target > 0)) return;
-  const infiltrates = plan => plan[1] === 'setToBladeburnerAction' && plan[2][1] === 'Infiltrate Synthoids';
-  const spareInfiltration = plans.filter(infiltrates).length > 1 &&
-    sleeveBbContractNames.every(name => Number.isFinite(contractCounts?.[name]) && contractCounts[name] > minBbContracts);
-  const candidates = sleeves.map((s, i) => ({s, i, school: sleeveUniversities[s.city]})).filter(({s, i, school}) => s.sync === 100 && s.shock === 0 &&
-    Number.isFinite(s.skills.intelligence) && s.skills.intelligence < target && school &&
-    (plans[i][1] === 'setToCommitCrime' || (spareInfiltration && ![1, 2, 3].includes(i) && infiltrates(plans[i]))));
-  const studying = i => live[i]?.type === 'CLASS' && live[i].classType === 'Computer Science';
-  const next = candidates.sort((a, b) => Number(infiltrates(plans[a.i])) - Number(infiltrates(plans[b.i])) ||
-    b.school.expMult - a.school.expMult || Number(studying(b.i)) - Number(studying(a.i)) || a.s.skills.intelligence - b.s.skills.intelligence)[0];
-  if (!next || (infiltrates(plans[next.i]) && !await checkOperations())) return;
-  const {s, i, school: {name: university}} = next;
-  plans[i] = [`farm sleeve INT (${university})`, 'setToUniversityCourse', [i, university, 'Computer Science'],
-    `studying Computer Science for persistent sleeve Intelligence (${s.skills.intelligence}/${target}; free local course).`];
+// A dedicated fleet phase. Persist qualification once on home: a faster sleeve crossing the target
+// must neither end its donations nor disqualify the slower sleeves after the manager is restarted.
+async function planFleetIntelFarm(ns, sleeves, spendable, urgentCrime) {
+  const target = options['sleeve-intel-target'];
+  if (!target || sleeves.length !== 8 || !sleeves.every(s => s.sync === 100 && s.shock === 0 &&
+      Number.isFinite(s.skills?.intelligence) && s.skills.intelligence >= 0) || Date.now() < retryFleetIntelAt) return null;
+  const levels = sleeves.map(s => s.skills.intelligence);
+  if (!fleetIntelState && urgentCrime) return null;
+  try {
+    fleetIntelState ??= await intelFarmState(ns, undefined, 'sleeves');
+    if (fleetIntelState.status === 'complete' && fleetIntelState.target === target) return null;
+    const qualified = fleetIntelState.status === 'farming' && fleetIntelState.target === target;
+    if (Math.min(...levels) >= target) {
+      if (qualified) {
+        fleetIntelState = await intelFarmState(ns, {status: 'complete', target}, 'sleeves');
+        log(ns, `Sleeve INT farm complete: all eight reached INT ${target}. Resuming normal work.`);
+      }
+      return null;
+    }
+    if (urgentCrime || (!qualified && !levels.every(level => level < target))) return null;
+    const travelers = sleeves.map((s, i) => s.city !== 'Volhaven' ? i : -1).filter(i => i >= 0);
+    if (!(spendable > travelers.length * 200e3)) return null;
+    if (playerInBladeburner && (!Number.isFinite(bladeburnerCityChaos) || bladeburnerCityChaos > 30 ||
+        !sleeveBbContractNames.every(name => Number.isFinite(bladeburnerContractCounts[name]) && bladeburnerContractCounts[name] > minBbContracts) ||
+        !await hasSpareOperationSupply(ns))) return null;
+    for (const i of travelers) {
+      const moved = await purchase(ns, 'sleeve', 'travel', [i, 'Volhaven'], options.reserve == null ? {} : {reserve: options.reserve});
+      if (moved.result !== true) { retryFleetIntelAt = Date.now() + 60000; return null; }
+      sleeves[i].city = 'Volhaven';
+      observedTasks[i] = null; // Travel stops work; plan from the real location if a later trip fails.
+      delete task[i];
+    }
+    if (!qualified) fleetIntelState = await intelFarmState(ns, {status: 'farming', target}, 'sleeves');
+    return sleeves.map((s, i) => ['farm sleeve INT at ZB', 'setToUniversityCourse', [i, 'ZB Institute of Technology', 'Computer Science'],
+      `studying free Computer Science with the fleet (INT ${s.skills.intelligence}; fleet target ${target}).`]);
+  } catch (err) {
+    retryFleetIntelAt = Date.now() + 60000;
+    log(ns, `Sleeve INT farm deferred: ${String(err?.message ?? err)}. Continuing normal work.`);
+    return null;
+  }
 }
 
 
@@ -445,6 +464,7 @@ export async function main(ns) {
   workByFaction = {}, cachedCrimeStats = {};
   karmaCrimeStats = null, retryCrimeStatsAt = 0, lastKarmaDecision = '', nextKarmaLog = 0;
   operationSupplyCheckedAt = -Infinity, spareOperationSupply = false;
+  fleetIntelState = null, fleetIntelRunning = false, retryFleetIntelAt = 0;
   playerInGang = playerInBladeburner = false;
   stagedShockRecoveryState = {active: false, mode: 'none', anchor: -1};
   sleeveRepAssignments = {};
@@ -727,7 +747,17 @@ async function mainLoop(ns) {
     }
   } else lastKarmaDecision = '';
   const urgentCrime = gangKarmaPriority || !!options.crime;
-  const repDisabled = !(4 in ownedSourceFiles) || options['disable-follow-player'] || urgentCrime;
+  // The fleet phase takes a turn ahead of ordinary training and rep routes. The player may keep
+  // working for a faction throughout the farm; waiting for that work to end could starve the phase.
+  const farmPlans = !options['disable-training'] && !resetInfo.bitNodeOptions?.disableSleeveExpAndAugmentation &&
+    (resetInfo.currentNode === 5 || 5 in ownedSourceFiles || playerInfo.skills?.intelligence > 0)
+    ? await planFleetIntelFarm(ns, sleeveInfo, playerInfo.money - (options.reserve ?? globalReserve), urgentCrime) : null;
+  if (!!farmPlans !== fleetIntelRunning) {
+    if (farmPlans) log(ns, `Sleeve INT farm: all eight studying at ZB, target INT ${options['sleeve-intel-target']}.`);
+    else if (fleetIntelState?.status !== 'complete') log(ns, 'Sleeve INT farm paused; returning sleeves to normal work.');
+    fleetIntelRunning = !!farmPlans;
+  }
+  const repDisabled = !(4 in ownedSourceFiles) || options['disable-follow-player'] || urgentCrime || !!farmPlans;
   const routeCapacity = options['shock-policy'] === 'parallel' ? allWorkers.filter(i => sleeveInfo[i].shock === 0).length : allWorkers.length;
   const factionRoutes = repDisabled ? [] : await refreshSleeveFactionRoutes(
     ns, playerInfo, resetInfo, playerWorkInfo, routeCapacity,
@@ -758,17 +788,12 @@ async function mainLoop(ns) {
       budget -= await manageSleeveAugs(ns, i, budget);
 
     // Decide what we think the sleeve should be doing for the next little while
-    plannedTasks.push(await pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrain,
+    plannedTasks.push(farmPlans ? farmPlans[i] : await pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrain,
       gangKarmaPriority ? karmaPlan.choices[i] : null, stagedShockRecoveryState, sleeveRepAssignments[i], recoverInsteadOfCrime));
 
     // After picking sleeve tasks, take a note of the sleeve's health at the end of the prior loop so we can detect failures
     [lastSleeveHp[i], lastSleeveShock[i]] = [sleeve.hp.current, sleeve.shock];
   }
-  if (!urgentCrime && !options['disable-training'] && !resetInfo.bitNodeOptions?.disableSleeveExpAndAugmentation &&
-      (resetInfo.currentNode === 5 || 5 in ownedSourceFiles || playerInfo.skills?.intelligence > 0) &&
-      playerInfo.money > (options.reserve ?? globalReserve))
-    await assignSpareIntelCourse(plannedTasks, sleeveInfo, observedTasks, options['sleeve-intel-target'], bladeburnerContractCounts,
-      () => hasSpareOperationSupply(ns));
 
   // Release changed faction/company assignments before claiming any targets, including swaps and recovery handoffs.
   for (let i = 0; i < numSleeves; i++) {

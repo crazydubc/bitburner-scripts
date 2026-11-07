@@ -6,31 +6,31 @@
       "suite": "api-errors",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.11
+      "seconds": 0.13
     },
     {
       "suite": "augmentation-reset",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.12
+      "seconds": 0.13
     },
     {
       "suite": "batch-correctness",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.14
+      "seconds": 0.19
     },
     {
       "suite": "batch-upgrade-compatibility",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.11
+      "seconds": 0.13
     },
     {
       "suite": "bn1-cycle",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.2
+      "seconds": 0.18
     },
     {
       "suite": "bn1-guide",
@@ -47,19 +47,19 @@
       "suite": "corporation-lifecycle",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.09
+      "seconds": 0.07
     },
     {
       "suite": "corporation-port",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.14
+      "seconds": 0.12
     },
     {
       "suite": "corporation-products",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.18
+      "seconds": 0.17
     },
     {
       "suite": "corporation-sale-prices",
@@ -71,13 +71,13 @@
       "suite": "darknet-lifecycle",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.11
+      "seconds": 0.08
     },
     {
       "suite": "dispatch-pressure",
       "status": "passed",
       "exit": 0,
-      "seconds": 1.02
+      "seconds": 0.88
     },
     {
       "suite": "go-adaptation",
@@ -95,37 +95,37 @@
       "suite": "go-lifecycle",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.14
+      "seconds": 0.09
     },
     {
       "suite": "go-tactics-checks",
       "status": "passed",
       "exit": 0,
-      "seconds": 2.54
+      "seconds": 2.25
     },
     {
       "suite": "hash-spending",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.09
+      "seconds": 0.07
     },
     {
       "suite": "infiltration",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.12
+      "seconds": 0.1
     },
     {
       "suite": "passive-factions",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.11
+      "seconds": 0.12
     },
     {
       "suite": "progression-throughput",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.23
+      "seconds": 0.19
     },
     {
       "suite": "progression",
@@ -137,13 +137,13 @@
       "suite": "purchase-ram",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.16
+      "seconds": 0.15
     },
     {
       "suite": "remaining-paths",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.13
+      "seconds": 0.12
     },
     {
       "suite": "reset-purchase-reserves",
@@ -155,13 +155,13 @@
       "suite": "resource-purchases",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.1
+      "seconds": 0.09
     },
     {
       "suite": "rpc-reserve",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.09
+      "seconds": 0.1
     },
     {
       "suite": "scan-ui",
@@ -178,25 +178,25 @@
       "suite": "share-handoff",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.21
+      "seconds": 0.18
     },
     {
       "suite": "soa-progression",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.13
+      "seconds": 0.15
     },
     {
       "suite": "speedrun-improvements",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.09
+      "seconds": 0.12
     },
     {
       "suite": "stock-liquidation",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.09
+      "seconds": 0.1
     },
     {
       "suite": "stock-valuation",
@@ -208,31 +208,31 @@
       "suite": "stockmaster-recovery",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.25
+      "seconds": 0.27
     },
     {
       "suite": "terminal-ui",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.12
+      "seconds": 0.13
     },
     {
       "suite": "full-audit",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.16
+      "seconds": 0.18
     },
     {
       "suite": "git-pull-prune",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.14
+      "seconds": 0.15
     },
     {
       "suite": "sleeve-restart",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.16
+      "seconds": 0.17
     },
     {
       "suite": "bn7-mechanics",
@@ -244,13 +244,13 @@
       "suite": "karma-intel",
       "status": "passed",
       "exit": 0,
-      "seconds": 0.16
+      "seconds": 0.17
     },
     {
       "suite": "shock-model",
       "status": "passed",
       "exit": 0,
-      "seconds": 1.3
+      "seconds": 1.33
     }
   ]
 }
