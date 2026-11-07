@@ -4,6 +4,8 @@
 
 ## The XP calculation
 
+The [BN7 follow-up](../2026-11-07-karma-and-sleeve-intel/README.md) describes how the manager now decides whether gang karma is urgent and when a full roster can spare a sleeve for permanent Intelligence.
+
 For shock `S` on the game's 0–100 scale, work XP efficiency is `q = 1 − S/100`. A synchronized sleeve gives the player its shock-adjusted XP; at lower sync, the transfer is also multiplied by `sync/100`. A recovering sleeve can still receive XP from other working sleeves, scaled by its own recovery ratio. The single-sleeve table measures direct work XP, excluding incoming shared XP. Faction reputation is multiplied by `q`. The usual player augmentation installation does not reset sleeve shock; changing BitNodes does.
 
 Let `I` be the sleeve's intelligence and `b = 1 + 0.75 × I^0.8 / 600`. With regular processing and no stored cycles, ordinary work removes `1.8 × b` shock points/hour; active recovery removes `5.4 × b`. An actually idle sleeve banks cycles rather than processing work. At zero INT, starting at 100 shock, that's **55.56 hours working** versus **18.52 hours recovering** to reach zero. At INT 230 the corresponding times are **50.65 and 16.88 hours**. Stored cycles, changed intelligence, damage and lower starting shock affect actual times.

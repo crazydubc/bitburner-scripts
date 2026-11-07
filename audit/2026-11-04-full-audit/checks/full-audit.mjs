@@ -2,6 +2,7 @@
 // node audit/2026-11-04-full-audit/checks/full-audit.mjs ../bitburner-engine
 import assert from 'node:assert/strict';
 import {readFileSync, existsSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import {stripTypeScriptTypes} from 'node:module';
 import {resolve} from 'node:path';
 import {shouldUseGangs, shouldFundNewCorporation} from '../../../speedrun-policy.js';
@@ -21,7 +22,8 @@ const STOP = Symbol('one loop complete');
 const NF = 'NeuroFlux Governor';
 
 function sleeveFixture({files = {10: 1}, flags = {}, count = 1, node = 10, skills = {}, crimeMult = 1,
-  city = 'Sector-12', cash = 1e12, reserve = 8e9, contractChance = {1: 0.5, 2: 0.995, 3: 1}} = {}) {
+  city = 'Sector-12', cash = 1e12, reserve = 8e9, contractChance = {1: 0.5, 2: 0.995, 3: 1},
+  bb = true, stock = 100, operationStock = 100, karma = -1, work = null, age = 1000, advanced = {}, catalog = null, baseline = false} = {}) {
   const calls = [], logs = [], assignments = [];
   const sleeves = Array.from({length: count}, () => ({sync: 100, shock: 0, hp: {current: 100, max: 100}, city,
     skills: {hacking: 10, strength: 10, defense: 10, dexterity: 10, agility: 10, charisma: 10, intelligence: 0, ...skills},
@@ -32,13 +34,13 @@ function sleeveFixture({files = {10: 1}, flags = {}, count = 1, node = 10, skill
     getConfiguration: (_, schema) => ({...Object.fromEntries(schema), ...flags}),
     getActiveSourceFiles: async () => files, findPids: async () => [1], getOwnedAugs: async () => [],
     getPlayerInfo: async () => ({money: cash, factions: []}),
-    getReset: async () => ({currentNode: node, lastNodeReset: Date.now() - 1000}), getReserve: async () => reserve,
+    getReset: async () => ({currentNode: node, lastNodeReset: Date.now() - age, bitNodeOptions: advanced}), getReserve: async () => reserve,
     formatMoney: String, formatDuration: String,
-    singRun: async (_, method) => {assert(files[4], 'No Singularity call without access'); calls.push(method);
-      if (method === 'getCurrentWork') return null;
-      if (method === 'getCrimeStats') return stats;
+    singRun: async (_, method, name) => {assert(files[4], 'No Singularity call without access'); calls.push(method);
+      if (method === 'getCurrentWork') return work;
+      if (method === 'getCrimeStats') return catalog?.[name] ?? stats;
       assert.fail(method);},
-    singReadMany: async (_, method, names) => {calls.push(['bulk', method, names]); return Object.fromEntries(names.map(n => [n, 0]));},
+    singReadMany: async (_, method, names) => {calls.push(['bulk', method, names]); return Object.fromEntries(names.map(n => [n, method === 'getCrimeStats' ? catalog?.[n] : 0]));},
     gangRun: async () => false, hnRun: async () => assert.fail('Do not spend hashes without SF9'),
     sleeveRun: async (_, method, ...args) => {
       calls.push([method, ...args]);
@@ -50,10 +52,11 @@ function sleeveFixture({files = {10: 1}, flags = {}, count = 1, node = 10, skill
       assert.fail(method);
     },
     bbRun: async (_, method, ...args) => {
-      if (method === 'inBladeburner') return true;
+      if (method === 'inBladeburner') return bb;
       if (method === 'getCity') return 'Sector-12';
       if (method === 'getCityChaos') return 0;
-      if (method === 'getActionCountRemaining') return 100;
+      if (method === 'getOperationNames') return ['Investigation','Assassination'];
+      if (method === 'getActionCountRemaining') return args[0] === 'Operations' && args[1] === 'Assassination' ? operationStock : stock;
       if (method === 'getActionEstimatedSuccessChance') {
         const expectedIndex = {Retirement: 1, 'Bounty Hunter': 2, Tracking: 3}[args[1]];
         assert.equal(args[2], expectedIndex, 'Estimate the assigned sleeve, not the player');
@@ -65,9 +68,10 @@ function sleeveFixture({files = {10: 1}, flags = {}, count = 1, node = 10, skill
       getServerMoneyAvailable: () => cash, read: () => String(reserve), sleeve: {travel: () => {cash -= 200e3; return true;}}},
       namespace, method, args, policy),
   };
-  const api = Function(...Object.keys(bindings), bare(source('sleeve.js')) + ';return {main, calculateCrimeChance, buildSingularityMap};')(...Object.values(bindings));
-  const ns = {heart: {break: () => -1}, read: () => '', tprint: line => logs.push(line), sleep: async () => {throw STOP;},
-    enums: {UniversityClassType: {algorithms: 'Algorithms', leadership: 'Leadership'}, CityName: {Sector12: 'Sector-12', Volhaven: 'Volhaven'},
+  const code = baseline ? execFileSync('git',['show','7a1f189:sleeve.js'],{cwd:root,encoding:'utf8'}) : source('sleeve.js');
+  const api = Function(...Object.keys(bindings), bare(code) + ';return {main, calculateCrimeChance, buildSingularityMap};')(...Object.values(bindings));
+  const ns = {heart: {break: () => karma}, read: () => '', tprint: line => logs.push(line), sleep: async () => {throw STOP;},
+    enums: {CrimeType: catalog && Object.fromEntries(Object.keys(catalog).map(n=>[n,n])), UniversityClassType: {algorithms: 'Algorithms', leadership: 'Leadership'}, CityName: {Sector12: 'Sector-12', Volhaven: 'Volhaven'},
       LocationName: {Sector12PowerhouseGym: 'Powerhouse Gym', VolhavenZBInstituteOfTechnology: 'ZB Institute of Technology'}}};
   return {api, sleeves, calls, logs, assignments, async run() {
     await assert.rejects(api.main(ns), error => error === STOP);
@@ -113,6 +117,54 @@ for (const node of [10, 14]) {
     strength_success_weight: 2, defense_success_weight: 2, dexterity_success_weight: 0.5, agility_success_weight: 0.5};
   assert(Math.abs(await s.api.calculateCrimeChance({}, s.sleeves[0], 'Homicide') - officialChance.call(stats, s.sleeves[0])) < 1e-12);
 }
+
+// Reproduce the user's BN7.2 case through the actual manager, then vary only the constraint under test.
+const basic = {Homicide:{time:3000,karma:3,difficulty:1,strength_success_weight:2,defense_success_weight:2,dexterity_success_weight:.5,agility_success_weight:.5},
+  Shoplift:{time:2000,karma:.1,difficulty:.05,dexterity_success_weight:1,agility_success_weight:1},
+  'Deal Drugs':{time:10000,karma:.5,difficulty:1,charisma_success_weight:3,dexterity_success_weight:2,agility_success_weight:1}};
+const bladeStart={count:8,node:7,files:{2:1,4:3,5:1,7:1,10:3},karma:0,bb:false,work:{type:'CLASS',classType:'str'},catalog:basic,
+  skills:{strength:2,defense:2,dexterity:2,agility:2,charisma:2}};
+async function atShock(settings, shock) {const h=sleeveFixture(settings);for (const sl of h.sleeves) sl.shock=shock;await h.run();return h;}
+if(process.argv.includes('--compare-karma-baseline')) {
+  const legacy=await atShock({...bladeStart,baseline:true},96);
+  assert.equal(legacy.assignments.filter(a=>a[2]==='Homicide').length,8);
+}
+let current=await atShock(bladeStart,96);
+assert.equal(current.assignments.filter(a=>a[0]==='setToCommitCrime').length,0);
+assert.equal(current.assignments.filter(a=>a[0]==='setToGymWorkout').length,7);
+assert(current.logs.some(l=>l.includes('Gang karma: deferring')&&l.includes('295.4/h')));
+assert.equal(current.calls.filter(c=>Array.isArray(c)&&c[0]==='bulk'&&c[1]==='getCrimeStats').length,1);
+current=await atShock({...bladeStart,age:4*3600000},96);assert(current.assignments.every(a=>a[0]==='setToShockRecovery'));
+current=await atShock({...bladeStart,age:4*3600000,cash:8e9},96);
+assert(current.assignments.some(a=>a[2]==='Mug'),'Keep a cash worker at the reserve when the long gang grind is deferred');
+current=await atShock({...bladeStart,age:4*3600000,flags:{'shock-policy':'staged'}},96);
+assert(current.assignments.some(a=>a[2]==='Mug'),'An explicit staged policy retains its background workers');
+current=await atShock({...bladeStart,bb:true,age:4*3600000},96);
+assert(current.assignments.some(a=>a[0]==='setToBladeburnerAction'));assert(!current.assignments.some(a=>a[0]==='setToCommitCrime'));
+for(const override of [{karma:-53995},{flags:{'force-gang-karma':true}}]) {
+  current=await atShock({...bladeStart,...override},96);assert.equal(current.assignments.filter(a=>a[2]==='Homicide').length,8);
+}
+current=await atShock({...bladeStart,karma:-53995,skills:{...bladeStart.skills,charisma:1000}},96);
+assert(current.assignments.every(a=>a[2]==='Deal Drugs'),'Compare expected karma per time, not just Homicide or the most likely success');
+current=await atShock({...bladeStart,flags:{crime:'Mug'}},96);assert(current.assignments.every(a=>a[2]==='Mug'));
+for(const override of [{node:2},{node:8},{advanced:{disableGang:true}},{flags:{'disable-gang-homicide-priority':true}}]) {
+  current=await atShock({...bladeStart,karma:-53995,...override},96);assert(!current.logs.some(l=>l.includes('Gang karma: pursuing')));
+}
+// A guaranteed fallback if the optional live catalog is unavailable; no SF4 call or hard-coded forced Homicide.
+current=await atShock({...bladeStart,files:{10:3,7:1,2:1},karma:-53995,skills:{strength:1,defense:1,dexterity:10,agility:10}},96);
+assert(current.assignments.every(a=>a[2]==='Shoplift'));
+const spare={count:8,files:{5:1,10:3},age:4*3600000};
+const intelClass = h=>h.assignments.filter(a=>a[0]==='setToUniversityCourse'&&a[3]==='Computer Science');
+current=await atShock(spare,0);assert.deepEqual(intelClass(current),[['setToUniversityCourse',0,'Rothman University','Computer Science']]);
+for(const opts of [{count:7},{files:{10:3}},{flags:{'sleeve-intel-target':0}},{flags:{'disable-training':true}},
+  {skills:{intelligence:230}},{cash:8e9},{city:'Ishima'},{advanced:{disableSleeveExpAndAugmentation:true}},{flags:{crime:'Mug'}},{age:0}])
+  assert.equal(intelClass(await atShock({...spare,...opts},0)).length,0);
+assert.equal(intelClass(await atShock(spare,96)).length,0);
+current=await atShock({...spare,files:{7:1,10:3,5:1},node:7},0);
+assert.equal(intelClass(current).length,1);assert(current.assignments.some(a=>a[2]==='Infiltrate Synthoids'));
+assert(current.assignments.some(a=>a.at(-1)==='Tracking'));
+assert.equal(intelClass(await atShock({...spare,files:{7:1,10:3,5:1},node:7,stock:1},0)).length,0);
+for (const operationStock of [0, NaN]) assert.equal(intelClass(await atShock({...spare,files:{7:1,10:3,5:1},node:7,operationStock},0)).length,0);
 
 // New startup policy preserves BN3 free funding, BN10, and existing businesses in penalized nodes.
 for (const node of [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 14]) {

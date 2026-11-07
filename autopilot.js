@@ -150,7 +150,9 @@ export async function main(ns) {
   function getFactionWorkerArgs() {
     if (shouldIntelFarm)
       return ["--fast-crimes-only", "--prioritize-invites", "--all-company-invites", "--intel-farm-preparation"];
-    const args = useGangs && !playerInGang
+    // In native Bladeburner nodes, let the player pursue the main route. Sleeves can finish a nearby gang unlock.
+    const bladeRoute = [6, 7].includes(resetInfo.currentNode) && !resetInfo.bitNodeOptions?.disableBladeburner;
+    const args = useGangs && !playerInGang && (!bladeRoute || options['gang-mode'] === 'on')
       ? ["--fast-crimes-only", "--get-invited-to-every-faction", "--crime-focus",
         "--training-stat-per-multi-threshold", 200, "--prioritize-invites"]
       : ["--fast-crimes-only", "--get-invited-to-every-faction"];
@@ -195,7 +197,7 @@ export async function main(ns) {
     {
       name: "sleeve.js",
       shouldRun: () => 10 in unlockedSFs && reqRam(128),
-      args: () => useGangs ? [] : ['--disable-gang-homicide-priority']
+      args: () => !useGangs ? ['--disable-gang-homicide-priority'] : options['gang-mode'] === 'on' ? ['--force-gang-karma'] : []
     },
     {
       name: "go.js",

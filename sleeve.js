@@ -14,7 +14,9 @@ const argsSchema = [
   ['shock-recovery', 0.05], // Set to a number between 0 and 1 to devote that ratio of time to periodic shock recovery (until shock is at 0)
   ['crime', null], // If specified, sleeves will perform only this crime regardless of stats
   ['homicide-chance-threshold', 0.5], // Sleeves on crime will automatically start homicide once their chance of success exceeds this ratio
-  ['disable-gang-homicide-priority', false], // By default, sleeves will do homicide to farm Karma until we're in a gang. Set this flag to disable this priority.
+  ['disable-gang-homicide-priority', false], // Disable gang-karma priority (original flag name retained).
+  ['force-gang-karma', false], // Pursue the gang even when its estimated unlock is distant in BN6/7.
+  ['sleeve-intel-target', 230], // After all eight sleeves are owned, one spare recovered sleeve may study up to this personal INT level; 0 disables.
   ['aug-budget', 0.1], // Spend up to this much of current cash on augs per tick (Default is high, because these are permanent for the rest of the BN)
   ['buy-cooldown', 60 * 1000], // Must wait this may milliseconds before buying more augs for a sleeve
   ['min-aug-batch', 20], // Must be able to afford at least this many augs before we pull the trigger (or fewer if buying all remaining augs)
@@ -51,10 +53,23 @@ const trainStats = ['strength', 'defense', 'dexterity', 'agility'];
 const trainSmarts = ['hacking', 'charisma'];
 const sleeveBbContractNames = ["Tracking", "Bounty Hunter", "Retirement"];
 const minBbContracts = 2; // There should be this many contracts remaining before sleeves attempt them
+const bladeGangBudgetHours = 0.5; // Opportunity-cost limit for optional gang prep in Bladeburner's native nodes.
+const basicCrimeStats = {
+  Homicide: {time: 3000, karma: 3, difficulty: 1, strength_success_weight: 2, defense_success_weight: 2, dexterity_success_weight: 0.5, agility_success_weight: 0.5},
+  Mug: {time: 4000, karma: 0.25, difficulty: 0.2, strength_success_weight: 1.5, defense_success_weight: 0.5, dexterity_success_weight: 1.5, agility_success_weight: 0.5},
+  Shoplift: {time: 2000, karma: 0.1, difficulty: 0.05, dexterity_success_weight: 1, agility_success_weight: 1},
+};
+const sleeveUniversities = {
+  'Sector-12': {name: 'Rothman University', expMult: 2},
+  Aevum: {name: 'Summit University', expMult: 3},
+  Volhaven: {name: 'ZB Institute of Technology', expMult: 4},
+};
 const minBbProbability = 0.99; // The assigned sleeve's lower success estimate must exceed this threshold
 const waitForContractCooldown = 60 * 1000; // 1 minute - Cooldown when contract count or probability gets too low
 
 let cachedCrimeStats, workByFaction; // Cache of crime statistics and which factions support which work
+let karmaCrimeStats, retryCrimeStatsAt, lastKarmaDecision, nextKarmaLog;
+let operationSupplyCheckedAt, spareOperationSupply;
 let task, lastStatusUpdateTime, lastPurchaseTime, lastPurchaseStatusUpdate, availableAugs, cacheExpiry,
   shockChance, lastRerollTime, bladeburnerCooldown, lastSleeveHp, lastSleeveShock; // State by sleeve
 let observedTasks, taskSnapshotTime;
@@ -118,6 +133,72 @@ export function shouldPrioritizeGangKarma(playerIsInGang, priorityDisabled, hasG
   const numericKarma = Number(karma);
   return playerIsInGang !== true && priorityDisabled !== true && hasGangAccess === true &&
     Number.isFinite(numericKarma) && numericKarma > -54000;
+}
+
+// Only successful sleeve crimes change karma; shock reduces XP but is not another factor in this rate.
+function estimateKarma(sleeves, workers, crimes, karma, multiplier) {
+  const choices = [], gap = Math.max(0, 54000 + karma);
+  let perHour = 0;
+  for (const i of workers) {
+    for (const [crime, stats] of Object.entries(crimes)) {
+      const chance = sleeveCrimeChance(sleeves[i], stats, multiplier);
+      const rate = chance * stats.karma * (sleeves[i].sync / 100) * 3600000 / stats.time;
+      if (Number.isFinite(rate) && rate > (choices[i]?.rate ?? 0)) choices[i] = {crime, chance, rate};
+    }
+    perHour += choices[i]?.rate ?? 0;
+  }
+  return {choices, gap, perHour, hours: perHour > 0 ? gap / perHour : Infinity};
+}
+
+async function getKarmaCrimeStats(ns) {
+  if (!karmaCrimeStats && 4 in ownedSourceFiles && ns.enums?.CrimeType && Date.now() >= retryCrimeStatsAt) {
+    retryCrimeStatsAt = Date.now() + 60000;
+    try {
+      const names = Object.values(ns.enums.CrimeType);
+      const stats = await singReadMany(ns, 'getCrimeStats', names);
+      if (!names.length || !names.every(name => Number.isFinite(stats[name]?.time) && stats[name].time > 0 &&
+        Number.isFinite(stats[name].difficulty) && stats[name].difficulty > 0 && Number.isFinite(stats[name].karma))) throw Error('Invalid crime catalog');
+      karmaCrimeStats = stats;
+      Object.assign(cachedCrimeStats, stats);
+    } catch { /* Verified basic crimes still work without a complete Singularity snapshot. */ }
+  }
+  return karmaCrimeStats ?? basicCrimeStats;
+}
+
+// Synthoid infiltration replenishes every operation as well as every contract. Only read these counts
+// when about to borrow a supplier; an unknown or low inventory keeps that sleeve in Bladeburner.
+async function hasSpareOperationSupply(ns) {
+  if (Date.now() - operationSupplyCheckedAt < 30000) return spareOperationSupply;
+  operationSupplyCheckedAt = Date.now();
+  spareOperationSupply = false;
+  try {
+    const names = await bbRun(ns, 'getOperationNames');
+    if (!Array.isArray(names) || !names.length) return false;
+    for (const name of names) {
+      const left = await bbRun(ns, 'getActionCountRemaining', 'Operations', name);
+      if (!Number.isFinite(left) || left <= minBbContracts) return false;
+    }
+    spareOperationSupply = true;
+  } catch { /* Keep supplying the player's route if the snapshot cannot be read. */ }
+  return spareOperationSupply;
+}
+
+// One free local course. Only replace discretionary crime or a surplus synthoid supplier, never a required task.
+async function assignSpareIntelCourse(plans, sleeves, live, target, contractCounts, checkOperations) {
+  if (sleeves.length !== 8 || !(target > 0)) return;
+  const infiltrates = plan => plan[1] === 'setToBladeburnerAction' && plan[2][1] === 'Infiltrate Synthoids';
+  const spareInfiltration = plans.filter(infiltrates).length > 1 &&
+    sleeveBbContractNames.every(name => Number.isFinite(contractCounts?.[name]) && contractCounts[name] > minBbContracts);
+  const candidates = sleeves.map((s, i) => ({s, i, school: sleeveUniversities[s.city]})).filter(({s, i, school}) => s.sync === 100 && s.shock === 0 &&
+    Number.isFinite(s.skills.intelligence) && s.skills.intelligence < target && school &&
+    (plans[i][1] === 'setToCommitCrime' || (spareInfiltration && ![1, 2, 3].includes(i) && infiltrates(plans[i]))));
+  const studying = i => live[i]?.type === 'CLASS' && live[i].classType === 'Computer Science';
+  const next = candidates.sort((a, b) => Number(infiltrates(plans[a.i])) - Number(infiltrates(plans[b.i])) ||
+    b.school.expMult - a.school.expMult || Number(studying(b.i)) - Number(studying(a.i)) || a.s.skills.intelligence - b.s.skills.intelligence)[0];
+  if (!next || (infiltrates(plans[next.i]) && !await checkOperations())) return;
+  const {s, i, school: {name: university}} = next;
+  plans[i] = [`farm sleeve INT (${university})`, 'setToUniversityCourse', [i, university, 'Computer Science'],
+    `studying Computer Science for persistent sleeve Intelligence (${s.skills.intelligence}/${target}; free local course).`];
 }
 
 
@@ -352,6 +433,8 @@ export async function main(ns) {
   if (!runOptions || (await findPids(ns, 'sleeve.js')).length > 1) return; // Prevent multiple instances of this script from being started, even with different args.
   if (!['auto', 'staged', 'parallel'].includes(runOptions['shock-policy']))
     return ns.tprint('ERROR: --shock-policy must be auto, staged or parallel.');
+  if (!Number.isSafeInteger(runOptions['sleeve-intel-target']) || runOptions['sleeve-intel-target'] < 0)
+    return ns.tprint('ERROR: --sleeve-intel-target must be a nonnegative integer (0 disables).');
   options = runOptions; // We don't set the global "options" until we're sure this is the only running instance
   disableLogs(ns, ['getServerMoneyAvailable']);
   // Ensure the global state is reset (e.g. after entering a new bitnode)
@@ -360,6 +443,8 @@ export async function main(ns) {
     bladeburnerCooldown = [], lastSleeveHp = [], lastSleeveShock = [];
   observedTasks = [], taskSnapshotTime = 0;
   workByFaction = {}, cachedCrimeStats = {};
+  karmaCrimeStats = null, retryCrimeStatsAt = 0, lastKarmaDecision = '', nextKarmaLog = 0;
+  operationSupplyCheckedAt = -Infinity, spareOperationSupply = false;
   playerInGang = playerInBladeburner = false;
   stagedShockRecoveryState = {active: false, mode: 'none', anchor: -1};
   sleeveRepAssignments = {};
@@ -560,18 +645,19 @@ async function mainLoop(ns) {
   if (!options['disable-bladeburner'] && hasBladeburnerAccess(ownedSourceFiles) && !playerInBladeburner)
     playerInBladeburner = await bbRun(ns, 'inBladeburner') === true;
   const playerWorkInfo = await getCurrentWorkInfo(ns);
-  if (!playerInGang && (2 in ownedSourceFiles)) {
+  const resetInfo = await getReset(ns);
+  if (!playerInGang && (2 in ownedSourceFiles) && !resetInfo.bitNodeOptions?.disableGang) {
     const inGangResult = await gangRun(ns, 'inGang');
     playerInGang = inGangResult === true; // ERROR strings from the RAM-dodge helper must not count as gang membership
   }
-  const resetInfo = await getReset(ns);
   // Crime success has a separate penalty in BN14, including when SF5 is not available.
   crimeSuccessMultiplier = resetInfo.currentNode === 14 ? 0.4 : 1;
-  const gangKarmaPriority = shouldPrioritizeGangKarma(
+  const karma = ns.heart.break();
+  const needsGangKarma = !options.crime && shouldPrioritizeGangKarma(
     playerInGang,
     options['disable-gang-homicide-priority'],
-    2 in ownedSourceFiles && resetInfo.currentNode !== 8,
-    ns.heart.break(),
+    2 in ownedSourceFiles && ![2, 8].includes(resetInfo.currentNode) && !resetInfo.bitNodeOptions?.disableGang,
+    karma,
   );
   let globalReserve = await getReserve(ns);
   let budget = (playerInfo.money - (options['reserve'] ?? globalReserve)) * options['aug-budget'];
@@ -623,6 +709,23 @@ async function mainLoop(ns) {
     taskSnapshotTime = Date.now();
   }
   const allWorkers = getSleeveRepWorkerOrder(sleeveInfo, {}, playerInBladeburner);
+  let karmaPlan = null, gangKarmaPriority = false;
+  if (needsGangKarma) {
+    // Count only sleeves the configured shock policy can actually assign to crime.
+    const pool = planSleeveRecovery(sleeveInfo, observedTasks, stagedShockRecoveryState, {policy: options['shock-policy'],
+      order: allWorkers, repJobs: 0, urgentCrime: true, bladeburner: false, keepBackground: false}).workSleeves;
+    karmaPlan = estimateKarma(sleeveInfo, pool, pool.length ? await getKarmaCrimeStats(ns) : {}, karma, crimeSuccessMultiplier);
+    const bounded = [6, 7].includes(resetInfo.currentNode) && !resetInfo.bitNodeOptions?.disableBladeburner && !options['force-gang-karma'];
+    gangKarmaPriority = karmaPlan.perHour > 0 && (!bounded || karmaPlan.hours <= bladeGangBudgetHours);
+    const decision = gangKarmaPriority ? 'pursuing' : 'deferring';
+    if (decision !== lastKarmaDecision || Date.now() >= nextKarmaLog) {
+      const eta = Number.isFinite(karmaPlan.hours) ? formatDuration(karmaPlan.hours * 3600000) : 'no productive workers';
+      log(ns, `Gang karma: ${decision}; ${Math.ceil(karmaPlan.gap)} remaining, ${karmaPlan.perHour.toFixed(1)}/h across eligible sleeves, ETA ${eta} at current odds.` +
+        (bounded ? ' BN6/7 auto commits the fleet only within 30 minutes of the karma requirement.' : ''));
+      nextKarmaLog = Date.now() + statusUpdateInterval;
+      lastKarmaDecision = decision;
+    }
+  } else lastKarmaDecision = '';
   const urgentCrime = gangKarmaPriority || !!options.crime;
   const repDisabled = !(4 in ownedSourceFiles) || options['disable-follow-player'] || urgentCrime;
   const routeCapacity = options['shock-policy'] === 'parallel' ? allWorkers.filter(i => sleeveInfo[i].shock === 0).length : allWorkers.length;
@@ -646,6 +749,8 @@ async function mainLoop(ns) {
   );
 
   const plannedTasks = [];
+  const recoverInsteadOfCrime = needsGangKarma && !gangKarmaPriority && options['shock-policy'] === 'auto' &&
+    playerInfo.money > (options.reserve ?? globalReserve);
   for (let i = 0; i < numSleeves; i++) {
     let sleeve = sleeveInfo[i]; // For convenience, merge all sleeve stats/info into one object
     // Manage sleeve augmentations (if available)
@@ -653,12 +758,17 @@ async function mainLoop(ns) {
       budget -= await manageSleeveAugs(ns, i, budget);
 
     // Decide what we think the sleeve should be doing for the next little while
-    plannedTasks.push(await pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrain, gangKarmaPriority,
-      stagedShockRecoveryState, sleeveRepAssignments[i]));
+    plannedTasks.push(await pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrain,
+      gangKarmaPriority ? karmaPlan.choices[i] : null, stagedShockRecoveryState, sleeveRepAssignments[i], recoverInsteadOfCrime));
 
     // After picking sleeve tasks, take a note of the sleeve's health at the end of the prior loop so we can detect failures
     [lastSleeveHp[i], lastSleeveShock[i]] = [sleeve.hp.current, sleeve.shock];
   }
+  if (!urgentCrime && !options['disable-training'] && !resetInfo.bitNodeOptions?.disableSleeveExpAndAugmentation &&
+      (resetInfo.currentNode === 5 || 5 in ownedSourceFiles || playerInfo.skills?.intelligence > 0) &&
+      playerInfo.money > (options.reserve ?? globalReserve))
+    await assignSpareIntelCourse(plannedTasks, sleeveInfo, observedTasks, options['sleeve-intel-target'], bladeburnerContractCounts,
+      () => hasSpareOperationSupply(ns));
 
   // Release changed faction/company assignments before claiming any targets, including swaps and recovery handoffs.
   for (let i = 0; i < numSleeves; i++) {
@@ -698,8 +808,8 @@ async function mainLoop(ns) {
  * @param {{ type: "COMPANY"|"FACTION"|"CLASS"|"CRIME", cyclesWorked: number, crimeType: string, classType: string, location: string, companyName: string, factionName: string, factionWorkType: string }} playerWorkInfo
  * @param {SleevePerson} sleeve
  * @returns {Promise<[string, string, any[], string]>} a 4-tuple of task name, command, args, and status message */
-async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrain, gangKarmaPriority,
-  stagedShockRecovery, repAssignment) {
+async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrain, karmaChoice,
+  stagedShockRecovery, repAssignment, recoverInsteadOfCrime) {
   // Initialize sleeve dicts on first loop
   if (lastSleeveHp[i] === undefined) lastSleeveHp[i] = sleeve.hp.current;
   if (lastSleeveShock[i] === undefined) lastSleeveShock[i] = sleeve.shock;
@@ -739,8 +849,8 @@ async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrai
   // work consume the only usable sleeve while the player is still unlocking gangs.
   if (options.crime)
     return await crimeTask(ns, options.crime, i, sleeve, 'the requested --crime override');
-  if (gangKarmaPriority)
-    return await crimeTask(ns, 'Homicide', i, sleeve, 'we want gang karma');
+  if (karmaChoice)
+    return await crimeTask(ns, karmaChoice.crime, i, sleeve, `gang unlock (${karmaChoice.rate.toFixed(1)} expected karma/h)`, karmaChoice.chance);
 
   // Once gang Karma is no longer urgent, use every available sleeve on a distinct productive rep target.
   if (repAssignment?.type === 'FACTION') {
@@ -860,12 +970,10 @@ async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrai
         /*   */ `doing ${action}${contractName ? ` - ${contractName}` : ''} in Bladeburner.`];
   }
   // If there's nothing more productive to do (above) and there's still shock, prioritize recovery
-  if (sleeve.shock > 0 && !stagedRecoveryActive)
-    return shockRecoveryTask(sleeve, i, `there appears to be nothing better to do`);
+  if (sleeve.shock > 0 && (!stagedRecoveryActive || recoverInsteadOfCrime))
+    return shockRecoveryTask(sleeve, i, recoverInsteadOfCrime ? 'gang karma is deferred and no higher-priority assignment is available' : 'there appears to be nothing better to do');
 
-  //default to comiting crimes for stats/karma
-  //Note: Heist and assassin give intel, homicide is best for karma.
-  //Heist is better for stats than assassination.
+  // Background crime for money and stats; gang-unlock choices were scored separately above.
   const bestCrimesByDifficulty = ["Heist", "Assassination", "Homicide"];
   const chanceThresholds = [1.0, 1.0, options['homicide-chance-threshold']];
   async function buildLibCrimeTask(ns, sleeve, items) {
@@ -898,11 +1006,11 @@ function shockRecoveryTask(sleeve, i, reason) {
  * @param {NS} ns
  * @param {SleevePerson} sleeve
  * @returns {Promise<[string, string, any[], string]>} a 4-tuple of task name, command, args, and status message */
-async function crimeTask(ns, crime, i, sleeve, reason) {
-  const successChance = await calculateCrimeChance(ns, sleeve, crime);
+async function crimeTask(ns, crime, i, sleeve, reason, estimatedChance) {
+  const successChance = estimatedChance ?? await calculateCrimeChance(ns, sleeve, crime);
   return [`commit ${crime}`, 'setToCommitCrime', [i, crime],
     /*   */ `committing ${crime} with chance ${(successChance * 100).toFixed(2)}% because ${reason}` +
-    /*   */ (options.crime || crime == "Homicide" ? '' : // If auto-criming, user may be curious how close we are to switching to homicide
+    /*   */ (estimatedChance != null || options.crime || crime == "Homicide" ? '' : // For background crimes, indicate proximity to homicide.
     /*   */     ` (Note: Homicide chance would be ${((await calculateCrimeChance(ns, sleeve, "Homicide")) * 100).toFixed(2)}%)`)];
 }
 
@@ -981,10 +1089,11 @@ async function calculateCrimeChance(ns, sleeve, crimeName) {
   // If not in the cache, retrieve this crime's stats
   const crimeStats = cachedCrimeStats[crimeName] ?? (cachedCrimeStats[crimeName] = (4 in ownedSourceFiles ?
     await singRun(ns, 'getCrimeStats', crimeName) :
-    // Hack: To support players without SF4, hard-code values as of the current release
-    crimeName == "Homicide" ? { difficulty: 1, strength_success_weight: 2, defense_success_weight: 2, dexterity_success_weight: 0.5, agility_success_weight: 0.5 } :
-      crimeName == "Mug" ? { difficulty: 0.2, strength_success_weight: 1.5, defense_success_weight: 0.5, dexterity_success_weight: 1.5, agility_success_weight: 0.5, } :
-        undefined));
+    basicCrimeStats[crimeName]));
+  return sleeveCrimeChance(sleeve, crimeStats, crimeSuccessMultiplier);
+}
+
+function sleeveCrimeChance(sleeve, crimeStats, multiplier) {
   if (!crimeStats || !Number.isFinite(crimeStats.difficulty) || crimeStats.difficulty <= 0) return 0;
   const intelligence = Math.max(0, Number(sleeve.skills.intelligence) || 0);
   let chance =
@@ -996,6 +1105,6 @@ async function calculateCrimeChance(ns, sleeve, crimeName) {
     (crimeStats.charisma_success_weight || 0) * sleeve.skills.charisma + 0.025 * intelligence;
   chance /= 975;
   chance /= crimeStats.difficulty;
-  chance *= (sleeve.mults?.crime_success ?? 1) * crimeSuccessMultiplier * (1 + intelligence ** 0.8 / 600);
-  return Math.min(chance, 1);
+  chance *= (sleeve.mults?.crime_success ?? 1) * multiplier * (1 + intelligence ** 0.8 / 600);
+  return Number.isFinite(chance) ? Math.min(1, Math.max(0, chance)) : 0;
 }
