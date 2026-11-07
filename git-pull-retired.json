@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "crazydubc/bitburner-scripts",
-  "generatedFrom": "65a701851597e5d61922786dc97412bf4247d4d6",
+  "generatedFrom": "89bb315d46886c144d6bb3b6f46c62e89deb8bff",
   "files": {
     "Remote/manualhack-target.js": [
       "2392fdaf4cb717f2b3b6449e0451f46045140e66081bb18efe5548bfe381ce8f",
@@ -323,9 +323,6 @@
       "fd8dd11ef16a4b3d5a32f5499e7b8d285eefd6b2a12e7725ce484e68a02aca94",
       "fefe713121e62b94afc17a8cd66b360515514ad2d13d364c36d84c6903b57dba"
     ],
-    "dev.js": [
-      "8c49976d05dd9fcf7c5a1487b99cdfde9885e5b3b21ce80d2f7a2e9db61e4a2f"
-    ],
     "dump-ns-namespace.js": [
       "3b6379d9e373c35b5d6ec186341995ab524f955b030645dd6e30ec8f364fb1f5",
       "d612e00c5816ec2f6c232d7a3e9d0a5ff567739711064bf9bf7ff4072838941d",
@@ -342,15 +339,6 @@
       "5d3270693c1df289e66e6a95002a097fc3076532ac74093f60654be732ea0347",
       "8039d288b752fd3f5b1079436c76dd8bce59473976e42c2bdf2d43fab43db365",
       "f1af38602dbff77165933037ddbb68f84bd066956da8be78baf35a22267b99b5"
-    ],
-    "hacks.js": [
-      "0b04d97deded3420478a4f65f6c13f112a9a5263ff2ed20467eeac7931172bd2",
-      "5981637277e519c828e44e1700ecfd615c2b7894b54ab335b88fb5a7d070edea",
-      "7b252e0aa9c8ee631bc2b44c5eb384dab02b6c69ff996fe678272e3c11d92614",
-      "a53895d5349c3418f42a7d8a2da150a78bf7034a5c1fa4ca74bf703f517f677e",
-      "bfed541819d3c442fd0146b470b74a5bca50ec6100d7d4cb388180d155c96241",
-      "d45db2e20222f6ca36f6c4abb258f9ba40b47e62b0259634363aee5419e4fa80",
-      "db2b2d8c627581e9bd9bc602f8b649f4a696fef642a839af146c69a83c9318c4"
     ],
     "heap.js": [
       "f56562747f06741ac9735a6a087652f014c6b8ee24c456bed9c1c763ec385c2d"
@@ -483,6 +471,9 @@
       "690ab8def8e760e914a7b7e11fb9efc742700ded6aa4d9b40984442cb9f29728",
       "6e0085e322c9b76a8ddf9d16c932bcebebb75e1e425202005bc99ff87ebf3528"
     ],
+    "performance-diagnostic.js": [
+      "48ee00a176067f3833154747c9883128672394c54b07f2303d9ac9f8228e2cd1"
+    ],
     "priorityQueue.js": [
       "c3771fa862bbe6e733a7256f2414ace052eba8139f80230944a4a3ea036978bf"
     ],
@@ -572,6 +563,9 @@
     "stanek.js.reset.js": [
       "3b6c3792be8d1723fc4cd5da16bb0c03ac0526abbea74c9776c9af38a41db32a",
       "9117b518c66e941eb9b8757439df45b71316aa08b5764e378687efd681928f32"
+    ],
+    "stock-diagnostic.js": [
+      "c5b02fbbc43d52c042b2cba14961c058fb7c8db3d405eaa5829f08563da80504"
     ],
     "sync-scripts.js": [
       "87ad0de369401f635f73e69aa93a56360dcf3586ed1a1e78b7c1a9f0499d652b",

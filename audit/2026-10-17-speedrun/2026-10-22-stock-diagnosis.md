@@ -1,5 +1,7 @@
 # Stock lookup failure confirmed; initiating event unresolved
 
+**Historical procedure:** the standalone diagnostic referenced below was retired November 7. The [current sync and recovery notes](../2026-11-07-sleeve-recovery/README.md) describe cleanup; the original probe remains available in this repository’s Git history.
+
 The retry and HUD changes prevent stock read failures from terminating other automation. They do not fix the underlying read failure. `Unavailable` now covers more than invalid symbols, including valuation-helper launch failures. The current HUD label alone does not identify the current error.
 
 ## Live diagnostic received — October 22

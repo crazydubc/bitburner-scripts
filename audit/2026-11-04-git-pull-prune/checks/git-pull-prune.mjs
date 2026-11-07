@@ -33,7 +33,7 @@ function fixture({folder = '', host = 'home', files = {}, remote = {'main.js': '
   snapshot();
   const ns = {
     pid: 42, getHostname: () => host, getScriptName: () => (folder ? folder + '/' : '') + 'git-pull.js',
-    flags: schema => ({...Object.fromEntries(structuredClone(schema)), 'new-file': [], branch: 'testing/bn1-go-audit', subfolder: folder, ...state.flags}),
+    flags: schema => ({...Object.fromEntries(structuredClone(schema)), ...(state.defaultHints ? {} : {'new-file': []}), branch: 'testing/bn1-go-audit', subfolder: folder, ...state.flags}),
     print: value => logs.push(value), tprint: value => logs.push(value),
     read: path => disk.get(path) ?? '', ls: actualHost => {assert.equal(actualHost, host); return [...disk.keys()];},
     write: async (path, text, mode) => {
@@ -111,18 +111,26 @@ assert(!h.disk.has('obsolete.js'), 'Normal full pulls sync removals without a fl
 assert.equal(JSON.parse(h.disk.get(h.writes.find(p => p.includes('/backups/')))).files['obsolete.js'], '// old');
 
 // Bootstrap known legacy files, preserving unrecognized personal scripts and all data/configs.
-const dev = execFileSync('git', ['show', '65a7018^:dev.js'], {cwd: root, encoding: 'utf8'});
-const hacks = execFileSync('git', ['show', '65a7018^:hacks.js'], {cwd: root, encoding: 'utf8'});
-assert(catalog.files['dev.js'].includes(digest(dev))); assert(catalog.files['hacks.js'].includes(digest(hacks)));
+const retired = ['performance-diagnostic.js', 'stock-diagnostic.js'];
+const utilities = ['dev.js', 'hacks.js', 'cheats.js'];
+const installed = Object.fromEntries(utilities.map(file => [file, readFileSync(new URL(file, root), 'utf8')]));
+const legacyFiles = Object.fromEntries(retired.map(file => [file, execFileSync('git', ['show', '89bb315:' + file], {cwd: root, encoding: 'utf8'})]));
+for (const file of utilities) assert(!Object.hasOwn(catalog.files, file));
+for (const file of retired) assert(catalog.files[file].includes(digest(legacyFiles[file])));
+for (const file of ['dev.js', 'hacks.js']) assert.equal(installed[file], execFileSync('git', ['show', '65a7018^:' + file], {cwd: root, encoding: 'utf8'}).replace(/[ \t]+$/gm, ''));
 const preserved = {'personal.js': '// personal', 'reserve.txt': '8000000000', 'autopilot.js.config.txt': '{}',
-  'go-results.json': '[]', 'data/custom.js': '// user data', 'Temp/state.txt': 'keep', 'BruteSSH.exe': 'program', 'test.cct': 'contract'};
-h = fixture({legacy: true, files: {...preserved, 'dev.js': dev, 'hacks.js': hacks}});
+  'go-results.json': '[]', 'data/custom.js': '// user data', 'Temp/stock-diagnostic.json': 'existing report', 'BruteSSH.exe': 'program', 'test.cct': 'contract'};
+h = fixture({legacy: true, remote: installed, files: {...preserved, ...legacyFiles}});
 await h.run();
-assert.deepEqual(h.removals.sort(), ['dev.js', 'hacks.js']);
-for (const [file, content] of Object.entries(preserved)) assert.equal(h.disk.get(file), content);
+assert.deepEqual(h.removals.sort(), retired);
+for (const [file, content] of Object.entries({...preserved, ...installed})) assert.equal(h.disk.get(file), content);
 assert(!h.updates.some(({path}) => path.endsWith('git-pull-retired.json')), 'Migration catalog is read directly, not installed as a runtime script');
-h = fixture({legacy: true, files: {'dev.js': '// my own dev script'}}); await h.run();
-assert.equal(h.disk.get('dev.js'), '// my own dev script'); assert.equal(h.removals.length, 0);
+h = fixture({legacy: true, remote: installed, files: {'stock-diagnostic.js': '// local custom probe'}}); await h.run();
+assert.equal(h.disk.get('stock-diagnostic.js'), '// local custom probe'); assert.equal(h.removals.length, 0);
+h = fixture({remote: installed, files: legacyFiles}); h.state.defaultHints = true; h.state.failure = 'http'; await h.run();
+for (const file of utilities) assert.equal(h.disk.get(file), installed[file], 'Fallback must restore missing manual utilities');
+assert(!h.updates.some(({path}) => retired.includes(path))); assert.equal(h.removals.length, 0);
+assert.equal((await import('../../../cheats.js')).main, (await import('../../../hacks.js')).main, 'The alias exposes the original manual entry point');
 
 async function managed(settings = {}) {
   const x = fixture({...settings, remote: {'main.js': '// current', 'old.js': '// old'}});
@@ -159,15 +167,15 @@ assert(h.disk.has('copy/' + manifestPath));
 h = await managed({folder: 'copy'}); h.state.failure = 'http'; await h.run();
 assert(h.updates.every(({path}) => !path.startsWith('copy/copy/')), 'Fallback must not double-prefix deployment folders');
 assert(h.disk.has('copy/old.js'));
-h = await managed(); h.state.remote['stock-diagnostic.js'] = '// still in repo'; h.snapshot();
-h.disk.set('stock-diagnostic.js', '// old diagnostic');
-const oldManifest = JSON.parse(h.disk.get(manifestPath)); oldManifest.files['stock-diagnostic.js'] = digest('// old diagnostic');
-h.disk.set(manifestPath, JSON.stringify(oldManifest)); await h.run();
-assert(h.disk.has('stock-diagnostic.js'), 'Omitted downloads still count as present in the repository');
-h = fixture({legacy: true, files: {'dev.js': dev}}); h.state.failure = 'catalog';
-await h.run(); assert(h.disk.has('dev.js')); assert.equal(h.removals.length, 0);
-h = fixture({legacy: true, files: {'dev.js': dev}}); h.state.catalog = {...catalog, source: 'wrong/repo'};
-await h.run(); assert(h.disk.has('dev.js')); assert.equal(h.removals.length, 0);
+h = await managed(); h.state.remote['opt-in.js'] = '// still in repo'; h.snapshot();
+h.disk.set('opt-in.js', '// old local source');
+const oldManifest = JSON.parse(h.disk.get(manifestPath)); oldManifest.files['opt-in.js'] = digest('// old local source');
+h.disk.set(manifestPath, JSON.stringify(oldManifest)); await h.run({'omit-file':['opt-in.js']});
+assert(h.disk.has('opt-in.js'), 'Omitted downloads still count as present in the repository');
+h = fixture({legacy: true, files: legacyFiles}); h.state.failure = 'catalog';
+await h.run(); assert(retired.every(file => h.disk.has(file))); assert.equal(h.removals.length, 0);
+h = fixture({legacy: true, files: legacyFiles}); h.state.catalog = {...catalog, source: 'wrong/repo'};
+await h.run(); assert(retired.every(file => h.disk.has(file))); assert.equal(h.removals.length, 0);
 h = await managed(); const crypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
 try {
   Object.defineProperty(globalThis, 'crypto', {value: undefined, configurable: true});

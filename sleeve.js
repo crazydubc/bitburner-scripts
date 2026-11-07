@@ -9,6 +9,7 @@ import {
 } from './faction-route-planner.js'
 
 const argsSchema = [
+  ['shock-policy', 'auto'], // auto: cover current goals, then recover spare sleeves; staged: original one-first policy; parallel: fastest fleet aug eligibility.
   ['min-shock-recovery', 97], // Minimum shock recovery before attempting to train or do crime (Set to 100 to disable, 0 to recover fully)
   ['shock-recovery', 0.05], // Set to a number between 0 and 1 to devote that ratio of time to periodic shock recovery (until shock is at 0)
   ['crime', null], // If specified, sleeves will perform only this crime regardless of stats
@@ -142,8 +143,13 @@ export function getSleeveRepWorkerOrder(sleeves, stagedRecovery = {}, inBladebur
       (!stagedWorkers || stagedWorkers.has(entry.index)))
     .map(entry => entry.index);
   const priority = inBladeburner ? [0, 4, 5, 6, 7, 1, 2, 3] : available;
-  return [...priority.filter(index => available.includes(index)),
+  const ordered = [...priority.filter(index => available.includes(index)),
     ...available.filter(index => !priority.includes(index))];
+  if (stagedRecovery?.mode === 'goals') {
+    const tier = i => Number(inBladeburner && i >= 1 && i <= 3) * 2 + Number(list[i].shock > 0);
+    ordered.sort((a, b) => tier(a) - tier(b)); // Within each role, prefer recovered sleeves for rep.
+  }
+  return ordered;
 }
 
 /** Assign one sleeve per distinct faction, while retaining one company follower when the player works a company. */
@@ -265,6 +271,76 @@ export function getStagedShockRecoveryPlan(sleeves, cachedTasks = [], previousSt
     workSleeves: shocked.filter(entry => entry.index !== anchor).map(entry => entry.index),
   };
 }
+
+// With fixed base XP, ordinary work increases efficiency at r and recovery at 3r. Another moment of
+// recovery pays while efficiency < min(2/3, 2*r*remainingTime). Use the protected sleeve's time to
+// zero as a real checkpoint, not a prediction of how long the BitNode will last.
+function shockRecoveryBonus(sleeve) {
+  return 1 + 0.75 * Math.pow(Math.max(0, Number(sleeve.skills?.intelligence) || 0), 0.8) / 600;
+}
+
+function xpReadyByAnchor(sleeve, anchor) {
+  return (100 - sleeve.shock) / 100 >= Math.min(2 / 3, anchor.shock / 150 * shockRecoveryBonus(sleeve) / shockRecoveryBonus(anchor));
+}
+
+// For the same faction job, all three official rep formulas are positive weighted sums of skills
+// times intelligence and faction_rep. Componentwise comparison is conservative and needs no API call.
+function improvesFactionWork(next, current) {
+  const efficiency = s => (100 - s.shock) / 100;
+  const rep = s => efficiency(s) * s.mults.faction_rep * (1 + Math.pow(s.skills.intelligence, 0.8) / 600);
+  const newRep = rep(next), oldRep = rep(current), newXP = efficiency(next), oldXP = efficiency(current);
+  if (!(newRep * next.skills.hacking > oldRep * current.skills.hacking)) return false;
+  return ['hacking', 'strength', 'defense', 'dexterity', 'agility', 'charisma'].every(stat =>
+    newRep * next.skills[stat] >= oldRep * current.skills[stat] &&
+    newXP * next.mults[stat + '_exp'] >= oldXP * current.mults[stat + '_exp']) &&
+    newRep * next.skills.intelligence >= oldRep * current.skills.intelligence;
+}
+
+/** Keep synchronized workers on current goals while spare sleeves recover concurrently. No game API reads. */
+export function planSleeveRecovery(sleeves, liveTasks, previous, {policy, order, repJobs, urgentCrime, bladeburner, keepBackground}) {
+  const staged = getStagedShockRecoveryPlan(sleeves,
+    liveTasks.map(work => work?.type === 'RECOVERY' ? 'recover from shock' : null), previous);
+  if (!staged.active || policy === 'staged') return staged;
+  const eligible = order.filter(i => Number.isFinite(sleeves[i]?.shock));
+  const ready = eligible.filter(i => sleeves[i].shock === 0), shocked = eligible.filter(i => sleeves[i].shock > 0);
+  const result = (mode, workers, anchor = -1) => ({active: true, mode, anchor, workSleeves: workers,
+    recoverySleeves: shocked.filter(i => !workers.includes(i))});
+  if (policy === 'parallel') return result('parallel', ready);
+  // Successful crime karma is sync-scaled, not shock-scaled. Replan as soon as the goal clears.
+  if (urgentCrime) return result('crime', eligible);
+  if (!repJobs && !bladeburner) return staged; // No known goal; retain existing early income/training behavior.
+  // Keep the original number of workers during paid training, cash pressure and Bladeburner. Leave a
+  // slot beyond rep jobs for Bladeburner, where e.g. generating actions does not require zero shock.
+  const demand = Math.max(repJobs + Number(bladeburner), keepBackground || bladeburner ? staged.workSleeves.length : 0);
+  // Keep at least one sleeve progressing toward augmentations when there is a spare body. A sole sleeve
+  // can work a real objective now rather than spending the entire early run in recovery.
+  const workerCount = Math.max(ready.length, Math.min(demand, Math.max(1, eligible.length - 1)));
+  if (workerCount === ready.length) return result('goals', ready);
+  // Preserve the earliest normal-speed aug opportunity. On exact ties, keep the current recovery worker.
+  const anchor = eligible.length === 1 ? -1 : [...shocked].sort((a, b) =>
+    sleeves[a].shock / shockRecoveryBonus(sleeves[a]) - sleeves[b].shock / shockRecoveryBonus(sleeves[b]) ||
+    Number(b === previous?.anchor) - Number(a === previous?.anchor) ||
+    Number(liveTasks[b]?.type === 'RECOVERY') - Number(liveTasks[a]?.type === 'RECOVERY'))[0];
+  // Retain working sleeves on ties; re-sorting solely by shock would swap workers every few seconds.
+  const others = shocked.filter(i => i !== anchor).sort((a, b) =>
+    Number(liveTasks[a]?.type === 'RECOVERY') - Number(liveTasks[b]?.type === 'RECOVERY'));
+  const workers = ready.concat(others.slice(0, workerCount - ready.length));
+  if (!keepBackground && !bladeburner && anchor >= 0 && Number.isFinite(sleeves[anchor].skills?.intelligence) &&
+      (sleeves[anchor].storedCycles ?? 0) <= 15) {
+    // Give a materially better, partly recovered spare the job before zero. The relieved sleeve recovers.
+    // The two workers must be on opposite sides of the moving threshold, so they don't swap every tick.
+    const normal = s => s?.skills && s.mults && (s.storedCycles ?? 0) <= 15;
+    const relief = others.filter(i => !workers.includes(i) && liveTasks[i]?.type === 'RECOVERY' &&
+      normal(sleeves[i]) && xpReadyByAnchor(sleeves[i], sleeves[anchor]));
+    for (let slot = 0; slot < workers.length && relief.length; slot++) {
+      const i = workers[slot];
+      if (liveTasks[i]?.type !== 'FACTION' || !normal(sleeves[i]) || xpReadyByAnchor(sleeves[i], sleeves[anchor])) continue;
+      const replace = relief.findIndex(j => improvesFactionWork(sleeves[j], sleeves[i]));
+      if (replace !== -1) { workers[slot] = relief[replace]; break; } // Keep the other incumbents on their jobs this tick.
+    }
+  }
+  return result('goals', workers, anchor);
+}
 export function autocomplete(data, _) {
   data.flags(argsSchema);
   return [];
@@ -274,6 +350,8 @@ export function autocomplete(data, _) {
 export async function main(ns) {
   const runOptions = getConfiguration(ns, argsSchema);
   if (!runOptions || (await findPids(ns, 'sleeve.js')).length > 1) return; // Prevent multiple instances of this script from being started, even with different args.
+  if (!['auto', 'staged', 'parallel'].includes(runOptions['shock-policy']))
+    return ns.tprint('ERROR: --shock-policy must be auto, staged or parallel.');
   options = runOptions; // We don't set the global "options" until we're sure this is the only running instance
   disableLogs(ns, ['getServerMoneyAvailable']);
   // Ensure the global state is reset (e.g. after entering a new bitnode)
@@ -544,23 +622,26 @@ async function mainLoop(ns) {
     observedTasks = snapshot;
     taskSnapshotTime = Date.now();
   }
-  stagedShockRecoveryState = getStagedShockRecoveryPlan(
-    sleeveInfo, observedTasks.map(actual => actual?.type === 'RECOVERY' ? 'recover from shock' : null),
-    stagedShockRecoveryState,
+  const allWorkers = getSleeveRepWorkerOrder(sleeveInfo, {}, playerInBladeburner);
+  const urgentCrime = gangKarmaPriority || !!options.crime;
+  const repDisabled = !(4 in ownedSourceFiles) || options['disable-follow-player'] || urgentCrime;
+  const routeCapacity = options['shock-policy'] === 'parallel' ? allWorkers.filter(i => sleeveInfo[i].shock === 0).length : allWorkers.length;
+  const factionRoutes = repDisabled ? [] : await refreshSleeveFactionRoutes(
+    ns, playerInfo, resetInfo, playerWorkInfo, routeCapacity,
   );
-
-  const repWorkerOrder = getSleeveRepWorkerOrder(
-    sleeveInfo, stagedShockRecoveryState, playerInBladeburner,
-  );
-  const factionRoutes = gangKarmaPriority ? [] : await refreshSleeveFactionRoutes(
-    ns, playerInfo, resetInfo, playerWorkInfo, repWorkerOrder.length,
-  );
+  const repJobs = options['shock-policy'] === 'auto' && allWorkers.some(i => sleeveInfo[i].shock > 0)
+    ? Object.keys(assignSleeveRepTargets(allWorkers, playerWorkInfo, factionRoutes, factionWorkTypes, repDisabled, observedTasks)).length : 0;
+  stagedShockRecoveryState = planSleeveRecovery(sleeveInfo, observedTasks, stagedShockRecoveryState, {
+    policy: options['shock-policy'], order: allWorkers, repJobs, urgentCrime, bladeburner: playerInBladeburner,
+    keepBackground: canTrain || playerInfo.money <= (options.reserve ?? globalReserve),
+  });
+  const repWorkerOrder = getSleeveRepWorkerOrder(sleeveInfo, stagedShockRecoveryState, playerInBladeburner);
   sleeveRepAssignments = assignSleeveRepTargets(
     repWorkerOrder,
     playerWorkInfo,
     factionRoutes,
     factionWorkTypes,
-    !(4 in ownedSourceFiles) || options['disable-follow-player'] || gangKarmaPriority || !!options.crime,
+    repDisabled,
     observedTasks,
   );
 
@@ -630,7 +711,9 @@ async function pickSleeveTask(ns, playerInfo, playerWorkInfo, i, sleeve, canTrai
     stagedShockRecovery.recoverySleeves?.includes(i) === true;
 
   if (stagedRecoverySleeve) {
-    const reason = stagedShockRecovery.mode === 'prime'
+    const reason = stagedShockRecovery.mode === 'parallel' ? 'parallel recovery was requested'
+      : stagedShockRecovery.mode === 'goals' ? 'current work slots are allocated; preparing this sleeve for augmentations'
+      : stagedShockRecovery.mode === 'prime'
       ? 'this is the single sleeve recovering first so the fleet gets one fully recovered worker'
       : `sleeve ${stagedShockRecovery.anchor} is fully recovered and working while the rest recover`;
     return shockRecoveryTask(sleeve, i, reason);

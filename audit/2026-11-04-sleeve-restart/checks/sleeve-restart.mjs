@@ -191,6 +191,43 @@ assert.deepEqual(h.setters.map(args => args.at(-1)), ['security', 'hacking']);
 h = fixture({tasks: [null], routes: [A]}); h.state.supported[A] = [];
 await h.run(2); assert(h.api.state().factionWorkUnavailableUntil[A] > h.state.now);
 
+// Exercise the recovery policy through the real manager, route planner handoffs and task setters.
+const eightShocked=Object.fromEntries(Array.from({length:8},(_,i)=>[i,100]));
+const freshFleet=()=>Array.from({length:8},()=>({type:'RECOVERY'}));
+h=fixture({tasks:freshFleet(),shock:eightShocked,routes:[A,B]});await h.run(3);
+assert.equal(h.sleeves.filter((_,i)=>h.taskData(i)?.type==='FACTION').length,2);
+assert.equal(h.sleeves.filter((_,i)=>h.taskData(i)?.type==='RECOVERY').length,6);
+assert.equal(h.setters.length,2,'Stable coverage should not restart any work on later ticks');
+h=fixture({tasks:[{type:'RECOVERY'}],shock:{0:100},routes:[A]});await h.run();
+assert.equal(h.taskData(0).factionName,A,'A single synchronized sleeve need not wait for zero shock to serve a live route');
+// A partly recovered bench worker is ready for the next aug checkpoint and would improve the same job.
+// Release the former worker first. Never rotate the protected aug sleeve, sacrifice XP/rep, or chase bonus cycles.
+for(const guard of ['none','rep','xp','stored']) {
+  h=fixture({tasks:[{type:'RECOVERY'},faction(A),{type:'RECOVERY'}],shock:{0:50,1:90,2:60},routes:[A]});
+  for(const sl of h.sleeves) Object.assign(sl.mults,{faction_rep:1,...Object.fromEntries(Object.keys(sl.skills).map(k=>[k+'_exp',1]))});
+  if(guard==='rep')h.sleeves[1].skills.hacking=10000;
+  if(guard==='xp')h.sleeves[2].mults.hacking_exp=0.1;
+  if(guard==='stored')h.sleeves[2].storedCycles=1000;
+  await h.run(4,null,6000);assert.equal(h.taskData(0).type,'RECOVERY');assert.equal(h.collisions.length,0);
+  if(guard==='none'){
+    assert.equal(h.taskData(2).factionName,A);assert.equal(h.taskData(1).type,'RECOVERY');
+    assert.equal(h.setters.filter(args=>args[0]==='setToFactionWork').length,1,'No back-and-forth swaps');
+  }else {assert.equal(h.taskData(1).factionName,A);assert.deepEqual(h.setters,[]);}
+}
+for(const [policy,expectedWorkers] of [['staged',7],['parallel',0]]) {
+  h=fixture({tasks:freshFleet(),shock:eightShocked,routes:[A,B],flags:{'shock-policy':policy}});await h.run();
+  assert.equal(h.sleeves.filter((_,i)=>h.taskData(i)?.type!=='RECOVERY').length,expectedWorkers);
+}
+h=fixture({tasks:freshFleet(),shock:eightShocked,routes:[A,B],sync:{7:50}});h.state.files[2]=1;
+let karma=-50000,firstTasks;h.ns.heart.break=()=>karma;
+await h.run(2,tick=>{if(tick===1){firstTasks=h.sleeves.map((_,i)=>h.taskData(i));karma=-54000;}});
+assert(firstTasks.slice(0,7).every(w=>w.crimeType==='Homicide'));assert.equal(firstTasks[7].type,'SYNCHRO');
+assert.equal(h.sleeves.filter((_,i)=>h.taskData(i)?.type==='FACTION').length,2);
+assert.equal(h.sleeves.filter((_,i)=>h.taskData(i)?.type==='RECOVERY').length,5);
+assert.equal(h.collisions.length,0,'Karma goal handoff must not cause faction conflicts');
+h=fixture({tasks:[null],shock:{0:100},flags:{'shock-policy':'invalid'}});await h.api.main(h.ns);
+assert(h.logs.some(text=>text.includes('--shock-policy')));assert.equal(h.setters.length,0);
+
 // The real low-RAM helper transports the void setToIdle result without confusing it with false/failure.
 let atExit, stopped = false;
 const replies = [];

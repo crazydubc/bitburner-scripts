@@ -22,14 +22,14 @@ The preview prints proposed removals in the terminal and downloads in the script
 
 ## What cleanup removes and preserves
 
-A deleted repo script is removed only when its contents match either the last version downloaded by this updater or an exact historical version from this repo. The migration catalog recognizes 38 retired runtime paths across 647 historical versions, including `dev.js` and `hacks.js`. Future deletions are tracked automatically without regenerating that catalog.
+A deleted repo script is removed only when its contents match either the last version downloaded by this updater or an exact historical version from this repo. The migration catalog recognizes 38 retired runtime paths across 641 historical versions, including `stock-diagnostic.js` and `performance-diagnostic.js`. The November 7 update restored `dev.js` and `hacks.js` and removed them from the retirement catalog. Future deletions are tracked automatically without regenerating that catalog.
 
 Cleanup preserves:
 
 - Unknown personal scripts and locally modified retired scripts.
 - Configs, results, reserves, programs, contracts, and other game data; only recognized runtime script extensions are eligible.
 - Files in `data/`, `Temp/`, `audit/`, `.git/`, `.github/`, or folders excluded by the user's download settings.
-- Files still present anywhere in the repository, even when excluded from downloading. Optional diagnostics remain available and are not considered retired.
+- Files still present anywhere in the repository, even when excluded from downloading. User-omitted files still present upstream are not considered retired.
 - Running scripts and the updater itself. The game's native removal API refuses running scripts; cleanup does not stop automation. A later pull can remove them after they stop.
 - Files on other hosts or outside the selected deployment folder.
 
@@ -47,7 +47,7 @@ A full successful pull records its successful script downloads; successful files
 
 ## Validation
 
-The cleanup fixtures execute the actual downloader and the official engine's running-file removal check. They cover default sync with no cleanup flag, old installations, backups, dry runs, edited/running/personal/data files, listing and download failures, corrupted history, backup failures, edits during backup, explicit partial downloads, omitted diagnostics, and subfolder/remote-host scoping.
+The cleanup fixtures execute the actual downloader and the official engine's running-file removal check. They cover default sync with no cleanup flag, old installations, backups, dry runs, edited/running/personal/data files, listing and download failures, corrupted history, backup failures, edits during backup, explicit partial downloads, omitted current files, restored manual tools, and subfolder/remote-host scoping.
 
 The existing full-audit integration and sharing regressions also pass. The official RAM calculator measures `git-pull.js` at **2.45 GB**, previously **1.80 GB**. The extra 0.65 GB is charged only while the updater runs. No automation manager, batcher, or worker is changed by this patch.
 

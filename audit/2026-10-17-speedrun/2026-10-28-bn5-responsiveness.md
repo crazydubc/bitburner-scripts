@@ -1,5 +1,7 @@
 # BN5.1 unresponsive-window investigation — October 28, 2026
 
+**Historical procedure:** the standalone diagnostic referenced below was retired November 7. The [current sync and recovery notes](../2026-11-07-sleeve-recovery/README.md) describe cleanup; the original probe remains available in this repository’s Git history.
+
 The report occurred during normal automated play with approximately 1.05 PB of home RAM and 99.9% utilization. The Electron warning does not identify a script or prove an infinite loop. The subsequent live diagnostic strongly points to process pressure, although it did not capture the earlier freeze itself.
 
 ## Live diagnostic supplied at 21:39 UTC

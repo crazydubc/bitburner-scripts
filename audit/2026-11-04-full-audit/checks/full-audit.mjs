@@ -93,6 +93,8 @@ assert.deepEqual(s.assignments.map(a => a.slice(1)), [[0, 'Infiltrate Synthoids'
   [2, 'Take on contracts', 'Bounty Hunter'], [3, 'Take on contracts', 'Tracking']]);
 s = sleeveFixture({files: {10: 1, 6: 1}, count: 2, flags: {'disable-training': true}, contractChance: {1: NaN}}); await s.run();
 assert.equal(s.assignments[1][2], 'Infiltrate Synthoids', 'Unknown chance must never authorize a contract');
+s = sleeveFixture({files: {10: 1, 7: 1}, node: 7, flags: {'disable-training': true}}); s.sleeves[0].shock = 100; await s.run();
+assert.deepEqual(s.assignments[0], ['setToBladeburnerAction', 0, 'Infiltrate Synthoids', ''], 'Keep a lone synced sleeve available for BN7 action supply');
 await s.api.buildSingularityMap({}, 'getAugmentationRepReq', ['A', 'B', 'C']);
 assert.deepEqual(s.calls.at(-1), ['bulk', 'getAugmentationRepReq', ['A', 'B', 'C']]);
 
@@ -219,7 +221,7 @@ nf = await neuroflux({money: 500e6}); assert.deepEqual(nf.planned.providers, ['F
 assert.equal(nf.donations.length, 1); assert(Math.abs(nf.donations[0][1] - 470e6) < 2);
 nf = await neuroflux({money: 500e6, disableDonations: true}); assert.deepEqual(nf.planned.providers, ['FreeRep']);
 
-// Downloader excludes audit/runtime debug files on both GitHub and fallback paths, but explicit diagnostics work.
+// Manual cheat/dev scripts are deployed; repo tests, temporary and retired diagnostic files are not.
 assert.deepEqual(filterDownloadableFiles(['/audit/check.js', '/Temp/old.js', '/bin/a.js', 'Tempest.js'], ['.js'], ['audit/', 'Temp/']), ['bin/a.js', 'Tempest.js']);
 async function downloadCase(fallback = false, explicit = []) {
   const requests = [], downloads = [], disk = new Map();
@@ -227,21 +229,22 @@ async function downloadCase(fallback = false, explicit = []) {
   globalThis.fetch = async url => {
     requests.push(url); if (fallback) throw Error('rate limit');
     return {ok: true, json: async () => url.includes('/commits/') ? {sha: 'a'.repeat(40)} :
-      {truncated: false, tree: ['audit/check.js', 'Temp/old.js', 'bin/a.js', 'autopilot.js', 'dev.js', 'stock-diagnostic.js']
+      {truncated: false, tree: ['audit/check.js', 'Temp/old.js', 'bin/a.js', 'autopilot.js', 'dev.js', 'hacks.js', 'cheats.js']
         .map(path => ({type: 'blob', path}))}};
   };
   try {
     await pull({flags: schema => ({...Object.fromEntries(schema), 'new-file': [], download: explicit}),
       getScriptName: () => 'git-pull.js', getHostname: () => 'home', print: noop, tprint: noop,
       read: file => disk.get(file) ?? '', write: async (file, text) => disk.set(file, text),
-      ls: () => ['/audit/check.js', '/Temp/old.js', '/bin/a.js', 'autopilot.js', 'hacks.js', 'performance-diagnostic.js'],
+      ls: () => ['/audit/check.js', '/Temp/old.js', '/bin/a.js', 'autopilot.js', 'hacks.js', 'cheats.js', 'dev.js', 'performance-diagnostic.js', 'stock-diagnostic.js'],
       wget: async (_, file) => {downloads.push(file); disk.set(file, 'downloaded source'); return true;}});
   } finally {globalThis.fetch = oldFetch;}
   assert(!requests.some(url => /contents\/(audit|Temp)/.test(url)));
   return downloads.sort();
 }
-assert.deepEqual(await downloadCase(), ['autopilot.js', 'bin/a.js']);
-assert.deepEqual(await downloadCase(true), ['autopilot.js', 'bin/a.js']);
-assert.deepEqual(await downloadCase(false, ['stock-diagnostic.js']), ['stock-diagnostic.js']);
-for (const file of ['dev.js', 'hacks.js']) assert(!existsSync(new URL(file, root)));
+assert.deepEqual(await downloadCase(), ['autopilot.js', 'bin/a.js', 'cheats.js', 'dev.js', 'hacks.js']);
+assert.deepEqual(await downloadCase(true), ['autopilot.js', 'bin/a.js', 'cheats.js', 'dev.js', 'hacks.js']);
+assert.deepEqual(await downloadCase(false, ['dev.js']), ['dev.js']);
+for (const file of ['dev.js', 'hacks.js', 'cheats.js']) assert(existsSync(new URL(file, root)));
+for (const file of ['performance-diagnostic.js', 'stock-diagnostic.js']) assert(!existsSync(new URL(file, root)));
 console.log('Full audit checks passed: real sleeve decisions and crime formula, subsystem policies, NF planning/purchases, and production downloads.');
