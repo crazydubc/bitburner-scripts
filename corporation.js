@@ -121,6 +121,7 @@ const ROUND_ONE_MINIMUM_TRANSITION_CAPITAL = 190e9
 const ROUND_TWO_TOBACCO_RESERVE = 10e9
 const ROUND_TWO_TOBACCO_HOME_OFFICE_TARGET = 10
 const BOOST_MATERIALS = ["Hardware", "Robots", "AI Cores", "Real Estate"]
+const TOBACCO_WORKING_SPACE_FRACTION = 0.10 // Keep input space even during development or while the office is doing only R&D.
 
 //I want to impliment helper functions for ram dodge across all corp functions.
 async function getCorp(ns) {
@@ -1718,10 +1719,14 @@ async function purchase(ns) {
         // Smart supply
         let buyAmt = await maxMatRequired(ns, div, city, matName)
 
-        buyAmt -= (await corpRun(ns, 'getMaterial', div, city, matName)).stored
+        const stored = (await corpRun(ns, 'getMaterial', div, city, matName)).stored
+        buyAmt -= stored
         if (!matDataDB[matName])
           matDataDB[matName] = (await corpRun(ns, 'getMaterialData', matName))
-        const maxAmt = Math.floor((warehouse.size - warehouse.sizeUsed) / matDataDB[matName].size);
+        const maxAmt = Math.max(0, Math.floor((warehouse.size - warehouse.sizeUsed) / matDataDB[matName].size));
+        if (hasDivDB[div].industry === "Tobacco" && matName === "Plants" &&
+            (buyAmt > maxAmt || (stored < 1 && maxAmt === 0)))
+          await makeRoomForPlants(ns, div, city, warehouse)
         buyAmt = Math.min(buyAmt, maxAmt);
         smartBuy[matName] = [buyAmt, mat];
       } //End process purchase of materials
@@ -1817,17 +1822,52 @@ export function canRunBoostMaterialOptimization(
     corporationFunds >= Math.max(0, cost) + Math.max(0, workingCapital)
 }
 
-async function getBoostMaterialTargets(ns, div, city) {
+async function readTobaccoBoostStock(ns, div, city) {
+  const units = {}
+  let space = 0
+  for (const name of BOOST_MATERIALS) {
+    const data = matDataDB[name] ?? await corpRun(ns, 'getMaterialData', name)
+    const stored = (await corpRun(ns, 'getMaterial', div, city, name))?.stored
+    if (!Number.isFinite(stored) || stored < 0 || !Number.isFinite(data?.size) || data.size <= 0) return null
+    matDataDB[name] = data
+    units[name] = stored
+    space += stored * data.size
+  }
+  return Number.isFinite(space) ? {units, space} : null
+}
+
+// This also runs when the normal round-two boost purchases are paused. Free space at SALE;
+// the following PURCHASE can seed production even when exports still see zero prior consumption.
+async function makeRoomForPlants(ns, div, city, warehouse) {
+  const needed = warehouse.size * TOBACCO_WORKING_SPACE_FRACTION - (warehouse.size - warehouse.sizeUsed)
+  if (!Number.isFinite(needed) || !(needed > 0)) return
+  const stock = await readTobaccoBoostStock(ns, div, city)
+  if (!stock) return
+  const keep = stock.space > 0 ? Math.max(0, 1 - needed / stock.space) : 1
+  for (const name of BOOST_MATERIALS)
+    await adjustMaterialToTarget(ns, div, city, name, Math.floor(stock.units[name] * keep), 10, stock.units[name])
+}
+
+async function getBoostMaterialTargets(ns, div, city, stock) {
   const warehouse = await corpRun(ns, "getWarehouse", div, city)
-  if (!warehouse) return Object.fromEntries(BOOST_MATERIALS.map(material => [material, 0]))
+  if (!Number.isFinite(warehouse?.size) || warehouse.size <= 0) return null
 
   let maxProd = await maxProduced(ns, div, city)
   maxProd *= investOffer.round < 3 ? 1.01 : 1.1
+  if (!Number.isFinite(maxProd) || maxProd < 0) return null
+  const tobacco = hasDivDB[div].industry === "Tobacco"
+  if (tobacco) {
+    stock ??= await readTobaccoBoostStock(ns, div, city)
+    if (!stock || !Number.isFinite(warehouse.sizeUsed) || warehouse.sizeUsed < 0) return null
+    const nonBoostSpace = Math.max(0, warehouse.sizeUsed - stock.space)
+    maxProd = Math.max(maxProd, nonBoostSpace + warehouse.size * TOBACCO_WORKING_SPACE_FRACTION)
+  }
   const freeSpace = Math.max(0, warehouse.size - maxProd)
   if (!(freeSpace > 0)) return Object.fromEntries(BOOST_MATERIALS.map(material => [material, 0]))
 
-  const targets = await optimizeCorpoMaterials(ns, div, freeSpace)
-  return Object.fromEntries(BOOST_MATERIALS.map((material, index) => [material, targets[index] ?? 0]))
+  const targets = await optimizeCorpoMaterials(ns, div, freeSpace, !tobacco)
+  if (tobacco && (targets.length !== BOOST_MATERIALS.length || !targets.every(q => Number.isFinite(q) && q >= 0))) return null
+  return Object.fromEntries(BOOST_MATERIALS.map((material, i) => [material, tobacco ? Math.floor(targets[i]) : targets[i] ?? 0]))
 }
 
 async function estimateBoostMaterialOptimizationCost(ns, divisions = industries) {
@@ -1837,6 +1877,7 @@ async function estimateBoostMaterialOptimizationCost(ns, divisions = industries)
     for (const city of cities) {
       if (!hasWarehouseDB[div + city]) continue
       const targets = await getBoostMaterialTargets(ns, div, city)
+      if (!targets) return Infinity
       for (const materialName of BOOST_MATERIALS) {
         const material = await corpRun(ns, "getMaterial", div, city, materialName)
         const price = Number(material?.marketPrice)
@@ -1897,9 +1938,13 @@ async function optimizeMats(ns) {
     if (!hasDivDB[div]) continue
     for (const city of cities) {
       if (!hasWarehouseDB[div + city]) continue
-      const targets = await getBoostMaterialTargets(ns, div, city)
+      const tobacco = hasDivDB[div].industry === "Tobacco"
+      const stock = tobacco ? await readTobaccoBoostStock(ns, div, city) : null
+      if (tobacco && !stock) continue
+      const targets = await getBoostMaterialTargets(ns, div, city, stock)
+      if (!targets) continue
       for (const materialName of BOOST_MATERIALS)
-        await adjustMaterialToTarget(ns, div, city, materialName, targets[materialName], rateDivisor)
+        await adjustMaterialToTarget(ns, div, city, materialName, targets[materialName], rateDivisor, stock?.units[materialName])
     }
   }
 }
@@ -1908,10 +1953,10 @@ async function optimizeMats(ns) {
  * Adjusts a material toward a target by setting buy OR sell rates.
  * @param {NS} ns
  */
-async function adjustMaterialToTarget(ns, div, city, mat, target, rateDivisor) {
+async function adjustMaterialToTarget(ns, div, city, mat, target, rateDivisor, observedStock) {
   const EPS = 1e-6;
 
-  const stored = (await corpRun(ns, "getMaterial", div, city, mat)).stored;
+  const stored = observedStock ?? (await corpRun(ns, "getMaterial", div, city, mat)).stored;
   const delta = target - stored;
 
   // Always clear the opposite action so you don't fight yourself
@@ -1926,7 +1971,11 @@ async function adjustMaterialToTarget(ns, div, city, mat, target, rateDivisor) {
     await corpRun(ns, "sellMaterial", div, city, mat, 0, "MP");
     await corpRun(ns, "buyMaterial", div, city, mat, buyRate);
   } else {
-    const sellRate = (-delta) / rateDivisor;
+    // MAX accounts for elapsed market cycles. Once INV reaches the target, the engine clamps a
+    // negative amount to zero. A lingering Tobacco order cannot drain the retained boosters.
+    const sellRate = hasDivDB[div].industry === "Tobacco"
+      ? `MAX*((INV-${target})/(INV+1))/${rateDivisor / 10}`
+      : (-delta) / rateDivisor;
 
     await corpRun(ns, "buyMaterial", div, city, mat, 0);
 
