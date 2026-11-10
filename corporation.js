@@ -121,7 +121,6 @@ const ROUND_ONE_MINIMUM_TRANSITION_CAPITAL = 190e9
 const ROUND_TWO_TOBACCO_RESERVE = 10e9
 const ROUND_TWO_TOBACCO_HOME_OFFICE_TARGET = 10
 const BOOST_MATERIALS = ["Hardware", "Robots", "AI Cores", "Real Estate"]
-const TOBACCO_WORKING_SPACE_FRACTION = 0.10 // Keep input space even during development or while the office is doing only R&D.
 
 //I want to impliment helper functions for ram dodge across all corp functions.
 async function getCorp(ns) {
@@ -1836,38 +1835,79 @@ async function readTobaccoBoostStock(ns, div, city) {
   return Number.isFinite(space) ? {units, space} : null
 }
 
-// This also runs when the normal round-two boost purchases are paused. Free space at SALE;
-// the following PURCHASE can seed production even when exports still see zero prior consumption.
-async function makeRoomForPlants(ns, div, city, warehouse) {
-  const needed = warehouse.size * TOBACCO_WORKING_SPACE_FRACTION - (warehouse.size - warehouse.sizeUsed)
-  if (!Number.isFinite(needed) || !(needed > 0)) return
-  const stock = await readTobaccoBoostStock(ns, div, city)
-  if (!stock) return
-  const keep = stock.space > 0 ? Math.max(0, 1 - needed / stock.space) : 1
-  for (const name of BOOST_MATERIALS)
-    await adjustMaterialToTarget(ns, div, city, name, Math.floor(stock.units[name] * keep), 10, stock.units[name])
+// The old maxProduced forecast counts only finished products. Before v1 or with an R&D-only
+// office that can reserve zero. Size the first batch from the same office/boost calculation.
+async function tobaccoWorkingSpace(ns, div, city, warehouse, stock, margin) {
+  const [, productRate] = await getMult(ns, div, city)
+  const industry = indDataDB.Tobacco ??= await corpRun(ns, 'getIndustryData', 'Tobacco')
+  const plantSize = (matDataDB.Plants ??= await corpRun(ns, 'getMaterialData', 'Plants'))?.size
+  const recipeSize = plantSize * industry?.requiredMaterials?.Plants
+  const plants = (await corpRun(ns, 'getMaterial', div, city, 'Plants'))?.stored
+  const names = (await corpRun(ns, 'getDivision', div))?.products
+  if (!Array.isArray(names) || !Number.isFinite(productRate) || productRate < 0 || !Number.isFinite(recipeSize) ||
+      recipeSize <= 0 || !Number.isFinite(plants) || plants < 0) return NaN
+  let finished = 0, outputSize = 0, inventory = 0
+  for (const name of names) {
+    const p = await corpRun(ns, 'getProduct', div, city, name)
+    if (!Number.isFinite(p?.developmentProgress)) return NaN
+    if (p.developmentProgress !== 100) continue
+    if (!Number.isFinite(p.size) || p.size <= 0 || !Number.isFinite(p.stored) || p.stored < 0) return NaN
+    finished++; outputSize += p.size; inventory += p.size * p.stored
+  }
+  // Tobacco turns one Plant into an equal-volume product. With no productive staff yet,
+  // keep at least one input/output unit per product instead of reserving a warehouse percentage.
+  const batch = Math.max(1, productRate * 10)
+  const cycleSpace = batch * (recipeSize * Math.max(1, finished) + (finished ? outputSize : recipeSize))
+  const onHand = inventory + plants * plantSize
+  const otherGoods = Math.max(0, warehouse.sizeUsed - stock.space - onHand)
+  return otherGoods + Math.max(onHand, (inventory + cycleSpace) * margin)
 }
 
-async function getBoostMaterialTargets(ns, div, city, stock) {
-  const warehouse = await corpRun(ns, "getWarehouse", div, city)
+// Can run while normal boost purchases are paused. Use the same calculated targets, but
+// only cancel buys and sell excess; do not rebalance by buying other boosters during a jam.
+async function makeRoomForPlants(ns, div, city, warehouse) {
+  const stock = await readTobaccoBoostStock(ns, div, city)
+  if (!stock) return
+  const targets = await getBoostMaterialTargets(ns, div, city, stock, warehouse)
+  if (!targets) return
+  let targetSpace = 0, surplusSpace = 0
+  for (const name of BOOST_MATERIALS) {
+    const size = matDataDB[name].size
+    targetSpace += size * targets[name]
+    surplusSpace += size * Math.max(0, stock.units[name] - targets[name])
+  }
+  // A lopsided warehouse needs only enough clearance for the batch, not a complete portfolio rebuild.
+  const trim = surplusSpace > 0 ? Math.min(1, Math.max(0, stock.space - targetSpace) / surplusSpace) : 0
+  for (const name of BOOST_MATERIALS) {
+    const stored = stock.units[name], keep = stored - trim * Math.max(0, stored - targets[name])
+    await adjustMaterialToTarget(ns, div, city, name, keep, 10, stored)
+  }
+}
+
+async function getBoostMaterialTargets(ns, div, city, stock, warehouse) {
+  warehouse ??= await corpRun(ns, "getWarehouse", div, city)
   if (!Number.isFinite(warehouse?.size) || warehouse.size <= 0) return null
 
-  let maxProd = await maxProduced(ns, div, city)
-  maxProd *= investOffer.round < 3 ? 1.01 : 1.1
-  if (!Number.isFinite(maxProd) || maxProd < 0) return null
+  const margin = investOffer.round < 3 ? 1.01 : 1.1
   const tobacco = hasDivDB[div].industry === "Tobacco"
+  let workingSpace
   if (tobacco) {
     stock ??= await readTobaccoBoostStock(ns, div, city)
     if (!stock || !Number.isFinite(warehouse.sizeUsed) || warehouse.sizeUsed < 0) return null
-    const nonBoostSpace = Math.max(0, warehouse.sizeUsed - stock.space)
-    maxProd = Math.max(maxProd, nonBoostSpace + warehouse.size * TOBACCO_WORKING_SPACE_FRACTION)
-  }
-  const freeSpace = Math.max(0, warehouse.size - maxProd)
+    workingSpace = await tobaccoWorkingSpace(ns, div, city, warehouse, stock, margin)
+  } else workingSpace = (await maxProduced(ns, div, city)) * margin
+  if (!Number.isFinite(workingSpace) || workingSpace < 0) return null
+  const freeSpace = Math.max(0, warehouse.size - workingSpace)
   if (!(freeSpace > 0)) return Object.fromEntries(BOOST_MATERIALS.map(material => [material, 0]))
 
-  const targets = await optimizeCorpoMaterials(ns, div, freeSpace, !tobacco)
-  if (tobacco && (targets.length !== BOOST_MATERIALS.length || !targets.every(q => Number.isFinite(q) && q >= 0))) return null
-  return Object.fromEntries(BOOST_MATERIALS.map((material, i) => [material, tobacco ? Math.floor(targets[i]) : targets[i] ?? 0]))
+  let targets = await optimizeCorpoMaterials(ns, div, freeSpace, !tobacco)
+  if (tobacco) {
+    if (targets.length !== BOOST_MATERIALS.length || !targets.every(q => Number.isFinite(q) && q >= 0)) return null
+    const rounded = targets.map(Math.round)
+    const roundedSpace = BOOST_MATERIALS.reduce((sum, name, i) => sum + rounded[i] * matDataDB[name].size, 0)
+    targets = roundedSpace <= freeSpace ? rounded : targets.map(Math.floor)
+  }
+  return Object.fromEntries(BOOST_MATERIALS.map((material, i) => [material, targets[i] ?? 0]))
 }
 
 async function estimateBoostMaterialOptimizationCost(ns, divisions = industries) {
