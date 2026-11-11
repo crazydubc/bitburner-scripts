@@ -62,6 +62,9 @@ const result=await corpRun(h.ns,'getDivision','Tobacco');
 assert.deepEqual(result,expected);assert.equal(Object.hasOwn(result,'type'),false);
 assert.deepEqual(warnings,[]);assert.deepEqual(infos,[]);
 assert.equal(h.calls[0].options.ramOverride,23.6);
+h=harness();
+assert.deepEqual(await corpRun(h.ns,'getDivision','--batch',JSON.stringify([['Tobacco'],['Tobacco']])),[expected,expected]);
+assert.deepEqual(warnings,[],'Batched division reads must also omit the deprecated getter');
 
 // Keep the game object intact: its deprecated alias is non-configurable, so delete is not a solution.
 const raw=division(),descriptor=Object.getOwnPropertyDescriptor(raw,'type');

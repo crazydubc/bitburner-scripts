@@ -18,7 +18,8 @@ function manager(source, rpc, division, round = 3, pricing = {}) {
     investOffer = {round: arguments[2]};
     Object.assign(ta2DB, arguments[3]);
     return {manageProducts, spendRP, runResearchList, ta2DB};
-  `)((_ns, method, ...args) => rpc(method, args), division, round, pricing);
+  `)((_ns, method, ...args) => args[0] === '--batch'
+    ? JSON.parse(args[1]).map(a => rpc(method, a)) : rpc(method, args), division, round, pricing);
 }
 
 // Read the actual research costs and product industry weights from the reference engine.
@@ -53,6 +54,18 @@ function developed(investment, researchPoints, productivity = 1, advertising = i
   return product;
 }
 const v1 = developed(1e9, 100000);
+// Morale and energy scale all employee productivity; both design speed and accumulated design
+// stats use it. Cash recovering before completion does not undo already-developed poor stats.
+const lowWellbeing = (54.730 / 100) * (54.843 / 100);
+assert(developed(1e9, 100000, lowWellbeing).rating < v1.rating);
+function designTick(scale) {
+  const p = new Product({name:'Test',createCity:'Sector-12',designInvestment:1e9,advertisingInvestment:1e9});
+  p.createProduct(1,{Operations:100*scale,Engineer:100*scale,Management:100*scale,Business:100*scale,
+    'Research & Development':0,total:400*scale});
+  return p.developmentProgress;
+}
+assert(designTick(lowWellbeing) < designTick(1));
+assert(designTick(.01) < designTick(lowWellbeing));
 const v2SameStaff = developed(2e9, 100000);
 const investmentGain = v2SameStaff.rating / v1.rating - 1;
 assert(investmentGain > 0.005 && investmentGain < 0.006, 'Doubling early design spending adds only about 0.53%');
@@ -130,13 +143,13 @@ function lineup(source, options = {}) {
   const names = options.names ?? ['Prod v1', 'Prod v2', 'Prod v3'];
   const products = Object.fromEntries(names.map((name, index) => [name, {
     developmentProgress: 100, stats: {quality: index + 1}, productionCost: 2336, ...options.products?.[name]}]));
-  const division = {name: 'Tobacco', industry: 'Tobacco', makesProducts: true, maxProducts: 3, products: [...names]};
-  const state = {funds: options.funds ?? 16e9, calls: [], products, division};
+  const division = {name: 'Tobacco', industry: 'Tobacco', thisCycleExpenses: 0, makesProducts: true, maxProducts: 3, products: [...names]};
+  const state = {funds: options.funds ?? 21e9, calls: [], products, division};
   const api = manager(source, (method, args) => {
     state.calls.push([method, ...args]);
     if (method === 'getDivision') return structuredClone(division);
     if (method === 'getProduct') return products[args[2]];
-    if (method === 'getCorporation') return {funds: state.funds};
+    if (method === 'getCorporation') return {funds: state.funds, divisions: ['Tobacco']};
     if (method === 'discontinueProduct') {
       division.products = division.products.filter(name => name !== args[1]); delete products[args[1]]; return;
     }
@@ -154,7 +167,7 @@ function lineup(source, options = {}) {
 }
 let h = lineup(baseline, {funds: 16e9 - 1}); await h.run();
 assert.deepEqual(h.mutations().map(([method]) => method), ['discontinueProduct'], 'Reproduce deleting a seller without replacement funding');
-for (const options of [{funds: 16e9 - 1}, {funds: 26e9 - 1, round: 2}, {funds: NaN},
+for (const options of [{funds: 21e9 - 1}, {funds: 31e9 - 1, round: 2}, {funds: NaN},
   {names: ['Prod v1022', 'Prod v1023', 'Prod v1024'], funds: Number.MAX_VALUE}]) {
   h = lineup(current, options); await h.run(); assert.deepEqual(h.mutations(), []);
   assert.equal(h.state.division.products.length, 3);
@@ -162,7 +175,7 @@ for (const options of [{funds: 16e9 - 1}, {funds: 26e9 - 1, round: 2}, {funds: N
 h = lineup(current); await h.run();
 assert.deepEqual(h.mutations(), [['discontinueProduct', 'Tobacco', 'Prod v1'],
   ['makeProduct', 'Tobacco', 'Sector-12', 'Prod v4', 8e9, 8e9]]);
-h = lineup(current, {round: 2, funds: 26e9}); await h.run(); assert.equal(h.state.funds, 10e9);
+h = lineup(current, {round: 2, funds: 31e9}); await h.run(); assert.equal(h.state.funds, 15e9);
 const weakestNewest = {products: {'Prod v3': {stats: {quality: 0.1}}}};
 h = lineup(baseline, weakestNewest); await h.run();
 assert.equal(h.mutations()[1][3], 'Prod v3', 'Reproduce reusing the retired newest version and its smaller budget');
@@ -170,7 +183,7 @@ h = lineup(current, weakestNewest); await h.run();
 assert.deepEqual(h.mutations(), [['discontinueProduct', 'Tobacco', 'Prod v3'],
   ['makeProduct', 'Tobacco', 'Sector-12', 'Prod v4', 8e9, 8e9]]);
 for (const names of [[], ['Prod v1'], ['Prod v1', 'Prod v2']]) {
-  h = lineup(current, {names, funds: 2e9 * 2 ** names.length}); await h.run();
+  h = lineup(current, {names, funds: 5e9 + 2e9 * 2 ** names.length}); await h.run();
   assert.deepEqual(h.mutations(), [['makeProduct', 'Tobacco', 'Sector-12', `Prod v${names.length + 1}`,
     1e9 * 2 ** names.length, 1e9 * 2 ** names.length]]);
 }

@@ -79,7 +79,7 @@ function cost(files,name,ignoreOverride=false) {
 const targets=['git-pull.js','dev.js','hacks.js','bn1-auto.js','bn1-casino.js','bin/bn1-stock.js','coinflip.js','autopilot.js','kernel.js','bn1-guide.js','scan.js','go.js','host-manager.js','stockmaster.js','stats.js','sleeve.js','purchaseSleeves.js',
   'hacknet-upgrade-manager.js','spend-hashes.js','gangs.js','ascend.js','corporation.js','faction-manager.js',
   'bladeburner.js','work-for-faction2.js','farm-intel.js','bin/intel-farm-state.js',
-  'bin/getHackP.js','bin/getGrowThreads.js','bin/serverRun.js','bin/getbnmultis.js','bin/singRun.js','bin/singReadMany.js','bin/reserve.js',
+  'bin/getHackP.js','bin/getGrowThreads.js','bin/serverRun.js','bin/getbnmultis.js','bin/singRun.js','bin/singReadMany.js','bin/corpRun.js','bin/reserve.js',
   'bin/sync-script-config.js','bin/purchase.js','bin/terminate-rpc.js','bin/getBackdoorTime.js',
   'bin/share.js','bin/share-context.js','bin/getStockValue.js','bin/getGoSnapshot.js','bin/go-context.js','bin/getHacknetPayoff.js','bin/run-log.js','bin/go-stats.js',
   'bin/bribe-faction.js','infiltrate.js','bin/infiltration-control.js','bin/infiltration-locations.js',

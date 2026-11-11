@@ -4,6 +4,8 @@ import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {stripTypeScriptTypes} from 'node:module';
 import {resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {main as corpMain} from '../../../bin/corpRun.js';
 const root=new URL('../../../',import.meta.url), engine=resolve(process.argv[2]??'../bitburner-engine');
 const source=f=>readFileSync(resolve(engine,'src',f),'utf8'), current=readFileSync(new URL('corporation.js',root),'utf8');
 const bare=s=>s.replace(/^import[\s\S]*?from ['"][^'"]+['"];?\s*/gm,'').replace(/^export /gm,'');
@@ -35,14 +37,22 @@ function fixture(code,{packed=false,progress=100,staff=100,round=2,type='Tobacco
  const div=Object.assign(Object.create(Division.prototype),industry,{name:nameDiv,industry:type,awareness:20,popularity:20,researchPoints:1e4,
    offices:{[city]:office},warehouses:{[city]:wh},products:new Map([[name,prod]]),producedMaterials:[],
    getScientificResearchMultiplier:()=>1,getSalesMultiplier:()=>1,getProductionMultiplier:()=>1,getProductProductionMultiplier:()=>1});
- const corp={state:{nextName:'START'},divisions:new Map([[nameDiv,div]]),getProductionMultiplier:()=>1,getSalesMult:()=>1,getScientificResearchMult:()=>1};
+ const corp={funds:1e20,state:{nextName:'PURCHASE'},divisions:new Map([[nameDiv,div]]),getProductionMultiplier:()=>1,getSalesMult:()=>1,getScientificResearchMult:()=>1};
  if(packed)boosts.forEach((n,i)=>materials[n].stored=units[i]);
  div.updateWarehouseSizeUsed(wh);div.calculateProductionFactors();
  const calls=[],info={name:nameDiv,industry:type,makesProducts:true,products:[name]};
- const rpc=(_,fn,...a)=>{calls.push([fn,...a]);switch(fn) {
+ const rpc=(_,fn,...a)=>{
+   if(a[0]==='--batch')return JSON.parse(a[1]).map(args=>rpc(_,fn,...args));
+   if(a[0]==='--once')return (async()=>{let finish,result;
+     await corpMain({args:[fn,...a],pid:1,ramOverride:v=>v,getFunctionRamCost:f=>f==='baseCost'?1.6:f.endsWith('nextUpdate')?2:20,
+       getPortHandle:()=>({write:v=>result=v}),atExit:f=>finish=f,corporation:{
+         [fn]:(...args)=>rpc(_,fn,...args),nextUpdate:async()=>{materialsPhase('PURCHASE');return 'PURCHASE';}}});
+     finish();assert.equal(result,true);return result;})();
+   calls.push([fn,...a]);switch(fn) {
+   case 'getCorporation':return {funds:corp.funds,divisions:[nameDiv],nextState:corp.state.nextName};
    case 'getWarehouse':return {size:wh.size,sizeUsed:wh.sizeUsed};
    case 'getProduct':{const p=div.products.get(a[2]);return {...p.cityData[city],rating:p.rating,developmentProgress:p.developmentProgress,size:p.size};}
-   case 'getOffice':return office;case 'getDivision':return {...info,products:[...div.products.keys()]};case 'getIndustryData':return industry;
+   case 'getOffice':return office;case 'getDivision':return {...info,thisCycleExpenses:0,products:[...div.products.keys()]};case 'getIndustryData':return industry;
    case 'getUpgradeLevel':return 0;case 'hasResearched':return false;
    case 'getMaterialData':return MaterialInfo[a[0]];case 'getMaterial':return {...materials[a[2]]};
    case 'buyMaterial':assert(Number.isFinite(a[3])&&a[3]>=0);materials[a[2]].buyAmount=a[3];return;
@@ -52,7 +62,8 @@ function fixture(code,{packed=false,progress=100,staff=100,round=2,type='Tobacco
  const ns={corporation:new Proxy({},{get:(_,fn)=>(...args)=>rpc(null,fn,...args)})};
  const manager=Function('corpRun','info','city',bare(code)+`;hasDivDB[info.name]=info;hasOfficeDB[info.name+city]=hasWarehouseDB[info.name+city]=true;
    researchedDB["Market Research - Demand"]=researchedDB["Market Data - Competition"]=true;investOffer={round:${round}};
-   return {purchase,sell,optimizeMats,getBoostMaterialTargets:typeof getBoostMaterialTargets==="function"?getBoostMaterialTargets:null,maxProduced};`)(rpc,info,city);
+   return {purchase,sell,optimizeMats,purchaseBoostMaterials:typeof purchaseBoostMaterials==="function"?purchaseBoostMaterials:null,
+     getBoostMaterialTargets:typeof getBoostMaterialTargets==="function"?getBoostMaterialTargets:null,maxProduced};`)(rpc,info,city);
  const materialsPhase=(phase,cycles=1)=>{corp.state.nextName=phase;return div.processMaterials(cycles,corp);};
  const productPhase=phase=>{corp.state.nextName=phase;return prod.finished?div.processProduct(1,prod,corp):0;};
  // Real exporting division with an unconditional shipment; this is stronger than the IPROD-based route when consumption is zero.
@@ -62,8 +73,11 @@ function fixture(code,{packed=false,progress=100,staff=100,round=2,type='Tobacco
  upstream.warehouses={[city]:sourceWarehouse};upstream.updateWarehouseSizeUsed(sourceWarehouse);corp.divisions.set('Source',upstream);
  const attemptImport=()=>{corp.state.nextName='EXPORT';const before=materials.Plants.stored;upstream.processMaterials(1,corp);return materials.Plants.stored-before;};
  return {manager,wh,materials,prod,data,div,calls,info,materialsPhase,productPhase,attemptImport,
-  act:method=>manager[method](ns),targets:()=>manager.getBoostMaterialTargets(ns,nameDiv,city)};
+  act:async method=>{const r=await manager[method](ns);return method==='optimizeMats'&&manager.purchaseBoostMaterials
+    ?manager.purchaseBoostMaterials(ns):r;},targets:()=>manager.getBoostMaterialTargets(ns,nameDiv,city)};
 }
+export {Division, Warehouse, Material, MaterialInfo, materialNames, industry, sale, bare, build, section, source, CorpEmployeeJob};
+if (import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
 const sumSpace=targets=>boosts.reduce((a,n)=>a+targets[n]*MaterialInfo[n].size,0);
 if(process.argv.includes('--compare-baseline')){
  const historical=ref=>execFileSync('git',['show',ref+':corporation.js'],{cwd:root,encoding:'utf8'});
@@ -79,7 +93,8 @@ if(process.argv.includes('--compare-baseline')){
      await a.act('optimizeMats');await b.act('optimizeMats');
      // Except for at most one whole unit when nearest rounding would consume reserved production space.
      const div=round>=4?100:10;
-     for(const n of boosts)assert(Math.abs(a.materials[n].buyAmount-b.materials[n].buyAmount)*div<=1+1e-7,ref+' '+n);
+     const bought=(f,n)=>f.calls.find(([fn,,,mat,q])=>fn==='buyMaterial'&&mat===n&&q>0)?.[4]??0;
+     for(const n of boosts)assert(Math.abs(bought(a,n)-bought(b,n))*div<=1+1e-7,ref+' '+n);
    }
  }
  const old=historical('f35f675');
@@ -122,7 +137,7 @@ const limit=await guard.targets();
 for(let i=0;i<80;i++)guard.materialsPhase('SALE',i%2===0?20:1);
 for(const n of boosts)assert(guard.materials[n].stored>=limit[n]-1e-7,'Lingering sale order must preserve '+n);
 assert(guard.wh.size-guard.wh.sizeUsed>=2240-sumSpace(limit)-.01);
-// If EXPORT does run the normal optimizer, its orders must agree with the purchase-phase recovery.
+// The normal optimizer buys only in PURCHASE; its targets agree with the input-space recovery.
 const normal=fixture(current,{packed:true});let receipts=0;
 for(let i=0;i<3;i++){
   await normal.act('purchase');normal.materialsPhase('PURCHASE');normal.productPhase('PRODUCTION');
@@ -142,3 +157,4 @@ near(sumSpace(await other.targets()),2239.995); // Same weights supplied to isol
 const bad=fixture(current,{packed:true});bad.materials.Hardware.stored=NaN;
 await bad.act('purchase');assert(!bad.calls.some(([fn,,,mat])=>['buyMaterial','sellMaterial'].includes(fn)&&boosts.includes(mat)));
 console.log('Tobacco warehouse: working space, recovery of 2239.995/2240, imports, production, product sales and bounded booster orders passed.');
+}

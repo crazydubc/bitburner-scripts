@@ -41,6 +41,9 @@ let investOffer
 let corporationConstants
 let lastBootstrapWarning = 0
 let capitalConstrainedBootstrap = false
+let pendingInputPurchases = 0
+let boostOrdersInitialized = false
+let boostTargets = []
 let dividendRate = 0.01
 const argsSchema = [['dividend-rate', 0.01], ['help', false]]
 
@@ -476,6 +479,8 @@ export async function main(ns) {
   log(ns, `Round ${round}!`, true)
   teaNeeded = true
   tobaccoBooster = false
+  boostOrdersInitialized = false
+  boostTargets = []
   while (true) {
     while (round === 1) {
       const ready = await prep(ns)
@@ -495,8 +500,8 @@ export async function main(ns) {
         await sell(ns)
       if (nState === "PURCHASE") {
 
-        await manageRoundOneBoostMaterials(ns)
         await purchase(ns)
+        await purchaseBoostMaterials(ns)
       }
       if (nState === "START") {
         teaNeeded = await teaParty(ns)
@@ -506,6 +511,7 @@ export async function main(ns) {
         await manageOffice(ns)
         if (hasCompleteDivisionInfrastructure(div1))
           await warehouseUpgrade(ns)
+        await manageRoundOneBoostMaterials(ns)
       }
       if (hasCompleteDivisionInfrastructure(div1)) {
         const upgradeCost = Number(await corpRun(ns, 'getUpgradeLevelCost', "ABC SalesBots"))
@@ -542,10 +548,16 @@ export async function main(ns) {
         await purchase(ns)
         while (await corpFunds(ns) > (await corpRun(ns, 'getHireAdVertCost', div1)) && (await corpRun(ns, 'getHireAdVertCount', div1)) < 12 && hasDiv2)
           await corpRun(ns, 'hireAdVert', div1)
-        if ((await corpRun(ns, 'getHireAdVertCount', div1)) < 11 && (await corpRun(ns, 'getMaterial', div1, "Sector-12", "Plants")).stored > 200)
+        if ((await corpRun(ns, 'getHireAdVertCount', div1)) < 11 && (await corpRun(ns, 'getMaterial', div1, "Sector-12", "Plants")).stored > 200 &&
+          await corpFunds(ns) >= await corpRun(ns, 'getHireAdVertCost', div1))
           await corpRun(ns, 'hireAdVert', div1)
-        else if (hasDiv2 && (await corpRun(ns, 'getMaterial', div1, "Sector-12", "Plants")).stored > 200)
+        else if (hasDiv2 && (await corpRun(ns, 'getMaterial', div1, "Sector-12", "Plants")).stored > 200 &&
+          await corpFunds(ns) >= await corpRun(ns, 'getHireAdVertCost', div1))
           await corpRun(ns, 'hireAdVert', div1)
+        // A productive Tobacco city must not wait for Agriculture's staffing/morale gate.
+        const agricultureReady = !teaNeeded &&
+          (await corpRun(ns, 'getOffice', div1, "Sector-12")).employeeJobs.Business > 0
+        await purchaseBoostMaterials(ns, agricultureReady ? industries : [div3])
       }
       if (nState === "START") {
         teaNeeded = await teaParty(ns)
@@ -558,10 +570,12 @@ export async function main(ns) {
 
           while (hasDiv2 && await corpFunds(ns) >= (await corpRun(ns, 'getUpgradeLevelCost', "ABC SalesBots")) && (await corpRun(ns, 'getUpgradeLevel', "ABC SalesBots")) < 30)
             (await corpRun(ns, 'levelUpgrade', "ABC SalesBots"))
-          await optimizeMats(ns)
         }
         while (await corpFunds(ns) >= (await corpRun(ns, 'getUpgradeLevelCost', "ABC SalesBots")) && (await corpRun(ns, 'getUpgradeLevel', "ABC SalesBots")) < 10)
           await corpRun(ns, 'levelUpgrade', "ABC SalesBots")
+        const agricultureReady = !teaNeeded &&
+          (await corpRun(ns, 'getOffice', div1, "Sector-12")).employeeJobs.Business > 0
+        await optimizeMats(ns, agricultureReady ? industries : [div3])
       }
       await ns.corporation.nextUpdate();
     }
@@ -584,8 +598,10 @@ export async function main(ns) {
       if (nState === "PURCHASE") {
         await basicExporImport(ns)
         await purchase(ns)
-        if ((await corpRun(ns, 'getMaterial', div1, "Sector-12", "Plants")).stored > 200)
+        if ((await corpRun(ns, 'getMaterial', div1, "Sector-12", "Plants")).stored > 200 &&
+          await corpFunds(ns) >= await corpRun(ns, 'getHireAdVertCost', div1))
           await corpRun(ns, 'hireAdVert', div1)
+        await purchaseBoostMaterials(ns)
       }
       if (nState === "START") {
         teaNeeded = await teaParty(ns)
@@ -617,6 +633,7 @@ export async function main(ns) {
         await updateMisc(ns)
         await basicExporImport(ns)
         await purchase(ns)
+        await purchaseBoostMaterials(ns)
       }
       if (nState === "START") {
         await manageOffice(ns)
@@ -779,8 +796,32 @@ async function checkInvest(ns) {
   return resolvedNextRound
 }
 /** @param {NS} ns */
-async function corpFunds(ns) {
-  return (await getCorp(ns)).funds
+async function corpFunds(ns, reserve = ROUND_ONE_OPERATING_RESERVE) {
+  const corporation = await getCorp(ns)
+  const divisions = await corporationBatch(ns, 'getDivision', corporation.divisions.map(div => [div]))
+  const latest = await getCorp(ns)
+  // Do not combine a pre-START cash balance with post-START bills (or cross a purchase).
+  if (latest.nextState !== corporation.nextState) return -Infinity
+  // Material purchases have already happened, but the game deducts these bills at START.
+  const unpaid = divisions.reduce((sum, div) => sum + div.thisCycleExpenses, 0)
+  return Number.isFinite(unpaid) ? latest.funds - unpaid - pendingInputPurchases -
+    reserve : -Infinity
+}
+
+async function corporationBatch(ns, fn, calls, once = false) {
+  if (!calls.length) return []
+  return corpRun(ns, fn, once ? '--once' : '--batch', JSON.stringify(calls))
+}
+
+// Clear orders inherited from the old manager, including when it was offloaded or interrupted.
+async function stopBoostPurchases(ns) {
+  const corporation = await getCorp(ns)
+  const divisions = await corporationBatch(ns, 'getDivision', corporation.divisions
+    .filter(name => industries.includes(name)).map(name => [name]))
+  const locations = divisions.flatMap(div => div.cities.map(city => [div.name, city]))
+  const warehouses = await corporationBatch(ns, 'hasWarehouse', locations)
+  await corporationBatch(ns, 'buyMaterial', locations.flatMap(([div, city], i) => warehouses[i]
+    ? BOOST_MATERIALS.map(material => [div, city, material, 0]) : []))
 }
 
 async function expandCities(ns, division, options = {}) {
@@ -889,6 +930,7 @@ async function tryPurchaseUnlock(ns, purchase) {
 }
 /** @param {NS} ns */
 async function prep(ns) {
+  pendingInputPurchases = 0
   investOffer = await readInvestmentOffer(ns)
   const round = Number(investOffer?.round)
   if (!Number.isFinite(round)) {
@@ -896,6 +938,10 @@ async function prep(ns) {
   }
 
   if (!(await ensureCorporationApis(ns))) return false
+  if (!boostOrdersInitialized) {
+    await stopBoostPurchases(ns)
+    boostOrdersInitialized = true
+  }
   if (round >= 5) await manageCorporationPayout(ns, round, dividendRate)
 
   if (round >= 1) {
@@ -977,7 +1023,6 @@ async function prep(ns) {
 /** @param {NS} ns */
 async function updateMisc(ns) {
   const round = investOffer.round
-  let corp = (await getCorp(ns))
   const mult = round === 3 ? 3 : 2.5
   let hasDiv4 = false
   let hasDiv3 = false
@@ -996,7 +1041,7 @@ async function updateMisc(ns) {
 
   if (round === 3 && !hasDiv3) return
   if (round >= 3
-    && (await corpRun(ns, 'getUpgradeLevelCost', "Wilson Analytics")) < corp.funds
+    && (await corpRun(ns, 'getUpgradeLevelCost', "Wilson Analytics")) < await corpFunds(ns)
     && (((round >= 5)
       && (hasDiv4
         && ((await corpRun(ns, 'getDivision', div4)).awareness < Number.MAX_VALUE
@@ -1005,40 +1050,31 @@ async function updateMisc(ns) {
         && (await corpRun(ns, 'getDivision', div3)).awareness < Number.MAX_VALUE
         || (await corpRun(ns, 'getDivision', div3)).popularity < Number.MAX_VALUE))) {
     (await corpRun(ns, 'levelUpgrade', "Wilson Analytics"))
-    corp = (await getCorp(ns))
   }
   while ((round === 3)
     && (await corpRun(ns, 'getUpgradeLevelCost', "Wilson Analytics")) < await corpFunds(ns)
     && (await corpRun(ns, 'getUpgradeLevel', "Wilson Analytics")) < 2) {
     (await corpRun(ns, 'levelUpgrade', "Wilson Analytics"))
-    corp = (await getCorp(ns))
   }
   if (round < 5 && (await corpRun(ns, 'getUpgradeLevelCost', "ABC SalesBots")) * mult / 2 < await corpFunds(ns)) {
     (await corpRun(ns, 'levelUpgrade', "ABC SalesBots"))
-    corp = (await getCorp(ns))
   }
   while (round >= 5 && await corpRun(ns, 'getUpgradeLevelCost', "ABC SalesBots") * mult / 2 < await corpFunds(ns)) (await corpRun(ns, 'levelUpgrade', "ABC SalesBots"))
-  corp = (await getCorp(ns))
   if ((round === 3 && (await getCorp(ns)).revenue >= 8e7) || round >= 4) {
     if (await corpRun(ns, 'getUpgradeLevel', "Neural Accelerators") < 500 && await corpRun(ns, 'getUpgradeLevelCost', "Neural Accelerators") * mult < await corpFunds(ns)) {
       (await corpRun(ns, 'levelUpgrade', "Neural Accelerators"))
-      corp = (await getCorp(ns))
     }
     if (await corpRun(ns, 'getUpgradeLevel', "Project Insight") < 500 && await corpRun(ns, 'getUpgradeLevelCost', "Project Insight") * mult < await corpFunds(ns)) {
       (await corpRun(ns, 'levelUpgrade', "Project Insight"))
-      corp = (await getCorp(ns))
     }
-    if (await corpRun(ns, 'getUpgradeLevel', "Nuoptimal Nootropic Injector Implants") < 500 && await corpRun(ns, 'getUpgradeLevelCost', "Nuoptimal Nootropic Injector Implants") * mult < corp.funds) {
+    if (await corpRun(ns, 'getUpgradeLevel', "Nuoptimal Nootropic Injector Implants") < 500 && await corpRun(ns, 'getUpgradeLevelCost', "Nuoptimal Nootropic Injector Implants") * mult < await corpFunds(ns)) {
       (await corpRun(ns, 'levelUpgrade', "Nuoptimal Nootropic Injector Implants"))
-      corp = (await getCorp(ns))
     }
     if (await corpRun(ns, 'getUpgradeLevel', "FocusWires") < 500 && await corpRun(ns, 'getUpgradeLevelCost', "FocusWires") * mult < await corpFunds(ns)) {
       (await corpRun(ns, 'levelUpgrade', "FocusWires"))
-      corp = (await getCorp(ns))
     }
     if (await corpRun(ns, 'getUpgradeLevel', "Speech Processor Implants") < 500 && await corpRun(ns, 'getUpgradeLevelCost', "Speech Processor Implants") * mult < await corpFunds(ns)) {
       (await corpRun(ns, 'levelUpgrade', "Speech Processor Implants"))
-      corp = (await getCorp(ns))
     }
   }
 
@@ -1046,10 +1082,9 @@ async function updateMisc(ns) {
     for (const div of industries) {
       if (!hasDivDB[div]) continue
       if (["Tobacco", "Restaurant"].includes(hasDivDB[div].industry)
-        && corp.funds >= await corpRun(ns, 'getHireAdVertCost', div) * mult / 2
+        && await corpFunds(ns) >= await corpRun(ns, 'getHireAdVertCost', div) * mult / 2
         && ((await corpRun(ns, 'getDivision', div)).awareness < Number.MAX_VALUE || (await corpRun(ns, 'getDivision', div)).popularity < Number.MAX_VALUE)) {
         (await corpRun(ns, 'hireAdVert', div))
-        corp = (await getCorp(ns))
       }
     }
   }
@@ -1196,12 +1231,11 @@ async function manageProducts(ns) {
     // Price the next version before retiring anything, including when the newest product is weakest.
     const version = await getLatestProductVersion(ns, div)
     const investment = 1e9 * 2 ** version
-    const corp = await getCorp(ns)
     const reserve = Number(investOffer?.round) === 2 && div === div3
       ? ROUND_TWO_TOBACCO_RESERVE
       : 0
     if (!Number.isFinite(investment) ||
-      !canAffordCorporationPurchase(corp.funds, investment * 2, reserve)) continue
+      !canAffordCorporationPurchase(await corpFunds(ns), investment * 2, reserve)) continue
 
     // An unfunded replacement must not remove an existing source of revenue.
     if (await discontinueManagedProduct(ns, div, worstProduct))
@@ -1679,24 +1713,16 @@ async function teaParty(ns) {
       if (!hasOfficeDB[div + city]) continue
       const office = (await corpRun(ns, 'getOffice', div, city))
       if (office.avgEnergy < office.maxEnergy - .5) {
-        await corpRun(ns, 'buyTea', div, city)
+        if (await corpFunds(ns, 0) >= office.numEmployees * 500000)
+          await corpRun(ns, 'buyTea', div, city)
         needed = true
       }
-      if (office.avgMorale < office.maxMorale - 10) {
-        await corpRun(ns, 'throwParty', div, city, 500000)
-        needed = true
-      }
-      else if (office.avgMorale < office.maxMorale - 5) {
-        await corpRun(ns, 'throwParty', div, city, 200000)
-        needed = true
-      }
-      else if (office.avgMorale < office.maxMorale - .5) {
-        await corpRun(ns, 'throwParty', div, city, 100000)
-        needed = true
-      }
-      else if (office.avgMorale < office.maxMorale) {
-        await corpRun(ns, 'throwParty', div, city, 50000)
-        needed = false
+      const moraleShortfall = office.maxMorale - office.avgMorale
+      if (moraleShortfall > 0) {
+        const price = moraleShortfall > 10 ? 500000 : moraleShortfall > 5 ? 200000 : moraleShortfall > .5 ? 100000 : 50000
+        if (await corpFunds(ns, 0) >= office.numEmployees * price)
+          await corpRun(ns, 'throwParty', div, city, price)
+        if (moraleShortfall > .5) needed = true
       }
     }
   }
@@ -1704,6 +1730,7 @@ async function teaParty(ns) {
 }
 /** @param {NS} ns */
 async function purchase(ns) {
+  pendingInputPurchases = 0
   for (const div of industries) {
     if (!hasDivDB[div]) continue
     for (const city of cities) {
@@ -1739,6 +1766,8 @@ async function purchase(ns) {
           await corpRun(ns, 'sellMaterial', div, city, matName, "MAX", "0")
         }
         else if (buyAmt > 0) {
+          const price = (await corpRun(ns, 'getMaterial', div, city, matName)).marketPrice
+          pendingInputPurchases += buyAmt * price
           await corpRun(ns, 'buyMaterial', div, city, matName, buyAmt / 10)
           await corpRun(ns, 'sellMaterial', div, city, matName, 0, "MP")
         }
@@ -1870,6 +1899,8 @@ async function makeRoomForPlants(ns, div, city, warehouse) {
   if (!stock) return
   const targets = await getBoostMaterialTargets(ns, div, city, stock, warehouse)
   if (!targets) return
+  boostTargets = boostTargets.filter(p => p.div !== div || p.city !== city)
+    .concat(BOOST_MATERIALS.map(mat => ({div, city, mat, target: targets[mat]})))
   let targetSpace = 0, surplusSpace = 0
   for (const name of BOOST_MATERIALS) {
     const size = matDataDB[name].size
@@ -1943,6 +1974,7 @@ async function setRoundOneBoostMaterialOrders(ns, liquidate = false) {
 }
 
 async function manageRoundOneBoostMaterials(ns) {
+  boostTargets = []
   const homeOffice = await corpRun(ns, "getOffice", div1, "Sector-12")
   if (!capitalConstrainedBootstrap) {
     if (!teaNeeded && Number(homeOffice?.employeeJobs?.Business) > 0) await optimizeMats(ns)
@@ -1972,9 +2004,9 @@ async function manageRoundOneBoostMaterials(ns) {
   await optimizeMats(ns)
   return true
 }
-async function optimizeMats(ns) {
-  const rateDivisor = investOffer.round >= 4 ? 100 : 10
-  for (const div of industries) {
+async function optimizeMats(ns, divisions = industries) {
+  const plans = []
+  for (const div of divisions) {
     if (!hasDivDB[div]) continue
     for (const city of cities) {
       if (!hasWarehouseDB[div + city]) continue
@@ -1983,14 +2015,58 @@ async function optimizeMats(ns) {
       if (tobacco && !stock) continue
       const targets = await getBoostMaterialTargets(ns, div, city, stock)
       if (!targets) continue
-      for (const materialName of BOOST_MATERIALS)
-        await adjustMaterialToTarget(ns, div, city, materialName, targets[materialName], rateDivisor, stock?.units[materialName])
+      for (const mat of BOOST_MATERIALS) plans.push({div, city, mat, target: targets[mat]})
     }
   }
+  boostTargets = boostTargets.filter(p => !divisions.includes(p.div)).concat(plans)
+}
+
+// Compute targets in EXPORT, then use current stock/prices/cash just before PURCHASE. Long
+// forecasts must not consume the short purchase window or leave stale buy rates behind.
+async function purchaseBoostMaterials(ns, divisions = industries) {
+  const selected = boostTargets.filter(p => divisions.includes(p.div))
+  if (!selected.length) return false
+  const materials = await corporationBatch(ns, 'getMaterial', selected.map(p => [p.div, p.city, p.mat]))
+  const plans = []
+  for (const [i, p] of selected.entries()) {
+    const {stored, marketPrice} = materials[i]
+    if (![stored, marketPrice, p.target].every(Number.isFinite) || stored < 0 || marketPrice <= 0 || p.target < 0) continue
+    const industry = indDataDB[hasDivDB[p.div].industry]
+    const input = !!industry.requiredMaterials[p.mat]
+    const inputRate = input ? materials[i].desiredBuyAmount : 0
+    if (!Number.isFinite(inputRate) || inputRate < 0) continue
+    const managedAsGoods = input || industry.producedMaterials?.includes(p.mat)
+    plans.push({...p, stored, marketPrice, inputRate, managedAsGoods})
+  }
+  const rateDivisor = investOffer.round >= 4 ? 100 : 10
+  // One budget across all cities/divisions. Unsold inventory and future sales are not cash.
+  const totalCost = plans.reduce((sum, p) => sum + Math.max(0, p.target - p.stored) * p.marketPrice, 0)
+  const available = Math.max(0, await corpFunds(ns))
+  const fraction = totalCost > 0 && Number.isFinite(totalCost) ? Math.min(1, available / totalCost) : 0
+  const buys = [], clears = [], sales = []
+  for (const p of plans) {
+    if (p.target <= p.stored || !(fraction > 0)) {
+      if (!p.managedAsGoods) {
+        clears.push([p.div, p.city, p.mat, 0])
+        sales.push([p.div, p.city, p.mat, p.target < p.stored
+          ? `MAX*((INV-${p.target})/(INV+1))/${rateDivisor / 10}` : 0, 'MP'])
+      }
+    } else {
+      if (!p.managedAsGoods) sales.push([p.div, p.city, p.mat, 0, 'MP'])
+      // Hardware/AI Cores can also be recipe inputs. Preserve their funded input order.
+      buys.push([p.div, p.city, p.mat, p.inputRate + (p.target - p.stored) * fraction / rateDivisor])
+    }
+  }
+  await corporationBatch(ns, 'buyMaterial', clears)
+  await corporationBatch(ns, 'sellMaterial', sales)
+  // Planning may span a state transition, especially with bonus time. Retry next cycle if late.
+  if (!buys.length || (await getCorp(ns)).nextState !== 'PURCHASE') return false
+  // The helper cancels the rates after the next state and also on interruption. No standing buys.
+  return corporationBatch(ns, 'buyMaterial', buys, true)
 }
 
 /**
- * Adjusts a material toward a target by setting buy OR sell rates.
+ * Retains the requested boosters while clearing buys and selling only excess stock.
  * @param {NS} ns
  */
 async function adjustMaterialToTarget(ns, div, city, mat, target, rateDivisor, observedStock) {
@@ -1999,31 +2075,10 @@ async function adjustMaterialToTarget(ns, div, city, mat, target, rateDivisor, o
   const stored = observedStock ?? (await corpRun(ns, "getMaterial", div, city, mat)).stored;
   const delta = target - stored;
 
-  // Always clear the opposite action so you don't fight yourself
-  if (Math.abs(delta) <= EPS) {
-    await corpRun(ns, "buyMaterial", div, city, mat, 0);
-    await corpRun(ns, "sellMaterial", div, city, mat, 0, "MP");
-    return;
-  }
-
-  if (delta > 0) {
-    const buyRate = delta / rateDivisor;
-    await corpRun(ns, "sellMaterial", div, city, mat, 0, "MP");
-    await corpRun(ns, "buyMaterial", div, city, mat, buyRate);
-  } else {
-    // MAX accounts for elapsed market cycles. Once INV reaches the target, the engine clamps a
-    // negative amount to zero. A lingering Tobacco order cannot drain the retained boosters.
-    const sellRate = hasDivDB[div].industry === "Tobacco"
-      ? `MAX*((INV-${target})/(INV+1))/${rateDivisor / 10}`
-      : (-delta) / rateDivisor;
-
-    await corpRun(ns, "buyMaterial", div, city, mat, 0);
-
-    // If you truly want to "dump" (not sell for money), use price "0".
-    // If you want normal selling, use "MP".
-    const price = "MP";
-    await corpRun(ns, "sellMaterial", div, city, mat, sellRate, price);
-  }
+  // Once INV reaches the target, the engine clamps a negative sale amount to zero.
+  const sellRate = delta < -EPS ? `MAX*((INV-${target})/(INV+1))/${rateDivisor / 10}` : 0;
+  await corpRun(ns, "buyMaterial", div, city, mat, 0);
+  await corpRun(ns, "sellMaterial", div, city, mat, sellRate, "MP");
 }
 function optimizeCorpoMaterials_raw(matSizes, divWeights, spaceConstraint, round) {
   let p = divWeights.reduce((a, b) => a + b, 0);
