@@ -1,0 +1,20 @@
+{
+  "baseline": "9bd8d36f95fbc5498f22cf76f1a98363d2e815c2",
+  "purpose": "Verify failures already present before the corporation valuation patch",
+  "heapLimitMb": 96,
+  "timeoutSeconds": 5,
+  "results": [
+    {
+      "suite": "rpc-reserve",
+      "exit": -6,
+      "seconds": 0.93,
+      "failure": "Missing home-helper launch timeout: blocked-launch fixture never rejects; bounded process exhausted its heap"
+    },
+    {
+      "suite": "share-allocation",
+      "exit": 1,
+      "seconds": 0.08,
+      "failure": "share-allocation.mjs:290: expected two kernel dispatches, observed one"
+    }
+  ]
+}

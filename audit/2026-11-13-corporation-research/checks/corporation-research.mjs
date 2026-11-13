@@ -157,8 +157,10 @@ repaired.opts.offer = 3e15; assert.equal(await repaired.check(), 3);
 assert.equal(repaired.api.booster(), true); await repaired.assign();
 assert(Object.values(repaired.plan()).every(j => j[CorpEmployeeJob.RandD] === 0 && j.Operations > 0 && j.Business === 1));
 repaired.opts.offer = 12e15;
-assert.equal(await repaired.check(), 3); assert.equal(await repaired.check(), 3);
-assert.equal(await repaired.check(), 4); assert.equal(repaired.api.booster(), false);
+assert.equal(await repaired.check(), 3);
+let nextRound = 3, reviewChecks = 0;
+while (nextRound === 3 && reviewChecks++ < 20) nextRound = await repaired.check();
+assert.equal(nextRound, 4); assert.equal(repaired.api.booster(), false);
 await repaired.assign(); assertResearchOffices(repaired);
 assert.equal(repaired.calls.filter(([m]) => m === 'acceptInvestmentOffer').length, 1);
 

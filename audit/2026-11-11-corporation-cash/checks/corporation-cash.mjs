@@ -87,6 +87,7 @@ function fixture(code=current,{funds=20e9,unpaid=0,ready=false,which=names}={}) 
   const manager=Function('corpRun','infos',bare(code)+`;investOffer={round:2};
     for(const info of infos){hasDivDB[info.name]=info;for(const city of info.cities)hasOfficeDB[info.name+city]=hasWarehouseDB[info.name+city]=true;}
     return {optimizeMats,purchase,corpFunds,teaParty,purchaseBoostMaterials:typeof purchaseBoostMaterials==='function'?purchaseBoostMaterials:null,
+      holdInvestmentReview:()=>{investmentReview={round:3,remaining:12};},
       stopBoostPurchases:typeof stopBoostPurchases==='function'?stopBoostPurchases:null};`)(rpc,[...info.values()]);
   const assets=()=>[...divisions.values()].flatMap(div=>cities.flatMap(city=>boosts.map(mat=>div.warehouses[city].materials[mat])));
   return {corp,divisions,calls,manager,process,assets,act:async method=>{const r=await manager[method]({});
@@ -155,6 +156,15 @@ assert(debt.assets().filter(m=>m.stored>0).every(m=>m.desiredSellAmount!=='MAX')
 const health=fixture(current,{funds:20e9,unpaid:19.999e9});
 for(const div of health.divisions.values())for(const office of Object.values(div.offices))office.avgEnergy=office.avgMorale=10;
 await health.act('teaParty');near(health.corp.funds,20e9,'Do not spend outstanding bills on unaffordable parties');
+
+// Investment reviews pause booster spending while continuing to buy production inputs.
+const review=fixture(current,{ready:true});review.manager.holdInvestmentReview();
+await review.act('purchase');await review.act('optimizeMats');review.process('PURCHASE');
+assert(review.assets().every(m=>m.buyAmount===0&&m.stored===0));
+assert(review.divisions.get('Tobacco').warehouses['Sector-12'].materials.Plants.stored>0);
+assert.equal(await review.act('corpFunds'),0);
+for(const div of review.divisions.values())for(const office of Object.values(div.offices))office.avgEnergy=office.avgMorale=90;
+await review.act('teaParty');assert(review.calls.some(([fn])=>fn==='buyTea'));
 
 // Run the actual round-two PURCHASE block with Agriculture blocked. Tobacco must still rebalance.
 const block=current.slice(current.indexOf('      if (nState === "PURCHASE") {',current.indexOf('    while (round === 2)')),

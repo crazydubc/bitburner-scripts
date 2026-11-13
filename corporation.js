@@ -23,6 +23,10 @@ const INVESTMENT_CAPITAL_TARGETS = Object.freeze({
 })
 const INVESTMENT_OFFER_STALL_CYCLES = 2
 const INVESTMENT_OFFER_RELATIVE_EPSILON = 1e-6
+// The offer averages ten corporation cycles. Allow two more for phase/staffing changes.
+const INVESTMENT_REVIEW_CYCLES = 12
+let investmentReview = null
+let reviewedProductLineup = ''
 let tobaccoBooster = false
 const ta2DB = Object.create(null) // TA2 cache keyed by division + city + item
 const indDataDB = []
@@ -479,6 +483,8 @@ export async function main(ns) {
   log(ns, `Round ${round}!`, true)
   teaNeeded = true
   tobaccoBooster = false
+  investmentReview = null
+  reviewedProductLineup = ''
   boostOrdersInitialized = false
   boostTargets = []
   while (true) {
@@ -588,9 +594,9 @@ export async function main(ns) {
       }
       if (round !== 3 && round !== 4) continue
       await updateHud(ns)
+      await manageProducts(ns)
       while ((await corpRun(ns, 'getUpgradeLevel', "Smart Factories")) < 20 && (await corpRun(ns, 'getUpgradeLevelCost', "Smart Factories")) <= await corpFunds(ns))
         (await corpRun(ns, 'levelUpgrade', "Smart Factories"))
-      await manageProducts(ns)
       await spendRP(ns)
       const nState = (await getCorp(ns)).nextState
       if (nState === "SALE")
@@ -677,6 +683,8 @@ async function updateHud(ns) {
   const produpgrades = await getUpgradeLevel(ns, "Smart Factories") + await getUpgradeLevel(ns, "Smart Storage")
   //ns.printf(`${invest.round} ${invest.funds} ${offer} ${minRound}`)
   ns.printf("Round: %s Offer: %s Capital: %s/%s CorpVal: x%s %s", invest.round, ns.format.number(invest.funds, 3), ns.format.number(projectedCapital, 3), Number.isFinite(capitalTarget) ? ns.format.number(capitalTarget, 3) : "n/a", ns.format.number(bnMults.CorporationValuation, 3), minRound)
+  if (investmentReview)
+    ns.printf("Investment review: %s cycles left. Selling normally; growth purchases paused.", investmentReview.remaining)
 
   ns.printf("Empl Upgrades: %s Prod Upgrades: %s Profit Upgrades: %s Wilson: %s", upgrades, produpgrades, await getUpgradeLevel(ns, "ABC SalesBots"), await getUpgradeLevel(ns, "Wilson Analytics"))
   const state = cObj.nextState === "PURCHASE" ? "START"
@@ -743,41 +751,78 @@ function resetInvestmentPeakTracking(round = 0) {
   investmentOfferStallCycles = 0
 }
 
+function beginInvestmentReview(ns, round, reason) {
+  investmentReview = {round, remaining: INVESTMENT_REVIEW_CYCLES}
+  resetInvestmentPeakTracking(round)
+  log(ns, `Round ${round}: ${reason}. Keeping production, sales and employee care running while ` +
+    `growth purchases pause for ${INVESTMENT_REVIEW_CYCLES} corporation cycles to measure the investment offer.`, true, 'info')
+}
+
 /** @param {NS} ns */
 async function checkInvest(ns) {
   const round = Number(investOffer?.round)
   const corp = await getCorp(ns)
-  if (corp?.public === true) return 5
+  if (corp?.public === true) { investmentReview = null; return 5 }
   if (!corp || !Number.isInteger(round) || round < 1 || round > 4) return round
 
+  if (investmentReview && investmentReview.round !== round) investmentReview = null
   if (investmentPeakRound !== round) resetInvestmentPeakTracking(round)
 
-  const offerFunds = Number(investOffer.funds)
+  let offerFunds = Number(investOffer.funds)
   const capitalTarget = getInvestmentCapitalTarget(round, bnMults.CorporationValuation)
   const projectedCapital = getProjectedInvestmentCapital(offerFunds, corp.funds)
   if (!isInvestmentRoundOperationallyReady(round, hasCompleteDivisionInfrastructure(div2))) return round
 
   // Preserve the existing early product-division signal, but express it in actual dollars.
+  const wasBoosting = tobaccoBooster
   if ((round === 3 || round === 4) &&
     getProjectedInvestmentCapital(offerFunds * 4, corp.funds) >= capitalTarget) {
     tobaccoBooster = true
   }
 
-  if (!investmentPeakActive) {
-    if (!shouldTrackInvestmentPeak(round, offerFunds, corp.funds, bnMults.CorporationValuation)) return round
+  if (round === 3 || round === 4) {
+    if (!investmentReview) {
+      if (projectedCapital < capitalTarget) return round
+      beginInvestmentReview(ns, round, 'Investment target reached')
+      return round
+    }
+    if (!wasBoosting && tobaccoBooster) {
+      // Give all-city production a complete averaging window after job assignments take effect.
+      investmentReview.remaining = INVESTMENT_REVIEW_CYCLES
+      return round
+    }
+    if (--investmentReview.remaining > 0) return round
+    investmentReview = null
+    resetInvestmentPeakTracking(round)
 
-    investmentPeakActive = true
-    investmentPeakOffer = Math.max(0, offerFunds)
-    investmentOfferStallCycles = 0
-    log(ns, `Round ${round} reached ${ns.format.number(projectedCapital, 3)} projected capital ` +
-      `(target ${ns.format.number(capitalTarget, 3)}). Tracking the actual offer peak.`, true, 'info')
-    return round
+    // Use a fresh real offer, never an income-based estimate. Cash accumulation can keep the
+    // offer rising indefinitely, so a completed review must not wait forever for a decline.
+    const freshOffer = await readInvestmentOffer(ns)
+    if (Number(freshOffer?.round) !== round) return Number(freshOffer?.round) || round
+    investOffer = freshOffer
+    offerFunds = Number(freshOffer.funds)
+    if (getProjectedInvestmentCapital(offerFunds, (await getCorp(ns)).funds) < capitalTarget) {
+      log(ns, `Round ${round}: investment review complete; offer $${ns.format.number(offerFunds, 3)} ` +
+        `is below the capital target. Resuming growth and funded product replacement.`, true, 'info')
+      return round
+    }
+  } else {
+    if (!investmentPeakActive) {
+      if (!shouldTrackInvestmentPeak(round, offerFunds, corp.funds, bnMults.CorporationValuation)) return round
+
+      investmentPeakActive = true
+      investmentPeakOffer = Math.max(0, offerFunds)
+      investmentOfferStallCycles = 0
+      log(ns, `Round ${round} reached ${ns.format.number(projectedCapital, 3)} projected capital ` +
+        `(target ${ns.format.number(capitalTarget, 3)}). Tracking the actual offer peak.`, true, 'info')
+      return round
+    }
+
+    const decision = evaluateInvestmentPeak(investmentPeakOffer, offerFunds, investmentOfferStallCycles)
+    investmentPeakOffer = decision.peakOffer
+    investmentOfferStallCycles = decision.stagnantCycles
+    if (!decision.accept) return round
   }
-
-  const decision = evaluateInvestmentPeak(investmentPeakOffer, offerFunds, investmentOfferStallCycles)
-  investmentPeakOffer = decision.peakOffer
-  investmentOfferStallCycles = decision.stagnantCycles
-  if (!decision.accept) return round
 
   const accepted = await corpRun(ns, 'acceptInvestmentOffer')
   if (accepted !== true) {
@@ -797,6 +842,8 @@ async function checkInvest(ns) {
 }
 /** @param {NS} ns */
 async function corpFunds(ns, reserve = ROUND_ONE_OPERATING_RESERVE) {
+  // Employee care uses reserve=0; recipe inputs are funded separately in purchase().
+  if (investmentReview && reserve > 0) return 0
   const corporation = await getCorp(ns)
   const divisions = await corporationBatch(ns, 'getDivision', corporation.divisions.map(div => [div]))
   const latest = await getCorp(ns)
@@ -933,6 +980,7 @@ async function prep(ns) {
   pendingInputPurchases = 0
   investOffer = await readInvestmentOffer(ns)
   const round = Number(investOffer?.round)
+  if (investmentReview && investmentReview.round !== round) investmentReview = null
   if (!Number.isFinite(round)) {
     return false
   }
@@ -1022,6 +1070,7 @@ async function prep(ns) {
 }
 /** @param {NS} ns */
 async function updateMisc(ns) {
+  if (investmentReview) return
   const round = investOffer.round
   const mult = round === 3 ? 3 : 2.5
   let hasDiv4 = false
@@ -1181,6 +1230,7 @@ async function hasCompletedManagedProduct(ns, divisionName, suppliedDivision = n
 
 /** @param {NS} ns */
 async function manageProducts(ns) {
+  if (investmentReview) return
   for (const div of industries) {
     if (!hasDivDB[div] || !hasDivDB[div].makesProducts) continue
 
@@ -1203,6 +1253,24 @@ async function manageProducts(ns) {
 
     // Keep the current lineup while any project is unfinished or its snapshot is unavailable.
     if (completedProducts.length !== division.products.length) continue
+
+    // Let a full Tobacco lineup earn through the valuation average before retiring a seller.
+    // Review each lineup once, then resume replacement even if the target remains out of reach.
+    const round = Number(investOffer?.round)
+    if (div === div3 && (round === 3 || round === 4) &&
+        division.products.length === division.maxProducts && division.maxProducts > 0 &&
+        hasCompleteDivisionInfrastructure(div3)) {
+      const key = JSON.stringify(division.products)
+      if (key !== reviewedProductLineup) {
+        const corporation = await getCorp(ns)
+        if (corporation?.public === false && Number.isFinite(corporation.funds) && corporation.funds >= 0 &&
+            Number.isFinite(corporation.revenue - corporation.expenses) && corporation.revenue > corporation.expenses) {
+          reviewedProductLineup = key
+          beginInvestmentReview(ns, round, 'Tobacco product lineup complete')
+          return
+        }
+      }
+    }
 
     let worstProduct = null
     if (active + calculating === division.maxProducts) {
@@ -1393,7 +1461,9 @@ async function manageOffice(ns) {
               }
               break
             case 4:
-              if ((await corpRun(ns, 'getOffice', div, city)).size < 60) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
+              if ((await corpRun(ns, 'getOffice', div, city)).size < 60 &&
+                  await corpFunds(ns) >= await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))
+                await corpRun(ns, 'upgradeOfficeSize', div, city, 1)
               if ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size) (await corpRun(ns, 'hireEmployee', div, city))
               await resetOffice(ns, div, city)
               {
@@ -1449,7 +1519,9 @@ async function manageOffice(ns) {
               }
               break
             case 4:
-              if ((await corpRun(ns, 'getOffice', div, city)).size < 60) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
+              if ((await corpRun(ns, 'getOffice', div, city)).size < 60 &&
+                  await corpFunds(ns) >= await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))
+                await corpRun(ns, 'upgradeOfficeSize', div, city, 1)
               if ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size) (await corpRun(ns, 'hireEmployee', div, city))
               await resetOffice(ns, div, city)
               {
@@ -1560,7 +1632,9 @@ async function manageOffice(ns) {
               break
             case 4: {
               const corpRev = (await getCorp(ns)).revenue
-              if ((await corpRun(ns, 'getOffice', div, city)).size < 250) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
+              if ((await corpRun(ns, 'getOffice', div, city)).size < 250 &&
+                  await corpFunds(ns) >= await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))
+                await corpRun(ns, 'upgradeOfficeSize', div, city, 1)
               if (corpRev > 100e9)
                 while ((await corpRun(ns, 'getOffice', div, city)).size < 270 && (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1)) * 1.5 <= await corpFunds(ns)) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
               if (corpRev > 200e9)
@@ -2187,6 +2261,7 @@ async function maxProduced(ns, div, city) {
 }
 /** @param {NS} ns */
 async function warehouseUpgrade(ns) {
+  if (investmentReview) return
   const round = investOffer.round
 
   let hasDiv2 = false
