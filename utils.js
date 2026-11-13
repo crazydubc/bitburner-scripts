@@ -340,12 +340,8 @@ export async function runScriptLocal(ns, scriptName, persistent = false, args = 
   if (!(scriptRam > 0)) throw new Error(`Cannot launch ${scriptName}: missing or invalid script on home.`);
   const options = { threads: 1, temporary: true };
   if (ramOverride > 0) options.ramOverride = ramOverride;
-  const started = Date.now();
   let pidof;
   while ((pidof = ns.exec(scriptName, "home", options, ...args)) === 0) {
-    if (Date.now() - started >= remoteLaunchTimeout)
-      throw new Error(`Cannot launch ${scriptName} on home after ${remoteLaunchTimeout / 1000}s. ` +
-        `Needs ${Math.max(scriptRam, ramOverride)} GB; free home RAM or inspect the launch log.`);
     await ns.sleep(10);
   }
   if (persistent) return pidof;
