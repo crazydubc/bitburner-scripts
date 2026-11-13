@@ -1513,10 +1513,11 @@ async function manageOffice(ns) {
               break
             }
             case 3: {
-              const hasCompletedProduct = await hasCompletedManagedProduct(ns, div)
+              // Round two uses every city for early sales. Round three needs the remote
+              // research bank for stronger designs until the investment production push.
               while ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size && (await corpRun(ns, 'hireEmployee', div, city))) { }
               await resetOffice(ns, div, city)
-              if (city !== "Sector-12" && !tobaccoBooster && !hasCompletedProduct)
+              if (city !== "Sector-12" && !tobaccoBooster)
                 await setJob(ns, div, city, "Research & Development", (await corpRun(ns, 'getOffice', div, city)).numEmployees)
               else {
                 await setJob(ns, div, city, "Operations", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
@@ -1545,7 +1546,7 @@ async function manageOffice(ns) {
                 while ((await corpRun(ns, 'getOffice', div, city)).size < 226 && (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1)) * 1.5 <= await corpFunds(ns)) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
               while ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size && (await corpRun(ns, 'hireEmployee', div, city))) { }
               await resetOffice(ns, div, city)
-              if (city !== "Sector-12" && !tobaccoBooster && !hasCompletedProduct)
+              if (city !== "Sector-12" && !tobaccoBooster)
                 await setJob(ns, div, city, "Research & Development", (await corpRun(ns, 'getOffice', div, city)).numEmployees)
               else {
                 await setJob(ns, div, city, "Operations", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
