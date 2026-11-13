@@ -308,6 +308,7 @@ export async function main(ns) {
       } else {
         batchInfo = await getHackP(ns, target.hostname, -1, -1, Math.max(batchInfo.H1 - 1, 1));
       }
+      await ns.sleep(100);
 
       //charge stanek?
       //if (stanekUnlocked) {
