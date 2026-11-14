@@ -1,0 +1,19 @@
+{
+  "baseline": "3e9e522cf53d299fc02fe1de71afe604fe364c78",
+  "scripts": [
+    {
+      "file": "corporation.js",
+      "before": 5.5,
+      "after": 5.5,
+      "withoutOverride": 33.25,
+      "baselineWithoutOverride": 33.25
+    },
+    {
+      "file": "bin/corpRun.js",
+      "before": 23.6,
+      "after": 23.6,
+      "withoutOverride": 1.6,
+      "baselineWithoutOverride": 1.6
+    }
+  ]
+}

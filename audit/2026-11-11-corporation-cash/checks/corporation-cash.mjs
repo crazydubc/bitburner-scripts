@@ -66,7 +66,8 @@ function fixture(code=current,{funds=20e9,unpaid=0,ready=false,which=names}={}) 
     calls.push([fn,...args]);
     const [name,city,mat,q]=args,div=divisions.get(name),wh=div?.warehouses[city],material=wh?.materials[mat];
     switch(fn){
-      case 'getCorporation':return {funds:corp.funds,divisions:[...divisions.keys()],nextState:corp.state.nextName};
+      case 'getCorporation':return {funds:corp.funds,divisions:[...divisions.keys()],nextState:corp.state.nextName,
+        public:false,revenue:40e6,expenses:0};
       case 'getDivision':return {...info.get(name),thisCycleExpenses:div.thisCycleExpenses};
       case 'hasWarehouse':return !!wh;
       case 'getWarehouse':return {size:wh.size,sizeUsed:wh.sizeUsed};
@@ -84,11 +85,11 @@ function fixture(code=current,{funds=20e9,unpaid=0,ready=false,which=names}={}) 
       default:assert.fail('Unexpected RPC '+fn);
     }
   };
-  const manager=Function('corpRun','infos',bare(code)+`;investOffer={round:2};
+  const manager=Function('corpRun','infos','log',bare(code)+`;investOffer={round:2,funds:0};bnMults={CorporationValuation:1};
     for(const info of infos){hasDivDB[info.name]=info;for(const city of info.cities)hasOfficeDB[info.name+city]=hasWarehouseDB[info.name+city]=true;}
-    return {optimizeMats,purchase,corpFunds,teaParty,purchaseBoostMaterials:typeof purchaseBoostMaterials==='function'?purchaseBoostMaterials:null,
-      holdInvestmentReview:()=>{investmentReview={round:3,remaining:12};},
-      stopBoostPurchases:typeof stopBoostPurchases==='function'?stopBoostPurchases:null};`)(rpc,[...info.values()]);
+    return {optimizeMats,purchase,corpFunds,teaParty,checkInvest,purchaseBoostMaterials:typeof purchaseBoostMaterials==='function'?purchaseBoostMaterials:null,
+      review:()=>investmentReview,
+      stopBoostPurchases:typeof stopBoostPurchases==='function'?stopBoostPurchases:null};`)(rpc,[...info.values()],()=>{});
   const assets=()=>[...divisions.values()].flatMap(div=>cities.flatMap(city=>boosts.map(mat=>div.warehouses[city].materials[mat])));
   return {corp,divisions,calls,manager,process,assets,act:async method=>{const r=await manager[method]({});
       return method==='optimizeMats'&&manager.purchaseBoostMaterials?manager.purchaseBoostMaterials({}):r;},
@@ -158,7 +159,8 @@ for(const div of health.divisions.values())for(const office of Object.values(div
 await health.act('teaParty');near(health.corp.funds,20e9,'Do not spend outstanding bills on unaffordable parties');
 
 // Investment reviews pause booster spending while continuing to buy production inputs.
-const review=fixture(current,{ready:true});review.manager.holdInvestmentReview();
+const review=fixture(current,{ready:true});await review.act('checkInvest');
+assert.equal(review.manager.review()?.round,2,'The real round-two policy starts the review');
 await review.act('purchase');await review.act('optimizeMats');review.process('PURCHASE');
 assert(review.assets().every(m=>m.buyAmount===0&&m.stored===0));
 assert(review.divisions.get('Tobacco').warehouses['Sector-12'].materials.Plants.stored>0);

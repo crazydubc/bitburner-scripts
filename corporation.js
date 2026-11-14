@@ -27,6 +27,7 @@ const INVESTMENT_OFFER_RELATIVE_EPSILON = 1e-6
 const INVESTMENT_REVIEW_CYCLES = 12
 let investmentReview = null
 let reviewedProductLineup = ''
+let roundTwoGrowthCycles = 0
 let tobaccoBooster = false
 const ta2DB = Object.create(null) // TA2 cache keyed by division + city + item
 const indDataDB = []
@@ -485,6 +486,7 @@ export async function main(ns) {
   tobaccoBooster = false
   investmentReview = null
   reviewedProductLineup = ''
+  roundTwoGrowthCycles = 0
   boostOrdersInitialized = false
   boostTargets = []
   while (true) {
@@ -780,10 +782,21 @@ async function checkInvest(ns) {
     tobaccoBooster = true
   }
 
-  if (round === 3 || round === 4) {
+  if (round >= 2) {
     if (!investmentReview) {
-      if (projectedCapital < capitalTarget) return round
-      beginInvestmentReview(ns, round, 'Investment target reached')
+      if (projectedCapital < capitalTarget) {
+        if (round !== 2) return round
+        // Round two can spend every spare dollar while waiting for an offer which that
+        // spending suppresses. Measure a finished first product; do not wait for a full
+        // lineup or positive displayed profit (booster purchases count as expenses).
+        if (roundTwoGrowthCycles > 0 && --roundTwoGrowthCycles > 0) return round
+        if (!Number.isFinite(corp.funds) || corp.funds < 0 ||
+            !Number.isFinite(corp.revenue) || corp.revenue <= 0 ||
+            !hasCompleteDivisionInfrastructure(div1) || !hasCompleteDivisionInfrastructure(div3) ||
+            !(await hasCompletedManagedProduct(ns, div3))) return round
+      }
+      beginInvestmentReview(ns, round, projectedCapital >= capitalTarget
+        ? 'Investment target reached' : 'First Tobacco product selling; checking the round-two offer')
       return round
     }
     if (!wasBoosting && tobaccoBooster) {
@@ -793,6 +806,9 @@ async function checkInvest(ns) {
     }
     if (--investmentReview.remaining > 0) return round
     investmentReview = null
+    // A missed round-two target must leave time for growth before another measurement.
+    // Recheck even if v1 is still the only product and v2 remains unaffordable.
+    if (round === 2) roundTwoGrowthCycles = INVESTMENT_REVIEW_CYCLES
     resetInvestmentPeakTracking(round)
 
     // Use a fresh real offer, never an income-based estimate. Cash accumulation can keep the
