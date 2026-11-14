@@ -28,16 +28,18 @@ const divisionMultipliers = {getEmployeeCreMultiplier: one, getEmployeeChaMultip
 
 function fixture(code, options = {}) {
   const opts = {round: 3, funds: 107.477e9, offer: 384e12, size: 146, employees: 146,
-    completeWarehouses: true, progress: 100, ...options};
+    completeWarehouses: true, progress: 100, division: 'Tobacco', ...options};
   const offices = Object.fromEntries(cities.map(city => {
     const office = new OfficeSpace({city, size: opts.size});
     Object.assign(office, {numEmployees: opts.employees, avgMorale: 100, avgEnergy: 99.397,
       totalExperience: opts.employees * 75.129});
     office.employeeNextJobs.Unassigned = opts.employees;
+    office.employeeJobs.Unassigned = opts.employees;
     return [city, office];
   }));
   const products = ['Prod v5', 'Prod v6', 'Prod v7'];
-  const info = {name: 'Tobacco', industry: 'Tobacco', makesProducts: true, products, thisCycleExpenses: 0};
+  const info = {name: opts.division, industry: opts.division, makesProducts: ['Tobacco','Restaurant'].includes(opts.division),
+    products, thisCycleExpenses: 0};
   const calls = [];
   const rpc = (_ns, method, ...args) => {
     if (args[0] === '--batch') return JSON.parse(args[1]).map(a => rpc(_ns, method, ...a));
@@ -47,8 +49,8 @@ function fixture(code, options = {}) {
       case 'getDivision': return {...info};
       case 'getProduct': return {developmentProgress: opts.progress};
       case 'getCorporation': return {funds: opts.funds, revenue: 3.12e9, public: false,
-        nextState: 'EXPORT', divisions: ['Tobacco']};
-      case 'getOffice': return {...office, employeeJobs: {...office.employeeNextJobs}};
+        nextState: 'EXPORT', divisions: [info.name]};
+      case 'getOffice': return {...office, employeeJobs: {...office.employeeJobs}};
       case 'setJobAssignment': {
         const [,, job, count] = args;
         assert(Number.isInteger(count) && count >= 0);
@@ -64,10 +66,10 @@ function fixture(code, options = {}) {
     }
   };
   const api = Function('corpRun', 'log', 'recordRunEvents', 'opts', 'info', bare(code) + `
-    hasDivDB.Tobacco = info;
+    hasDivDB[info.name] = info;
     for (const city of cities) {
-      hasOfficeDB['Tobacco' + city] = true;
-      hasWarehouseDB['Tobacco' + city] = opts.completeWarehouses || city === 'Sector-12';
+      hasOfficeDB[info.name + city] = true;
+      hasWarehouseDB[info.name + city] = opts.completeWarehouses || city === 'Sector-12';
     }
     investOffer = {round: opts.round, funds: opts.offer};
     bnMults = {CorporationValuation: 1};
@@ -168,3 +170,39 @@ console.log(JSON.stringify({check: 'round-three research regression', oldResearc
   repairedResearchAfterHour: growingPoints, nextDesignRatingRatio: newDesign.rating / oldDesign.rating,
   note: 'Fixed-stat engine fixture, not live-save timing or profit predictions'}));
 console.log('Round-three R&D restored; home design, round-two sales, upgrades, missing warehouses, debt and investment transitions passed.');
+
+// BN3.2, already public: $1.664b cash, three Restaurant staff, no money for another seat
+// above the operating reserve. Feed the manager's real assignments into the engine's
+// actual design process and show that it stops the stall with no inputs or purchases.
+const publicBefore = at('0f2bebd');
+function designProgress(h, nCycles, start = 0) {
+  const p = new Product({name:'Prod v1', createCity:'Sector-12', designInvestment:1e9, advertisingInvestment:1e9});
+  p.developmentProgress = start;
+  const division = Object.assign(Object.create(Division.prototype), {offices:h.offices, products:new Map([[p.name,p]])});
+  for(let i=0;i<nCycles;i++) division.processProducts(1,{state:{nextName:'PRODUCTION'}});
+  return p.developmentProgress;
+}
+const publicCase={round:5,funds:1.664e9,size:3,employees:3,division:'Restaurant'};
+const stalled=fixture(publicBefore,publicCase), recovered=fixture(fixed,publicCase);
+for(const f of [stalled,recovered]) {await f.assign();f.apply();}
+const roles=h=>['Operations','Engineer','Business','Management'].map(key=>h.plan()['Sector-12'][key]);
+assert.deepEqual(roles(stalled),[0,0,1,2]); assert.equal(designProgress(stalled,60),0);
+assert.deepEqual(roles(recovered),[1,1,1,0]); const progress=designProgress(recovered,12);assert(progress>0);
+assert(!recovered.calls.some(([fn])=>['upgradeOfficeSize','makeProduct','discontinueProduct'].includes(fn)));
+assert(recovered.plan().Aevum['Research & Development']===3);
+const writes=recovered.calls.filter(([fn])=>fn==='setJobAssignment').length;await recovered.assign();
+assert.equal(recovered.calls.filter(([fn])=>fn==='setJobAssignment').length,writes,'Stable jobs: no repeated resets');
+for(const n of [0,1,2,4,10,170]) {
+  const f=fixture(fixed,{...publicCase,size:n,employees:n,division:'Tobacco'});await f.assign();f.apply();
+  assert.equal(roles(f).reduce((x,y)=>x+y),n);
+  if(n) assert(designProgress(f,1,28.18)>28.18,'Tobacco keeps its existing project progressing');
+  if(n===10 || n===170)assert.deepEqual(roles(f),[n>>2,n>>2,1,n-2*(n>>2)-1]);
+}
+// With three staff Agriculture formerly assigned four jobs before reaching Restaurant;
+// both support divisions attempted to spend the last reserves on additional seats.
+for(const division of ['Agriculture','Chemical']) {
+  const f=fixture(fixed,{...publicCase,division});await f.assign();f.apply();
+  assert(!f.calls.some(([fn])=>fn==='upgradeOfficeSize'));assert.equal(f.plan()['Sector-12'].Unassigned,0);
+}
+console.log(JSON.stringify({restaurantStaff:roles(recovered),oldProgressAfter60Cycles:0,newProgressAfter12Cycles:progress,
+  funds:recovered.opts.funds,model:'fixed employee stats; not a forecast of the save'}));

@@ -338,7 +338,7 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
     const val = ["Corp Inc"];
     if (hasCorp) {
       const corp = await corpRun(ns, 'getCorporation');
-      val.push(true, formatMoney(corp.revenue - corp.expenses, 3, 2) + '/sec', "Total corporation revenue per second.");
+      val.push(true, formatMoney(corp.revenue - corp.expenses, 3, 2) + '/sec', "Net corporation income across all divisions (revenue minus expenses), before dividends.");
     } else val.push(false);
     hudData.push(val);
   }

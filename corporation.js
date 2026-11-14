@@ -795,9 +795,11 @@ async function quoteBn3Stage(ns, round, corp, constants) {
   setup += (names.length * cities.length - locations.length - missing.length) * (officeInitialCost + warehouseInitialCost)
   const unlocks = ['Market Research - Demand', 'Market Data - Competition', 'Export']
   const owned = await corporationBatch(ns, 'hasUnlock', unlocks.map(name => [name]))
-  const prices = await corporationBatch(ns, 'getUnlockCost', unlocks.filter((_, i) => !owned[i]).map(name => [name]))
+  const missingUnlocks = unlocks.filter((_, i) => !owned[i])
+  const prices = await corporationBatch(ns, 'getUnlockCost', missingUnlocks.map(name => [name]))
   setup += prices.reduce((a, b) => a + b, 0)
 
+  const tobacco = divisions.find(d => d.name === div3)
   const productDivision = round === 4 ? div4 : div3
   const products = divisions.find(d => d.name === productDivision)?.products ?? []
   const version = Math.max(0, ...products.map(name => Number(/(\d+)$/.exec(name)?.[1] ?? 0)))
@@ -806,7 +808,6 @@ async function quoteBn3Stage(ns, round, corp, constants) {
   let minimum = setup + design + runway + (round === 1 ? ROUND_TWO_TOBACCO_RESERVE : 0)
   let next = minimum, full = minimum
   if (round < 4) {
-    const tobacco = divisions.find(d => d.name === div3)
     const currentCities = tobacco?.cities ?? []
     const offices = await corporationBatch(ns, 'getOffice', currentCities.map(city => [div3, city]))
     const target = round === 1 ? ROUND_TWO_TOBACCO_HOME_OFFICE_TARGET :
@@ -827,8 +828,25 @@ async function quoteBn3Stage(ns, round, corp, constants) {
       full += cost
     }
   }
-  return [minimum, next, full, design, runway].every(x => Number.isFinite(x) && x > 0)
-    ? {minimum, next, full, design, runway, seconds: secondsPerMarketCycle} : null
+  if (![minimum, next, full, design, runway].every(x => Number.isFinite(x) && x > 0)) return null
+  const stage = {minimum, next, full, design, runway, seconds: secondsPerMarketCycle}
+  if (round >= 3) {
+    // Total company or division revenue can come from Agriculture or selling boosters.
+    // Check actual finished-product sales in any Tobacco city, including custom product names.
+    const rows = tobacco?.products.flatMap(name => tobacco.cities.map(city => [div3, city, name])) ?? []
+    const productsByCity = await corporationBatch(ns, 'getProduct', rows)
+    stage.tobaccoSelling = productsByCity.some(p => p?.developmentProgress === 100 &&
+      Number.isFinite(p.actualSellAmount) && p.actualSellAmount > 0)
+    // The first design needs $1b in design and $1b in marketing. If Tobacco itself is
+    // missing, expansion also needs its industry price, two market unlocks and its cash cushion.
+    const marketData = missingUnlocks.reduce((sum, name, i) =>
+      sum + (name === 'Export' ? 0 : prices[i]), 0)
+    const hq = locations.findIndex(([name, city]) => name === div3 && city === 'Sector-12')
+    const startup = !tobacco ? industryData[missing.indexOf(div3)].startingCost : hq >= 0 && !warehouses[hq] ? warehouseInitialCost : 0
+    stage.firstDesignCash = !startup && !marketData && tobacco?.products.length ? 0 :
+      ROUND_ONE_OPERATING_RESERVE + marketData + (startup ? startup + ROUND_TWO_TOBACCO_RESERVE : 2e9)
+  }
+  return stage
 }
 
 // Money raised belongs to the company. Count a player benefit only when a current plan can use it.
@@ -870,6 +888,17 @@ function evaluateBn3Offer(stage, corp, cash, offer, offerRate, extraCycles, bene
   if (!usable) return {action: 'grow', reason: 'waiting for a valid cash balance and offer'}
   const affordable = capital >= stage.minimum
   if (affordable && benefit) return {action: 'accept', reason: benefit}
+  if (stage.tobaccoSelling === false) {
+    // While a first design is progressing, cash for a new Restaurant alone is no reason
+    // to give up private funding. Allow a real rescue if operations cannot pay for the
+    // first design or cannot stay solvent through the next review.
+    const net = corp.revenue - corp.expenses
+    const nextCash = cash + net * cycle * INVESTMENT_REVIEW_CYCLES
+    const rescue = (stage.firstDesignCash > 0 && Math.max(cash, nextCash) < stage.firstDesignCash) ||
+      (net <= 0 && nextCash < 0)
+    return affordable && rescue ? {action: 'accept', reason: 'funds a blocked first product or operating shortfall'} :
+      {action: 'grow', reason: 'waiting for Tobacco product sales; keeping growth and design running'}
+  }
   const goal = capital < stage.minimum ? stage.minimum : capital < stage.next ? stage.next : stage.full
   const gap = goal - capital
   const eta = gap / (offerRate + income)
@@ -887,22 +916,32 @@ function evaluateBn3Offer(stage, corp, cash, offer, offerRate, extraCycles, bene
 }
 
 async function reviewBn3Offer(ns, round, corp) {
-  if (!investmentReview) {
+  let review = investmentReview, constants, stage
+  if (!review) {
     if (fundingGrowthCycles > 0 && --fundingGrowthCycles > 0) return round
     if (!hasDivDB[div1] || !(investOffer.funds > 0) || (round === 1 && !(corp.revenue > 0))) return round
-    if (round >= 3) tobaccoBooster = true
-    beginInvestmentReview(ns, round, 'measuring the offer against the next build')
-    investmentReview.offers = []
-    investmentReview.extra = INVESTMENT_REVIEW_CYCLES
-    return round
+    if (round >= 3) {
+      constants = await getCorporationConstants(ns)
+      stage = constants && await quoteBn3Stage(ns, round, corp, constants)
+    }
+    if (round >= 3 && !stage?.tobaccoSelling) {
+      // Inspect urgent funding on the normal growth pass. An unproven product must
+      // not lose half its growth cycles to recurring spend freezes or staffing switches.
+      review = {remaining: 1, offers: [], extra: 0}
+    } else {
+      if (round >= 3) tobaccoBooster = true
+      beginInvestmentReview(ns, round, 'measuring the offer against the next build')
+      investmentReview.offers = []
+      investmentReview.extra = INVESTMENT_REVIEW_CYCLES
+      return round
+    }
   }
-  const review = investmentReview
   review.offers.push(Number(investOffer.funds))
   if (--review.remaining > 0) return round
   // Reprice before every decision. The home helper reads the real offer and the plans in
   // the same turn; an offloaded manager never copies stale files over a running worker.
-  const constants = await getCorporationConstants(ns)
-  const stage = constants && await quoteBn3Stage(ns, round, corp, constants)
+  constants ??= await getCorporationConstants(ns)
+  stage ??= constants && await quoteBn3Stage(ns, round, corp, constants)
   const report = await corpRun(ns, 'getInvestmentOffer', '--bn3-review')
   if (!report?.corporation || !report.offer) {
     investmentReview = null
@@ -931,7 +970,7 @@ async function reviewBn3Offer(ns, round, corp) {
       latest.expenses >= 0 && Number.isFinite(cash) && Number.isFinite(offer.funds) && offer.funds > 0) {
     // Require a sustained rise, not a single spike or the investment from the previous round.
     const end = samples.length - 1
-    const rate = Math.max(0, Math.min(samples[end] - samples[end - 3], samples[end - 3] - samples[end - 6]) / (3 * stage.seconds))
+    const rate = end < 6 ? 0 : Math.max(0, Math.min(samples[end] - samples[end - 3], samples[end - 3] - samples[end - 6]) / (3 * stage.seconds))
     const benefit = bn3FundingBenefit(round, latest, offer, cash, stage, constants, snapshot, route)
     decision = evaluateBn3Offer(stage, latest, cash, offer.funds, rate, review.extra, benefit)
   }
@@ -1616,6 +1655,37 @@ function parseVersion(name) {
 async function setJob(ns, div, city, job, total) {
   (await corpRun(ns, 'setJobAssignment', div, city, job, total));
 }
+
+async function staffPublicProductOffice(ns, div, city) {
+  let office = await corpRun(ns, 'getOffice', div, city)
+  while (office.size < 1500 && await corpFunds(ns) >= await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1)) {
+    const size = office.size
+    await corpRun(ns, 'upgradeOfficeSize', div, city, 1)
+    office = await corpRun(ns, 'getOffice', div, city)
+    if (office.size <= size) break
+  }
+  while (office.numEmployees < office.size && await corpRun(ns, 'hireEmployee', div, city))
+    office = await corpRun(ns, 'getOffice', div, city)
+  const n = office.numEmployees
+  const jobs = ['Operations', 'Engineer', 'Business', 'Management', 'Research & Development', 'Intern']
+  let counts
+  if (city !== 'Sector-12') counts = [0, 0, 0, 0, n, 0]
+  else {
+    const engineers = n > 0 ? Math.max(1, Math.floor(n / 4)) : 0
+    const operations = n > 1 ? Math.max(1, Math.floor(n / 4)) : 0
+    const business = n > 2 ? 1 : 0
+    counts = [operations, engineers, business, n - operations - engineers - business, 0, 0]
+  }
+  if (jobs.every((job, i) => office.employeeJobs[job] === counts[i])) return
+  // getOffice exposes current jobs, not pending assignments. Release first, then fill
+  // from the same headcount, in one home helper even when the manager is offloaded.
+  const result = await corporationBatch(ns, 'setJobAssignment', [
+    ...jobs.map(job => [div, city, job, 0]),
+    ...jobs.flatMap((job, i) => counts[i] ? [[div, city, job, counts[i]]] : []),
+  ])
+  if (result.some(ok => ok !== true)) log(ns, `Could not staff ${div} in ${city}; will retry next cycle.`, false, 'warning')
+}
+
 async function manageOffice(ns) {
   const round = investOffer.round
   let hasDiv2 = false
@@ -1742,16 +1812,20 @@ async function manageOffice(ns) {
               }
               break
             case 5:
-              if ((await corpRun(ns, 'getOffice', div, city)).size < 300) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
+              if ((await corpRun(ns, 'getOffice', div, city)).size < 300 &&
+                  await corpFunds(ns) >= await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))
+                await corpRun(ns, 'upgradeOfficeSize', div, city, 1)
               if ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size) (await corpRun(ns, 'hireEmployee', div, city))
               await resetOffice(ns, div, city)
               {
-                await setJob(ns, div, city, "Operations", 1)
-                await setJob(ns, div, city, "Business", 1)
-                await setJob(ns, div, city, "Engineer", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 2.5))
-                await setJob(ns, div, city, "Management", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 2.5))
-                const left = (await corpRun(ns, 'getOffice', div, city)).numEmployees - 1 - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 2.5) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 2.5) - 1
-                await setJob(ns, div, city, "Research & Development", left)
+                const n = (await corpRun(ns, 'getOffice', div, city)).numEmployees
+                const ops = Math.min(n, 1), business = n > 1 ? 1 : 0
+                const engineers = Math.floor(n / 2.5), management = Math.min(engineers, n - ops - business - engineers)
+                await setJob(ns, div, city, "Operations", ops)
+                await setJob(ns, div, city, "Business", business)
+                await setJob(ns, div, city, "Engineer", engineers)
+                await setJob(ns, div, city, "Management", management)
+                await setJob(ns, div, city, "Research & Development", n - ops - business - engineers - management)
               }
               break
           }
@@ -1800,17 +1874,20 @@ async function manageOffice(ns) {
               }
               break
             case 5:
-              if ((await corpRun(ns, 'getOffice', div, city)).size < 300) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
+              if ((await corpRun(ns, 'getOffice', div, city)).size < 300 &&
+                  await corpFunds(ns) >= await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))
+                await corpRun(ns, 'upgradeOfficeSize', div, city, 1)
               if ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size) (await corpRun(ns, 'hireEmployee', div, city))
               await resetOffice(ns, div, city)
               {
-                await setJob(ns, div, city, "Operations", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4))
-                await setJob(ns, div, city, "Business", 1)
-                await setJob(ns, div, city, "Engineer", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
-                await setJob(ns, div, city, "Management", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
-                const office = (await corpRun(ns, 'getOffice', div, city))
-                const left = office.numEmployees - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - 1
-                await setJob(ns, div, city, "Research & Development", left)
+                const n = (await corpRun(ns, 'getOffice', div, city)).numEmployees
+                const ops = Math.floor(n / 4), business = n > 0 ? 1 : 0
+                const engineers = Math.floor(n / 3), management = Math.min(engineers, n - ops - business - engineers)
+                await setJob(ns, div, city, "Operations", ops)
+                await setJob(ns, div, city, "Business", business)
+                await setJob(ns, div, city, "Engineer", engineers)
+                await setJob(ns, div, city, "Management", management)
+                await setJob(ns, div, city, "Research & Development", n - ops - business - engineers - management)
               }
               break
           }
@@ -1927,36 +2004,14 @@ async function manageOffice(ns) {
             }
               break
             case 5:
-              while ((await corpRun(ns, 'getOffice', div, city)).size < 1500 && await corpFunds(ns) >= (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
-              while ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size && (await corpRun(ns, 'hireEmployee', div, city))) { }
-              await resetOffice(ns, div, city)
-              if (city !== "Sector-12")
-                await setJob(ns, div, city, "Research & Development", (await corpRun(ns, 'getOffice', div, city)).numEmployees)
-              else {
-                await setJob(ns, div, city, "Operations", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4))
-                await setJob(ns, div, city, "Engineer", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4))
-                await setJob(ns, div, city, "Business", 1)
-                const left = (await corpRun(ns, 'getOffice', div, city)).numEmployees - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - 1
-                await setJob(ns, div, city, "Management", left)
-              }
+              await staffPublicProductOffice(ns, div, city)
               break
           }
           break
         case "Restaurant":
           switch (round) {
             case 5:
-              while ((await corpRun(ns, 'getOffice', div, city)).size < 1500 && await corpFunds(ns) >= (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
-              while ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size && (await corpRun(ns, 'hireEmployee', div, city))) { }
-              await resetOffice(ns, div, city)
-              if (city !== "Sector-12")
-                await setJob(ns, div, city, "Research & Development", (await corpRun(ns, 'getOffice', div, city)).numEmployees)
-              else {
-                await setJob(ns, div, city, "Operations", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4))
-                await setJob(ns, div, city, "Engineer", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4))
-                await setJob(ns, div, city, "Business", 1)
-                const left = (await corpRun(ns, 'getOffice', div, city)).numEmployees - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - 1
-                await setJob(ns, div, city, "Management", left)
-              }
+              await staffPublicProductOffice(ns, div, city)
               break
           }
           break

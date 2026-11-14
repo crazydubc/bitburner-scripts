@@ -10,6 +10,7 @@ import {getCorporationBribeReserve} from '../../../speedrun-policy.js';
 const repo = new URL('../../../', import.meta.url);
 const current = readFileSync(new URL('corporation.js', repo), 'utf8');
 const previous = execFileSync('git', ['show', '8411a29:corporation.js'], {cwd: repo, encoding: 'utf8'});
+const beforeSalesCheck = execFileSync('git', ['show', '0f2bebd:corporation.js'], {cwd: repo, encoding: 'utf8'});
 const constants = {officeInitialCost: 4e9, warehouseInitialCost: 5e9, officeInitialSize: 3,
   secondsPerMarketCycle: 10, bribeThreshold: 100e12, bribeAmountPerReputation: 1e9,
   initialShares: 1e9, fundingRoundShares: [.1,.35,.25,.2], fundingRoundMultiplier: [3,2,2,1.5]};
@@ -23,7 +24,8 @@ const accept = build(section(source('Corporation/Actions.ts'), 'export function 
 const cities = ['Sector-12', 'Aevum', 'Volhaven', 'Chongqing', 'New Tokyo', 'Ishima'];
 const now = Date.now(), reset = {currentNode: 3, lastAugReset: now - 1e6, lastNodeReset: now - 2e6};
 const log = [], ns = {format: {number: x => String(Math.round(x))}};
-function fixture(options = {}, baseline = false) {
+function fixture(options = {}, manager = current) {
+  const baseline = manager === previous;
   const settings = {round: 2, funds: 7.355e9, revenue: 40e6, expenses: 9.2e6, quote: 7.56e12,
     size: 10, names: ['Agriculture','Tobacco','Chemical'], ...options};
   const {round, names} = settings, investorShares = constants.fundingRoundShares.slice(0, round-1)
@@ -33,7 +35,7 @@ function fixture(options = {}, baseline = false) {
     numShares: 1e9-investorShares, tributeModifier: .15, totalAssets: settings.funds, nextState: 'START'});
   const divisions = Object.fromEntries(names.map(name => [name, {name, industry:name, cities: settings.cities?.[name] ?? cities,
     thisCycleExpenses: name === 'Agriculture' ? (settings.unpaid ?? 0) : 0,
-    products: name === 'Tobacco' ? ['Prod v1'] : []}]));
+    products: name === 'Tobacco' ? (settings.products ?? ['Prod v1']) : []}]));
   const snapshot = {generated_at: now, current_node: 3, last_aug_reset: reset.lastAugReset, stock_value_known: true,
     reset_planning: {version: 1, wealth: 1e9, goals: [], reputation: {CyberSec: 0}}};
   const route = {kind: 'inactive', updatedAt: now, lastAugReset: reset.lastAugReset, lastNodeReset: reset.lastNodeReset};
@@ -57,7 +59,8 @@ function fixture(options = {}, baseline = false) {
       case 'getCorporation': return getInfo();
       case 'getInvestmentOffer': return model.getInvestmentOffer();
       case 'getDivision': return divisions[args[0]];
-      case 'getProduct': return {developmentProgress: 100};
+      case 'getProduct': return {developmentProgress: settings.progress ?? 100, actualSellAmount:
+        settings.sales?.[args[1]] ?? (settings.sales ? 0 : 25)};
       case 'getConstants': return constants;
       case 'getIndustryData': return {startingCost: {Agriculture:40e9,Tobacco:20e9,Chemical:70e9,Restaurant:10e9}[args[0]]};
       case 'hasWarehouse': return args.join(':') !== settings.missingWarehouse;
@@ -71,7 +74,7 @@ function fixture(options = {}, baseline = false) {
     }
   }
   const api = Function('corpRun','log','recordRunEvents','getCorporationBribeReserve','reset','divisions',
-    bare(baseline ? previous : current) + `
+    bare(manager) + `
       bnMults = {CorporationValuation: 1}; Object.assign(hasDivDB, divisions);
       for (const [name,d] of Object.entries(divisions)) for (const c of d.cities)
         hasOfficeDB[name+c]=hasWarehouseDB[name+c]=true;
@@ -86,13 +89,13 @@ function fixture(options = {}, baseline = false) {
   quote(settings.quote);
   async function tick(value) {if (value !== undefined) quote(value); return api.tick(ns, model.getInvestmentOffer());}
   async function run(n, offers) {let r; for (let i=0; i<n; i++) r=await tick(offers?.(i)); return r;}
-  return {api, model, snapshot, route, calls, events, run, tick, quote, getInfo, accepts: () => accepts,
+  return {api, model, snapshot, route, calls, events, run, tick, quote, getInfo, settings, accepts: () => accepts,
     race: f => {race=f;}, restrictRam: () => {lowRam=true;},
     stage: async () => {await api.init(ns); return api.stage(ns,round,getInfo());}};
 }
 
 // Screenshot: old full review refuses unchanged $7.56t offers; new code accepts once.
-const old=fixture({},true); assert.equal(await old.run(50),2); assert.equal(old.accepts(),0);
+const old=fixture({},previous); assert.equal(await old.run(50),2); assert.equal(old.accepts(),0);
 const live=fixture(); const s=await live.stage();
 assert(Math.abs(s.full - (9e9 + 6*seatCost(10,96))) < 1);
 assert(Math.abs(s.minimum - (9e9 + seatCost(10,3))) < 1);
@@ -167,6 +170,39 @@ assert.equal(dividendBenefit(),''); goal.money-=2; assert.match(dividendBenefit(
 final.snapshot.stock_value_known=false;assert.equal(dividendBenefit(),'');final.snapshot.stock_value_known=true;
 final.snapshot.last_aug_reset--;assert.equal(dividendBenefit(),'');final.snapshot.last_aug_reset++;
 assert.equal(await final.run(13),5);assert.match(log.at(-1),/cash gap/);
+
+// A growing private corporation with Tobacco v1 at 28.18% used to take late offers
+// entirely on income from its other divisions. Keep growing without pausing purchases.
+for (const round of [3,4]) {
+  const config={round,funds:1.627e9,revenue:10e6,expenses:1.59e6,progress:28.18,sales:{},quote:7.56e12};
+  assert.equal(await fixture(config,beforeSalesCheck).run(13),round+1,'Previous policy sold on other income alone');
+  const f=fixture(config);
+  assert.equal(await f.run(26),round);
+  assert.equal(f.accepts(),0); assert.equal(f.api.review(),null); assert.match(f.api.state(),/Tobacco product sales/);
+  assert(!f.calls.some(([fn])=>fn==='acceptInvestmentOffer'));
+  f.settings.progress=100; await f.run(24); assert.equal(f.accepts(),0,'Finished, no sales');
+  f.settings.sales.Aevum=15;
+  let r=round; for(let i=0;i<26 && r===round;i++) r=await f.tick();
+  assert.equal(r,round+1); assert.equal(f.accepts(),1,'Sales outside HQ also resume offer reviews');
+}
+const lostSale=fixture({round:4,quote:7.56e12});
+await lostSale.run(12); lostSale.settings.sales={}; assert.equal(await lostSale.tick(),4);
+assert.equal(lostSale.api.review(),null);assert.equal(lostSale.accepts(),0,'Recheck before committing equity');
+// Liquidity emergencies and an actual player milestone still override waiting for sales.
+const noDesign=fixture({round:3,funds:1e9,products:[],sales:{},revenue:1,expenses:1,quote:80e12});
+assert.equal(await noDesign.tick(),4);assert.match(log.at(-1),/blocked first product/);
+const missingHQ=fixture({round:3,funds:1e9,progress:100,sales:{},missingWarehouse:'Tobacco:Sector-12',
+  revenue:1,expenses:1,quote:80e12});
+assert.equal(await missingHQ.tick(),4);
+const solventLoss=fixture({round:4,funds:100e9,expenses:2e6,revenue:1e6,progress:28.18,sales:{}});
+assert.equal(await solventLoss.tick(),4);
+const insolvent=fixture({round:4,funds:-2e9,expenses:2e6,revenue:1e6,progress:28.18,sales:{}});
+assert.equal(await insolvent.tick(),5);
+const urgent=fixture({round:3,funds:15e12,quote:80e12,progress:28.18,sales:{}});
+Object.assign(urgent.route,{kind:'faction-rep',faction:'CyberSec',targetRep:5000});
+assert.equal(await urgent.tick(),4);assert.match(log.at(-1),/active CyberSec/);
+const payout=fixture({round:4,funds:100e12,revenue:12e9,expenses:1e9,progress:28.18,sales:{},quote:1e6});
+payout.snapshot.reset_planning.goals=[goal];assert.equal(await payout.tick(),5);assert.match(log.at(-1),/dividends/);
 console.log(JSON.stringify({legacyRoundAfter50Checks:2, adaptiveRoundAfter13Checks:3,
   offer:7.56e12, assumedOfficeSeats:10, nextStep:s.minimum, fullBuild:s.full,
   netCapitalAfterFunding:live.model.funds, checked:'four private rounds, timing, cash, bribes, dividends, guarded acceptance'}));
