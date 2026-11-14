@@ -1,5 +1,6 @@
 import { getReset, log, corpRun, getBNMults, getReserve, purchase as guardedPurchase } from './utils.js'
 import { recordRunEvents } from './logger.js'
+import { getCorporationBribeReserve } from './speedrun-policy.js'
 
 //Can we get rid of these?
 const corpName = "Shady-Ent"
@@ -15,6 +16,7 @@ const div8 = "Mining" //Mining
 const cities = ["Sector-12", "Aevum", "Volhaven", "Chongqing", "New Tokyo", "Ishima"]
 const industries = [div1, div2, div3, div4, div5, div6, div7, div8]
 
+// Outside BN3 keep the established funding policy and its valuation-multiplier adjustment.
 const INVESTMENT_CAPITAL_TARGETS = Object.freeze({
   1: 440e9,
   2: 8.8e12,
@@ -26,6 +28,11 @@ const INVESTMENT_OFFER_RELATIVE_EPSILON = 1e-6
 // The offer averages ten corporation cycles. Allow two more for phase/staffing changes.
 const INVESTMENT_REVIEW_CYCLES = 12
 let investmentReview = null
+let bn3Reset = null
+let fundingGrowthCycles = 0
+let fundingStatus = ''
+const ROUND_THREE_TOBACCO_SEATS = 106
+const ROUND_FOUR_TOBACCO_SEATS = 250
 let reviewedProductLineup = ''
 let roundTwoGrowthCycles = 0
 let roundTwoAllocation = { forSetup: false, goal: 0, saved: 0, maySave: true }
@@ -462,6 +469,9 @@ export async function main(ns) {
   hasWarehouseDB = []
   const resetInfo = await getReset(ns)
   const myBN = resetInfo.currentNode
+  bn3Reset = Number(myBN) === 3 ? resetInfo : null
+  fundingGrowthCycles = 0
+  fundingStatus = ''
   const sourceFile3Level = getOwnedSourceFileLevel(resetInfo, 3)
   bnMults = await getBNMults(ns)
   const corporationValuation = Number(bnMults?.CorporationValuation)
@@ -475,8 +485,8 @@ export async function main(ns) {
     ? `paid-API constrained bootstrap (SF3.${sourceFile3Level})`
     : `free-API fast bootstrap (SF3.${sourceFile3Level})`
   log(ns, `Corporation strategy for BN${myBN}: valuation x${corporationValuation}; ${bootstrapMode}. ` +
-    `Round-one funding scales with valuation but retains a ` +
-    `${ns.format.number(ROUND_ONE_MINIMUM_TRANSITION_CAPITAL, 3)} minimum transition floor.`,
+    (bn3Reset ? 'Price the next stage and compare the benefit of waiting with advancing the run.' :
+      `Round-one funding scales with valuation but retains a ${ns.format.number(ROUND_ONE_MINIMUM_TRANSITION_CAPITAL, 3)} minimum transition floor.`),
     true, 'info')
   if (!(await waitForCorporation(ns, myBN))) return
   log(ns, `Corporation is up, detecting investment round`, true)
@@ -681,10 +691,14 @@ async function updateHud(ns) {
     + await getUpgradeLevel(ns, "FocusWires")
     + await getUpgradeLevel(ns, "Speech Processor Implants")
     + await getUpgradeLevel(ns, "FocusWires")
-  const capitalTarget = getInvestmentCapitalTarget(invest.round, bnMults.CorporationValuation)
-  const projectedCapital = getProjectedInvestmentCapital(invest.funds, cObj.funds)
   const produpgrades = await getUpgradeLevel(ns, "Smart Factories") + await getUpgradeLevel(ns, "Smart Storage")
-  ns.printf("Round: %s Offer: %s Capital: %s/%s CorpVal: x%s", invest.round, ns.format.number(invest.funds, 3), ns.format.number(projectedCapital, 3), Number.isFinite(capitalTarget) ? ns.format.number(capitalTarget, 3) : "n/a", ns.format.number(bnMults.CorporationValuation, 3))
+  if (bn3Reset) {
+    ns.printf("Round: %s Offer: $%s", invest.round, ns.format.number(invest.funds, 3))
+    if (invest.round < 5 && fundingStatus) ns.printf("%s", fundingStatus)
+  } else {
+    const target = getInvestmentCapitalTarget(invest.round, bnMults.CorporationValuation)
+    ns.printf("Round: %s Offer: %s Capital: %s/%s CorpVal: x%s", invest.round, ns.format.number(invest.funds, 3), ns.format.number(getProjectedInvestmentCapital(invest.funds, cObj.funds), 3), Number.isFinite(target) ? ns.format.number(target, 3) : "n/a", ns.format.number(bnMults.CorporationValuation, 3))
+  }
   if (investmentReview)
     ns.printf("Investment review: %s cycles left. Selling normally; growth purchases paused.", investmentReview.remaining)
   else if (invest.round === 2 && roundTwoAllocation.goal > 0)
@@ -762,6 +776,186 @@ function beginInvestmentReview(ns, round, reason) {
     `growth purchases pause for ${INVESTMENT_REVIEW_CYCLES} corporation cycles to measure the investment offer.`, true, 'info')
 }
 
+// Price the next stage once per review. A new division includes its first office and
+// warehouse; an existing office with no warehouse only needs the warehouse.
+async function quoteBn3Stage(ns, round, corp, constants) {
+  const {officeInitialCost, warehouseInitialCost, officeInitialSize, secondsPerMarketCycle} = constants
+  if (![officeInitialCost, warehouseInitialCost, officeInitialSize, secondsPerMarketCycle].every(x => Number.isFinite(x) && x > 0))
+    return null
+  const names = round === 4 ? [div1, div3, div2, div4] : [div1, div3, div2]
+  const existing = names.filter(name => corp.divisions.includes(name))
+  const missing = names.filter(name => !existing.includes(name))
+  const divisions = await corporationBatch(ns, 'getDivision', existing.map(name => [name]))
+  const industryData = await corporationBatch(ns, 'getIndustryData', missing.map(name => [name]))
+  let setup = industryData.reduce((sum, data) => sum + data.startingCost, 0)
+  const locations = divisions.flatMap(d => d.cities.map(city => [d.name, city]))
+  const warehouses = await corporationBatch(ns, 'hasWarehouse', locations)
+  if (warehouses.length !== locations.length || !warehouses.every(x => typeof x === 'boolean')) return null
+  setup += warehouses.filter(owned => !owned).length * warehouseInitialCost
+  setup += (names.length * cities.length - locations.length - missing.length) * (officeInitialCost + warehouseInitialCost)
+  const unlocks = ['Market Research - Demand', 'Market Data - Competition', 'Export']
+  const owned = await corporationBatch(ns, 'hasUnlock', unlocks.map(name => [name]))
+  const prices = await corporationBatch(ns, 'getUnlockCost', unlocks.filter((_, i) => !owned[i]).map(name => [name]))
+  setup += prices.reduce((a, b) => a + b, 0)
+
+  const productDivision = round === 4 ? div4 : div3
+  const products = divisions.find(d => d.name === productDivision)?.products ?? []
+  const version = Math.max(0, ...products.map(name => Number(/(\d+)$/.exec(name)?.[1] ?? 0)))
+  const design = 2e9 * 2 ** version // The actual design + marketing budget in manageProducts.
+  const runway = Math.max(ROUND_ONE_OPERATING_RESERVE, corp.expenses * secondsPerMarketCycle * 3)
+  let minimum = setup + design + runway + (round === 1 ? ROUND_TWO_TOBACCO_RESERVE : 0)
+  let next = minimum, full = minimum
+  if (round < 4) {
+    const tobacco = divisions.find(d => d.name === div3)
+    const currentCities = tobacco?.cities ?? []
+    const offices = await corporationBatch(ns, 'getOffice', currentCities.map(city => [div3, city]))
+    const target = round === 1 ? ROUND_TWO_TOBACCO_HOME_OFFICE_TARGET :
+      round === 2 ? ROUND_THREE_TOBACCO_SEATS : ROUND_FOUR_TOBACCO_SEATS
+    // Official office pricing depends only on seat count. This also prices future cities
+    // where getOfficeSizeUpgradeCost cannot yet be called.
+    const seats = (size, end) => end <= size ? 0 :
+      officeInitialCost / 0.09 * 1.09 ** (size / 3) * (1.09 ** ((end - size) / 3) - 1)
+    for (const city of round === 1 ? ['Sector-12'] : cities) {
+      const index = currentCities.indexOf(city)
+      const size = index < 0 ? officeInitialSize : offices[index]?.size
+      if (!Number.isFinite(size) || size <= 0) return null
+      const cost = seats(size, target)
+      if (city === 'Sector-12') {
+        minimum += round === 1 ? cost : seats(size, Math.min(target, size + officeInitialSize))
+        next += cost
+      }
+      full += cost
+    }
+  }
+  return [minimum, next, full, design, runway].every(x => Number.isFinite(x) && x > 0)
+    ? {minimum, next, full, design, runway, seconds: secondsPerMarketCycle} : null
+}
+
+// Money raised belongs to the company. Count a player benefit only when a current plan can use it.
+function bn3FundingBenefit(round, corp, offer, cash, stage, constants, snapshot, route) {
+  if (round === 1) return ''
+  const now = Date.now()
+  const fresh = time => Number.isFinite(time) && time >= bn3Reset.lastAugReset && time <= now && now - time <= 90_000
+  const plan = snapshot?.reset_planning
+  if (snapshot?.current_node !== bn3Reset.currentNode || snapshot?.last_aug_reset !== bn3Reset.lastAugReset ||
+      !fresh(snapshot.generated_at) || plan?.version !== 1) return ''
+  const post = cash + offer.funds
+  if (corp.valuation >= constants.bribeThreshold && Number.isFinite(constants.bribeAmountPerReputation) &&
+      constants.bribeAmountPerReputation > 0 && route && fresh(route.updatedAt) && route.lastNodeReset === bn3Reset.lastNodeReset &&
+      route.lastAugReset === bn3Reset.lastAugReset && ['faction-rep', 'donation-unlock'].includes(route.kind)) {
+    const cost = Math.ceil((route.targetRep - plan.reputation?.[route.faction]) * constants.bribeAmountPerReputation)
+    const spendable = (funds, r) => funds - getCorporationBribeReserve({funds, expenses: corp.expenses}, r)
+    if (Number.isFinite(cost) && cost > 0 && spendable(cash, round) < cost &&
+        spendable(post, round + 1) >= cost && post - cost >= stage.minimum)
+      return `funds the active ${route.faction} reputation target`
+  }
+  if (round !== 4 || snapshot.stock_value_known !== true || !Number.isFinite(plan.wealth) ||
+      !Array.isArray(plan.goals)) return ''
+  const rate = getSafeDividendRate({...corp, funds: post - (stage.minimum - stage.runway)}, dividendRate, stage.seconds)
+  const retainedFraction = (corp.numShares - offer.shares) / corp.totalShares
+  if (!(rate > 0 && retainedFraction > 0 && retainedFraction <= 1 && Number.isFinite(corp.tributeModifier) &&
+      corp.tributeModifier >= 0 && corp.tributeModifier < 1)) return ''
+  const perCycle = ((corp.revenue - corp.expenses) * stage.seconds * rate * retainedFraction) ** (1 - corp.tributeModifier)
+  const goal = plan.goals.find(g => Number.isFinite(g?.money) && Number.isFinite(g.rep) &&
+    Number.isFinite(plan.reputation?.[g.faction]) && plan.reputation[g.faction] >= g.rep &&
+    g.money > plan.wealth && g.money - plan.wealth <= perCycle * INVESTMENT_REVIEW_CYCLES)
+  return goal ? `dividends can close the cash gap for ${goal.label} within one review` : ''
+}
+
+function evaluateBn3Offer(stage, corp, cash, offer, offerRate, extraCycles, benefit) {
+  const capital = cash + offer
+  const income = Math.max(0, corp.revenue - corp.expenses)
+  const cycle = stage.seconds
+  const usable = Number.isFinite(capital) && Number.isFinite(offer) && offer > 0
+  if (!usable) return {action: 'grow', reason: 'waiting for a valid cash balance and offer'}
+  const affordable = capital >= stage.minimum
+  if (affordable && benefit) return {action: 'accept', reason: benefit}
+  const goal = capital < stage.minimum ? stage.minimum : capital < stage.next ? stage.next : stage.full
+  const gap = goal - capital
+  const eta = gap / (offerRate + income)
+  const earningTime = income > 0 ? gap / income : Infinity
+  // Advancing now can still earn the rest. Only defer if the time saved obtaining
+  // this specific build exceeds the time we would forgo operating the new stage.
+  if (extraCycles > 0 && offerRate > 0 && eta > 0 && eta <= extraCycles * cycle && earningTime - eta > Math.max(cycle, eta))
+    return {action: 'wait', reason: `investor growth can fund the next build in ~${Math.ceil(eta)}s of production`}
+  if (!affordable) return {action: 'grow', reason: 'offer still leaves setup or operating costs unfunded'}
+  // Cash already owned is not a reason to sell another equity tranche for a token offer.
+  if (offer < income * cycle * INVESTMENT_REVIEW_CYCLES || (cash >= stage.minimum && offer < stage.design))
+    return {action: 'grow', reason: 'new money buys less than a project or one review of earnings'}
+  return {action: 'accept', reason: capital >= stage.full ? 'the entire next build is funded' :
+    'the next productive step is funded; waiting buys no near-term upgrade'}
+}
+
+async function reviewBn3Offer(ns, round, corp) {
+  if (!investmentReview) {
+    if (fundingGrowthCycles > 0 && --fundingGrowthCycles > 0) return round
+    if (!hasDivDB[div1] || !(investOffer.funds > 0) || (round === 1 && !(corp.revenue > 0))) return round
+    if (round >= 3) tobaccoBooster = true
+    beginInvestmentReview(ns, round, 'measuring the offer against the next build')
+    investmentReview.offers = []
+    investmentReview.extra = INVESTMENT_REVIEW_CYCLES
+    return round
+  }
+  const review = investmentReview
+  review.offers.push(Number(investOffer.funds))
+  if (--review.remaining > 0) return round
+  // Reprice before every decision. The home helper reads the real offer and the plans in
+  // the same turn; an offloaded manager never copies stale files over a running worker.
+  const constants = await getCorporationConstants(ns)
+  const stage = constants && await quoteBn3Stage(ns, round, corp, constants)
+  const report = await corpRun(ns, 'getInvestmentOffer', '--bn3-review')
+  if (!report?.corporation || !report.offer) {
+    investmentReview = null
+    fundingGrowthCycles = INVESTMENT_REVIEW_CYCLES
+    tobaccoBooster = false
+    fundingStatus = 'Could not read the live offer. Sync bin/corpRun.js on home; growth has resumed.'
+    log(ns, fundingStatus, true, 'warning')
+    return round
+  }
+  const {offer, corporation: latest, snapshot, route} = report
+  const actualRound = getCorporationPhase(latest, offer)
+  if (actualRound !== round) {
+    investmentReview = null
+    fundingGrowthCycles = INVESTMENT_REVIEW_CYCLES
+    tobaccoBooster = false
+    fundingStatus = ''
+    return actualRound || round
+  }
+  investOffer = offer
+  const cash = await corpFunds(ns, 0, latest) // Retains debt and already committed bills.
+  const samples = review.offers
+  samples[samples.length - 1] = offer.funds
+  let decision = {action: 'grow', reason: 'no reliable stage or operating quote'}
+  if (stage && latest?.public === false && Number.isSafeInteger(latest.investorShares) && latest.investorShares >= 0 &&
+      Number.isFinite(latest.valuation) && latest.valuation > 0 && latest.expenses === corp.expenses && Number.isFinite(latest.revenue) && Number.isFinite(latest.expenses) &&
+      latest.expenses >= 0 && Number.isFinite(cash) && Number.isFinite(offer.funds) && offer.funds > 0) {
+    // Require a sustained rise, not a single spike or the investment from the previous round.
+    const end = samples.length - 1
+    const rate = Math.max(0, Math.min(samples[end] - samples[end - 3], samples[end - 3] - samples[end - 6]) / (3 * stage.seconds))
+    const benefit = bn3FundingBenefit(round, latest, offer, cash, stage, constants, snapshot, route)
+    decision = evaluateBn3Offer(stage, latest, cash, offer.funds, rate, review.extra, benefit)
+  }
+  const money = x => ns.format.number(x, 3)
+  fundingStatus = `${decision.reason}.` + (stage && Number.isFinite(cash)
+    ? ` Net cash + offer $${money(cash + offer.funds)}; next step $${money(stage.minimum)}, full build $${money(stage.full)}.` : '')
+  if (decision.action === 'wait') {
+    if (review.extra === INVESTMENT_REVIEW_CYCLES) log(ns, `Round ${round}: ${fundingStatus}`, true, 'info')
+    review.extra--
+    review.remaining = 1
+    return round
+  }
+  investmentReview = null
+  fundingGrowthCycles = INVESTMENT_REVIEW_CYCLES
+  if (round >= 3) tobaccoBooster = false
+  if (decision.action === 'accept') {
+    const next = await acceptReviewedOffer(ns, round, offer.funds, latest)
+    if (next > round) log(ns, `Round ${round}: took $${money(offer.funds)}; ${decision.reason}.`, true, 'info')
+    return next
+  }
+  log(ns, `Round ${round}: resuming growth. ${fundingStatus}`, true, 'info')
+  return round
+}
+
 /** @param {NS} ns */
 async function checkInvest(ns) {
   const round = Number(investOffer?.round)
@@ -772,6 +966,8 @@ async function checkInvest(ns) {
   if (investmentReview && investmentReview.round !== round) investmentReview = null
   if (investmentPeakRound !== round) resetInvestmentPeakTracking(round)
   if (round === 2) roundTwoAllocation.maySave = Number.isFinite(corp.revenue) && corp.revenue > 0
+
+  if (bn3Reset) return reviewBn3Offer(ns, round, corp)
 
   let offerFunds = Number(investOffer.funds)
   const capitalTarget = getInvestmentCapitalTarget(round, bnMults.CorporationValuation)
@@ -843,8 +1039,18 @@ async function checkInvest(ns) {
     if (!decision.accept) return round
   }
 
-  const accepted = await corpRun(ns, 'acceptInvestmentOffer')
+  return acceptReviewedOffer(ns, round, offerFunds)
+}
+
+async function acceptReviewedOffer(ns, round, offerFunds, quote) {
+  const accepted = quote ? await corpRun(ns, 'acceptInvestmentOffer', '--if-current', quote.investorShares, quote.valuation, quote.funds, quote.nextState) :
+    await corpRun(ns, 'acceptInvestmentOffer')
   if (accepted !== true) {
+    if (quote) {
+      fundingStatus = accepted === 'deferred' ? 'Not enough free home RAM for the final offer check; growth has resumed.' :
+        'Offer, cash balance or phase changed before acceptance; growing until the next quote.'
+      log(ns, `Round ${round}: ${fundingStatus}`, true, 'info')
+    }
     return round
   }
 
@@ -853,21 +1059,26 @@ async function checkInvest(ns) {
   const nextRound = Number(nextOffer?.round)
   investOffer = nextOffer
   teaNeeded = true
-  if (round === 3) tobaccoBooster = false
+  if (round === 3 || bn3Reset) tobaccoBooster = false
+  if (bn3Reset) {
+    fundingGrowthCycles = INVESTMENT_REVIEW_CYCLES
+    fundingStatus = ''
+  }
   resetInvestmentPeakTracking(nextRound)
 
   const resolvedNextRound = Number.isInteger(nextRound) && nextRound > round ? nextRound : round + 1
   return resolvedNextRound
 }
 /** @param {NS} ns */
-async function corpFunds(ns, reserve = ROUND_ONE_OPERATING_RESERVE) {
+async function corpFunds(ns, reserve = ROUND_ONE_OPERATING_RESERVE, expected) {
   // Employee care uses reserve=0; recipe inputs are funded separately in purchase().
   if (investmentReview && reserve > 0) return 0
-  const corporation = await getCorp(ns)
+  const corporation = expected ?? await getCorp(ns)
   const divisions = await corporationBatch(ns, 'getDivision', corporation.divisions.map(div => [div]))
   const latest = await getCorp(ns)
   // Do not combine a pre-START cash balance with post-START bills (or cross a purchase).
-  if (latest.nextState !== corporation.nextState) return -Infinity
+  if (latest.nextState !== corporation.nextState || (expected && (latest.funds !== expected.funds ||
+      latest.public !== expected.public || latest.valuation !== expected.valuation))) return -Infinity
   // Material purchases have already happened, but the game deducts these bills at START.
   const unpaid = divisions.reduce((sum, div) => sum + div.thisCycleExpenses, 0)
   const available = latest.funds - unpaid - pendingInputPurchases - reserve
@@ -1079,7 +1290,7 @@ async function prep(ns) {
       if (!(await expandCities(ns, div3, {
         allowExpansion: false,
         reserve: ROUND_TWO_TOBACCO_RESERVE,
-      }))) return false
+      }))) return !!bn3Reset && round < 5 // Agriculture can earn and a private offer can finance the missing setup.
 
       let tobacco = await corpRun(ns, 'getDivision', div3)
       const productStarted = hasStartedProduct(tobacco)
@@ -1145,8 +1356,8 @@ async function updateMisc(ns) {
         && ((await corpRun(ns, 'getDivision', div4)).awareness < Number.MAX_VALUE
           || (await corpRun(ns, 'getDivision', div4)).popularity < Number.MAX_VALUE)))
       || (hasDiv3
-        && (await corpRun(ns, 'getDivision', div3)).awareness < Number.MAX_VALUE
-        || (await corpRun(ns, 'getDivision', div3)).popularity < Number.MAX_VALUE))) {
+        && ((await corpRun(ns, 'getDivision', div3)).awareness < Number.MAX_VALUE
+          || (await corpRun(ns, 'getDivision', div3)).popularity < Number.MAX_VALUE)))) {
     (await corpRun(ns, 'levelUpgrade', "Wilson Analytics"))
   }
   while ((round === 3)
@@ -1306,7 +1517,7 @@ async function manageProducts(ns) {
     // Let a full Tobacco lineup earn through the valuation average before retiring a seller.
     // Review each lineup once, then resume replacement even if the target remains out of reach.
     const round = Number(investOffer?.round)
-    if (div === div3 && (round === 3 || round === 4) &&
+    if (!bn3Reset && div === div3 && (round === 3 || round === 4) &&
         division.products.length === division.maxProducts && division.maxProducts > 0 &&
         hasCompleteDivisionInfrastructure(div3)) {
       const key = JSON.stringify(division.products)
@@ -1656,7 +1867,7 @@ async function manageOffice(ns) {
               }
               if (!hasDiv3) break
               const corpRev = (await getCorp(ns)).revenue
-              while ((await corpRun(ns, 'getOffice', div, city)).size < 106 && (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1)) * 1.5 <= await corpFunds(ns)) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
+              while ((await corpRun(ns, 'getOffice', div, city)).size < ROUND_THREE_TOBACCO_SEATS && (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1)) * 1.5 <= await corpFunds(ns)) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
               if (corpRev > 5e8)
                 while ((await corpRun(ns, 'getOffice', div, city)).size < 116 && (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1)) * 1.5 <= await corpFunds(ns)) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
               if (corpRev > 1e9)
@@ -1687,7 +1898,7 @@ async function manageOffice(ns) {
               break
             case 4: {
               const corpRev = (await getCorp(ns)).revenue
-              if ((await corpRun(ns, 'getOffice', div, city)).size < 250 &&
+              if ((await corpRun(ns, 'getOffice', div, city)).size < ROUND_FOUR_TOBACCO_SEATS &&
                   await corpFunds(ns) >= await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))
                 await corpRun(ns, 'upgradeOfficeSize', div, city, 1)
               if (corpRev > 100e9)

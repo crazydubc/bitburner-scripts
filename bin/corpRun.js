@@ -38,6 +38,32 @@ export async function main(ns) {
     const once = args[0] === '--once';
     const batch = once || args[0] === '--batch';
     if (once && fn !== 'buyMaterial') throw new Error('One-phase orders require buyMaterial');
+    if (fn === 'getInvestmentOffer' && args[0] === '--bn3-review') {
+      // Both information reads fit the ordinary helper budget. Optional plans live on home.
+      const read = path => { try { return JSON.parse(ns.read(path) || 'null'); } catch { return null; } };
+      const data = read('/Temp/affordable-augs.txt');
+      response = {offer: ns.corporation.getInvestmentOffer(), corporation: ns.corporation.getCorporation(),
+        snapshot: data && {current_node: data.current_node, last_aug_reset: data.last_aug_reset,
+          generated_at: data.generated_at, stock_value_known: data.stock_value_known, reset_planning: data.reset_planning},
+        route: read('/Temp/infiltration-target.txt')};
+      return;
+    }
+    if (fn === 'acceptInvestmentOffer' && args[0] === '--if-current') {
+      const [, investorShares, valuation, balance, phase] = args;
+      // The manager can be offloaded or waiting on RAM. Do not sell a different tranche or
+      // take a lower offer or ignore a new bill. No await between check and sale.
+      const needed = ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost('corporation.getCorporation') +
+        ns.getFunctionRamCost('corporation.acceptInvestmentOffer');
+      response = false;
+      if (ns.ramOverride(needed) < needed) { response = 'deferred'; return; }
+      if (!Number.isSafeInteger(investorShares) || investorShares < 0 || !(Number.isFinite(valuation) && valuation > 0) || !Number.isFinite(balance)) return;
+      const corp = ns.corporation.getCorporation();
+      // In a private company each accepted tranche increases investorShares; within that
+      // tranche the offer is directly proportional to valuation. One info API suffices.
+      if (!corp.public && corp.investorShares === investorShares && corp.valuation >= valuation && corp.funds >= balance && corp.nextState === phase)
+        response = ns.corporation.acceptInvestmentOffer();
+      return;
+    }
     const required = Math.max(23.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`corporation.${fn}`) +
       (once ? ns.getFunctionRamCost('corporation.nextUpdate') : 0));
     if (ns.ramOverride(required) < required) throw new Error(`Insufficient RAM for corporation.${fn}: ${required} GB required`);
