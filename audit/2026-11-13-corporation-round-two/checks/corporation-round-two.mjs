@@ -8,6 +8,7 @@ import {bare, build, source} from '../../2026-11-10-tobacco-warehouse/checks/tob
 const root = new URL('../../../', import.meta.url);
 const current = readFileSync(new URL('corporation.js', root), 'utf8');
 const previous = execFileSync('git', ['show', '3e9e522:corporation.js'], {cwd: root, encoding: 'utf8'});
+const beforeSaving = execFileSync('git', ['show', '00e375c:corporation.js'], {cwd: root, encoding: 'utf8'});
 const LongTermFundsSources = build(source('Corporation/data/FundsSource.ts'), {}, 'LongTermFundsSources');
 const corpConstants = {secondsPerMarketCycle: 10, valuationLength: 10, initialShares: 1e9,
   fundingRoundShares: [.1, .35, .25, .2], fundingRoundMultiplier: [3, 2, 2, 1.5]};
@@ -37,6 +38,9 @@ function fixture(code = current, options = {}) {
   model.cycleValuation = model.determineCycleValuation();
   model.valuationsList = Array(10).fill(model.cycleValuation); model.determineValuation();
   const calls = [], logs = [], events = [];
+  const warehouses = new Set(names.flatMap(div => cities.map(city => div + city)));
+  const warehouseKey = 'ChemicalIshima';
+  if (settings.missingWarehouse) warehouses.delete(warehouseKey);
   let quotedOffer = null, accepted = true;
   const rpc = (_ns, method, ...args) => {
     if (args[0] === '--batch') return JSON.parse(args[1]).map(a => rpc(_ns, method, ...a));
@@ -46,6 +50,14 @@ function fixture(code = current, options = {}) {
         public: model.public, divisions: names, nextState: 'START'};
       case 'getDivision': return {...divisions[args[0]], products: [...divisions[args[0]].products]};
       case 'getProduct': return products[args[2]];
+      case 'hasUnlock': return true;
+      case 'getConstants': return {officeInitialCost: 4e9, warehouseInitialCost: 5e9};
+      case 'getOffice': return {size: 10, numEmployees: 10};
+      case 'hasWarehouse': return warehouses.has(args[0] + args[1]);
+      case 'purchaseWarehouse':
+        assert(!warehouses.has(args[0] + args[1])); assert(model.funds >= 20e9);
+        model.loseFunds(5e9, 'warehouse'); warehouses.add(args[0] + args[1]); return;
+      case 'buyMaterial': assert.equal(args[3], 0, 'Startup only clears standing orders'); return;
       case 'getInvestmentOffer': return quotedOffer ?? model.getInvestmentOffer();
       case 'acceptInvestmentOffer': {
         const offer = model.getInvestmentOffer();
@@ -66,7 +78,7 @@ function fixture(code = current, options = {}) {
       for (const city of cities) hasOfficeDB[name + city] = hasWarehouseDB[name + city] = true;
     }
     investOffer = {round: settings.round, funds: 0}; bnMults = {CorporationValuation: 1};
-    return {checkInvest, corpFunds, manageProducts, updateMisc, warehouseUpgrade,
+    return {prep, checkInvest, corpFunds, manageProducts, updateMisc, warehouseUpgrade,
       offer: value => investOffer = value,
       incomplete: name => hasWarehouseDB[name + 'Ishima'] = false,
       review: () => investmentReview,
@@ -160,7 +172,39 @@ for (const publicState of [false, true]) {
   assert.equal(await h.check(), publicState ? 5 : 3); assert.equal(h.api.review(), null);
 }
 
+// A completed v1 need not stay stuck when each below-target review ends short of $19b.
+// Spend every dollar the real budget makes available after prep and product management.
+async function savingScenario(code, missingWarehouse) {
+  const h = fixture(code, {funds:7.355e9,revenue:10e6,expenses:1e6,missingWarehouse});
+  let growthSpend=0, boughtWarehouseAt=0, startedV2At=0;
+  for(let i=1;i<=600;i++) {
+    const warehousesBefore=h.calls.filter(([method])=>method==='purchaseWarehouse').length;
+    assert.equal(await h.act('prep'),true);await h.act('manageProducts');
+    if(h.calls.filter(([method])=>method==='purchaseWarehouse').length>warehousesBefore)boughtWarehouseAt=i;
+    const budget=Math.max(0,await h.act('corpFunds'));
+    assert.equal(Math.max(0,await h.act('corpFunds')),budget,'Repeated reads preserve the growth allowance');
+    h.tick(budget);growthSpend+=budget;assert.equal(await h.check(),2,'Do not accept a below-target offer');
+    if(h.products['Prod v2']){startedV2At=i;break;}
+  }
+  assert(growthSpend>0);assert(!h.calls.some(([m])=>m==='discontinueProduct'));
+  return {startedV2At,boughtWarehouseAt,growthSpend};
+}
+const stalled=await savingScenario(beforeSaving,false), saved=await savingScenario(current,false);
+assert.equal(stalled.startedV2At,0);assert(saved.startedV2At>0);
+const missing=await savingScenario(beforeSaving,true), expanded=await savingScenario(current,true);
+assert.equal(missing.boughtWarehouseAt,0);assert(expanded.boughtWarehouseAt>0&&expanded.startedV2At>expanded.boughtWarehouseAt);
+const phases=fixture(current,{funds:7.355e9,revenue:0});
+await phases.act('prep');await phases.act('manageProducts');const initialGrowth=await phases.act('corpFunds');
+assert(initialGrowth>0 && initialGrowth<2.355e9);
+for(let i=0;i<5;i++){
+  await phases.act('prep');await phases.act('manageProducts');assert.equal(await phases.act('corpFunds'),initialGrowth);
+  assert.equal(await phases.check(),2);assert.equal(phases.api.review(),null);
+}
+phases.divisions.Tobacco.thisCycleExpenses=3e9;
+assert(await phases.act('corpFunds')<=0,'Outstanding bills take priority over both uses of cash');
+assert.equal(await phases.api.corpFunds(ns,0),4.355e9,'Affordable employee care can use earmarked cash');
+
 console.log(JSON.stringify({spendingOffer, reviewedOffer, reviewCycles: fixed.api.length,
-  keptProducts: fixed.divisions.Tobacco.products,
+  keptProducts: fixed.divisions.Tobacco.products, savings:{stalled,saved,missing,expanded},
   scope: 'Controlled income, spending and retained inventory; actual manager and engine valuation, not a live save'}));
-console.log('Round-two pause, negative displayed profit, first-product retention, construction, bounded retries, fresh quotes and transition guards passed.');
+console.log('Round-two valuation reviews, v1 retention, funded v2, required construction before discretionary spending, cash/bill safeguards and fresh offers passed.');

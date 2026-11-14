@@ -1,0 +1,69 @@
+{
+  "baseline": "00e375cc695b95f544417d40bc706dd92bd35436",
+  "engine": "1da7316ffd9d281b45a86c4c54ec532276557892",
+  "node": "v24.22.1",
+  "scope": "Corporation and warehouse regressions; unrelated full-suite failures were documented on the incoming branch.",
+  "suites": [
+    {
+      "suite": "corporation-lifecycle",
+      "status": "passed",
+      "evidence": "Corporation eligibility, reserve-aware startup, public resumption, guarded payouts and unchanged bootstrap checks passed"
+    },
+    {
+      "suite": "corporation-port",
+      "status": "passed",
+      "evidence": "Official division getter, worker cleanup and PID port: deprecated alias avoidance, early-exit reproduction, input-rate restoration, one reply and error propagation passed."
+    },
+    {
+      "suite": "corporation-products",
+      "status": "passed",
+      "evidence": "{\"designGainFromDoublingInvestment\":0.0052816337021417414,\"effectiveRatingExample\":{\"olderDesign100\":30,\"newerDesign144\":24}}\nOfficial product formulas, stale-research reproduction, funded replacements, version progression, first slots, reserves, development and pricing checks passed."
+    },
+    {
+      "suite": "corporation-sale-prices",
+      "status": "passed",
+      "evidence": "Reproduced INFINITY through the old BN10 round-two manager / home helper / game parser; scoped fallback, recovery, normal quote parity, exports, TA.II, pre-unlock prices and RPC error propagation passed."
+    },
+    {
+      "suite": "tobacco-warehouse",
+      "status": "passed",
+      "evidence": "Tobacco warehouse: working space, recovery of 2239.995/2240, imports, production, product sales and bounded booster orders passed."
+    },
+    {
+      "suite": "corporation-cash",
+      "status": "passed",
+      "evidence": "{\"oldBalanceAfterStart\":-187294351491.84796,\"fixedBoosterAndInputBills\":15000000000,\"cashBeforeStart\":20000000000,\"healthyCashAfterStart\":5000000000,\"scope\":\"3 divisions / 18 warehouses, official purchase processing\"}\nShared cash budget, unpaid bills, inputs, interrupted/late/repeated orders, restart, health reserve and independent Tobacco routing passed."
+    },
+    {
+      "suite": "corporation-research",
+      "status": "passed",
+      "evidence": "{\"check\":\"round-three research regression\",\"oldResearchAfterHour\":1340,\"repairedResearchAfterHour\":7198.097558002721,\"nextDesignRatingRatio\":1.5482206651776291,\"note\":\"Fixed-stat engine fixture, not live-save timing or profit predictions\"}\nRound-three R&D restored; home design, round-two sales, upgrades, missing warehouses, debt and investment transitions passed."
+    },
+    {
+      "suite": "corporation-round-two",
+      "status": "passed",
+      "evidence": "{\"spendingOffer\":4706727900000,\"reviewedOffer\":9403241400000,\"reviewCycles\":12,\"keptProducts\":[\"Prod v1\"],\"savings\":{\"stalled\":{\"startedV2At\":0,\"boughtWarehouseAt\":0,\"growthSpend\":56265000000},\"saved\":{\"startedV2At\":278,\"boughtWarehouseAt\":0,\"growthSpend\":23285000000},\"missing\":{\"startedV2At\":0,\"boughtWarehouseAt\":0,\"growthSpend\":56265000000},\"expanded\":{\"startedV2At\":393,\"boughtWarehouseAt\":308,\"growthSpend\":28635000000}},\"scope\":\"Controlled income, spending and retained inventory; actual manager and engine valuation, not a live save\"}\nRound-two valuation reviews, v1 retention, funded v2, required construction before discretionary spending, cash/bill safeguards and fresh offers passed."
+    },
+    {
+      "suite": "corporation-valuation",
+      "status": "passed",
+      "evidence": "{\"operatingIncomePerSecond\":12000000000,\"repeatedSpendingOffer\":56001500000,\"afterReviewOffer\":2515845651500000,\"reviewCycles\":12,\"productionPushReviewChecks\":22,\"scope\":\"Fixed-income official accounting fixture; not the live save\"}\nValuation recovery, bounded reviews, funded weakest-product replacement, fresh offers, care and round transitions passed."
+    }
+  ],
+  "ram": [
+    {
+      "file": "corporation.js",
+      "before": 5.5,
+      "after": 5.5,
+      "withoutOverride": 33.25,
+      "baselineWithoutOverride": 33.25
+    },
+    {
+      "file": "bin/corpRun.js",
+      "before": 23.6,
+      "after": 23.6,
+      "withoutOverride": 1.6,
+      "baselineWithoutOverride": 1.6
+    }
+  ]
+}

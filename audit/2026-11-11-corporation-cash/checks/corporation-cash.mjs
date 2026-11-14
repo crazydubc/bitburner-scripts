@@ -18,7 +18,8 @@ const near=(a,b,message='')=>assert(Math.abs(a-b)<=.01,message||`${a} != ${b}`);
 function fixture(code=current,{funds=20e9,unpaid=0,ready=false,which=names}={}) {
   const divisions=new Map(), calls=[], info=new Map();
   const corp={funds,state:{nextName:'PURCHASE'},divisions,getProductionMultiplier:()=>1,getSalesMult:()=>1,getScientificResearchMult:()=>1};
-  let phaseRace=false,stopDuringOrder=false,portResult,exitHook;
+  let phaseRace=false,stopDuringOrder=false,clearFailure=null,portResult,exitHook;
+  const messages=[];
   for(const name of which){
     const offices={},warehouses={};
     for(const city of cities){
@@ -49,18 +50,23 @@ function fixture(code=current,{funds=20e9,unpaid=0,ready=false,which=names}={}) 
   };
   const rpc=(_,fn,...args)=>{
     if(args[0]==='--batch'){
+      if(clearFailure && fn==='buyMaterial' && JSON.parse(args[1]).every(a=>a[3]===0)) {
+        const message=clearFailure;clearFailure=null;throw Error(message);
+      }
       const result=JSON.parse(args[1]).map(a=>rpc(_,fn,...a));
       if(phaseRace&&fn==='getDivision')corp.state.nextName='START';
       return result;
     }
     if(args[0]==='--once')return (async()=>{
-      await corpMain({pid:1,args:[fn,...args],atExit:f=>exitHook=f,getPortHandle:()=>({write:v=>portResult=v}),ramOverride:v=>v,
+      let exited=false;
+      const exit=()=>{if(exited)return;exited=true;exitHook();};
+      await corpMain({pid:1,args:[fn,...args],atExit:f=>exitHook=f,getPortHandle:()=>({write:v=>{messages.push(v);portResult=v;}}),ramOverride:v=>v,
         getFunctionRamCost:n=>n==='baseCost'?1.6:n.endsWith('nextUpdate')?2:20,
         corporation:{buyMaterial:(...a)=>rpc(_,fn,...a),nextUpdate:async()=>{
-          if(stopDuringOrder){exitHook();throw Error('Interrupted order');}
+          if(stopDuringOrder){stopDuringOrder=false;exit();throw Error('Interrupted order');}
           const next=corp.state.nextName;if(next==='PURCHASE')process(next);return next;
         }}});
-      exitHook();if(typeof portResult==='string'&&portResult.startsWith('ERROR:'))throw Error(portResult);
+      exit();if(typeof portResult==='string'&&portResult.startsWith('ERROR:'))throw Error(portResult);
       return portResult;
     })();
     calls.push([fn,...args]);
@@ -74,7 +80,7 @@ function fixture(code=current,{funds=20e9,unpaid=0,ready=false,which=names}={}) 
       case 'getOffice':return div.offices[city];
       case 'getIndustryData':return data[name];
       case 'getMaterialData':return MaterialInfo[name];
-      case 'getMaterial':return {...material,desiredBuyAmount:material.buyAmount};
+      case 'getMaterial':return {...material,buyAmount:material.buyAmount};
       case 'getProduct':{const p=div.products.get(mat);return {...p,...p.cityData[city]};}
       case 'getUpgradeLevel':return 0;
       case 'hasResearched':return false;
@@ -91,9 +97,9 @@ function fixture(code=current,{funds=20e9,unpaid=0,ready=false,which=names}={}) 
       review:()=>investmentReview,
       stopBoostPurchases:typeof stopBoostPurchases==='function'?stopBoostPurchases:null};`)(rpc,[...info.values()],()=>{});
   const assets=()=>[...divisions.values()].flatMap(div=>cities.flatMap(city=>boosts.map(mat=>div.warehouses[city].materials[mat])));
-  return {corp,divisions,calls,manager,process,assets,act:async method=>{const r=await manager[method]({});
+  return {corp,divisions,calls,manager,process,assets,messages,act:async method=>{const r=await manager[method]({});
       return method==='optimizeMats'&&manager.purchaseBoostMaterials?manager.purchaseBoostMaterials({}):r;},
-    setPhaseRace:()=>phaseRace=true,interrupt:()=>stopDuringOrder=true,
+    setPhaseRace:()=>phaseRace=true,interrupt:()=>stopDuringOrder=true,failClearOnce:error=>clearFailure=error,
     unpaid:()=>[...divisions.values()].reduce((sum,div)=>sum+div.thisCycleExpenses,0)};
 }
 
@@ -142,8 +148,23 @@ const late=fixture();late.corp.state.nextName='SALE';await late.act('optimizeMat
 assert(late.assets().every(m=>m.stored===0&&m.buyAmount===0),'A late plan must not leave rates waiting for a later purchase');
 const race=fixture();race.setPhaseRace();await race.act('optimizeMats');
 assert(race.assets().every(m=>m.stored===0&&m.buyAmount===0),'A START transition invalidates the cash/bills snapshot');
-const interrupted=fixture();interrupted.interrupt();await assert.rejects(interrupted.act('optimizeMats'),/Interrupted order/);
+const interrupted=fixture();interrupted.interrupt();assert.equal(await interrupted.act('optimizeMats'),false);
+assert.deepEqual(interrupted.messages,[false],'An interrupted child publishes one skipped order, not a fatal error');
 assert(interrupted.assets().every(m=>m.buyAmount===0),'atExit cancels even an interrupted order');
+assert(interrupted.assets().every(m=>m.stored===0),'Do not replay positive buys in the interrupted phase');
+assert.equal(await interrupted.act('optimizeMats'),true,'The same manager can place the next fresh order');
+const ingredient=fixture(current,{which:['Water Utilities']});await ingredient.act('purchase');
+const base=Object.values(ingredient.divisions.get('Water Utilities').warehouses).map(wh=>wh.materials.Hardware.buyAmount);
+assert(base.every(rate=>rate>0));ingredient.interrupt();assert.equal(await ingredient.act('optimizeMats'),false);
+assert.deepEqual(Object.values(ingredient.divisions.get('Water Utilities').warehouses).map(wh=>wh.materials.Hardware.buyAmount),base);
+ingredient.process('PURCHASE');
+assert(Object.values(ingredient.divisions.get('Water Utilities').warehouses).every((wh,i)=>wh.materials.Hardware.stored===base[i]*10),
+  'Only recipe inputs continue after an interrupted booster order');
+const cleared=fixture(current,{funds:5e9});cleared.assets().forEach(m=>m.buyAmount=12);
+cleared.failClearOnce('corporation.buyMaterial: corporation.buyMaterial exited before returning a result');
+assert.equal(await cleared.act('optimizeMats'),false);assert(cleared.assets().every(m=>m.buyAmount===0));
+cleared.failClearOnce('corporation.buyMaterial: Warehouse API unavailable');
+await assert.rejects(cleared.act('optimizeMats'),/Warehouse API unavailable/,'Actual API failures are not swallowed');
 
 // The post-design snapshot: preserve existing productive assets while cash recovers naturally.
 const debt=fixture(current,{funds:-72e9,which:['Tobacco'],ready:true});

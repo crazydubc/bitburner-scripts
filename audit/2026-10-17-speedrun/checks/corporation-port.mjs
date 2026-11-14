@@ -93,4 +93,55 @@ h=harness(corpMain,{getDivision:()=>{throw Error('Division missing');}});
 await assert.rejects(corpRun(h.ns,'getDivision','missing'),/Division missing/);
 h=harness(corpMain,{getDivision:()=>({...expected,bad:()=>{}})});
 await assert.rejects(corpRun(h.ns,'getDivision','Tobacco'),/Unable to serialize result/);
-console.log('Official division getter/port reproduced the warning; supported fields, no getter access, future alias removal, result types and API/serialization errors passed.');
+
+// Terminate a real home helper from an offloaded caller, with the game's actual single-fire
+// atExit/stop ordering and cloned PID port. The parent must get exactly one answer.
+const killSource=source('src/Netscript/killWorkerScript.ts');
+const k=killSource.indexOf('function stopAndCleanUpWorkerScript(');
+assert(k>=0);
+const stopWorker=Function('removeWorkerScript','handleUnknownError','ScriptDeath',stripTypeScriptTypes(
+  killSource.slice(k,killSource.indexOf('\n}',k)+2))+';return stopAndCleanUpWorkerScript;')(
+  ws=>ws.remove(),e=>{throw e;},Error);
+const preFix=(await import(moduleUrl(execFileSync('git',['show','00e375c:bin/corpRun.js'],{cwd:root,encoding:'utf8'})))).main;
+async function materialOrder(main,orders,mode) {
+  const rates=new Map([['Hardware',2],['Robots',0]]),writes=[],running=new Set();
+  const ns={print:()=>{},getHostname:()=> 'run4theh111z',getScriptRam:()=>23.6,
+    getFunctionRamCost:n=>n==='baseCost'?1.6:n==='corporation.buyMaterial'?20:0,
+    isRunning:pid=>running.has(pid),getPortHandle:pid=>new PortHandle(pid),
+    exec(file,host,options,...args) {
+      assert.equal(file,'bin/corpRun.js');assert.equal(host,'home');assert.equal(options.ramOverride,23.6);
+      const pid=101,port=new PortHandle(pid);port.clear();running.add(pid);
+      const ws={atExit:new Map(),env:{stopFlag:false,runningFn:''},remove:()=>running.delete(pid)};
+      queueMicrotask(async()=>{
+        let inCleanup=false;
+        try {await main({...ns,pid,args,ramOverride:n=>n,atExit:fn=>ws.atExit.set('default',fn),
+          getPortHandle:()=>({write:v=>{writes.push(v);port.write(v);}}),corporation:{
+            buyMaterial:(_div,_city,mat,rate)=>{
+              if(mode==='invalid'&&mat==='Robots'&&rate>0)throw Error('Invalid material order');
+              if(mode==='cleanup-error'&&inCleanup&&mat==='Hardware')throw Error('Warehouse unavailable');
+              rates.set(mat,rate);
+            },
+            nextUpdate:async()=>{
+              if(mode==='kill'||mode==='cleanup-error'){inCleanup=true;stopWorker(ws);throw Error('Already stopped');}
+              if(mode==='phase-error')throw Error('Corporation API unavailable');
+              return mode==='late'?'SALE':'PURCHASE';
+            }}});}finally{stopWorker(ws);}
+      });return pid;
+    }};
+  let result,error;try{result=await corpRun(ns,'buyMaterial','--once',JSON.stringify(orders));}catch(e){error=e.message;}
+  assert.equal(writes.length,1);return {result,error,rates:Object.fromEntries(rates)};
+}
+const legacy=[['Tobacco','Sector-12','Hardware',9],['Tobacco','Sector-12','Robots',4]];
+let order=await materialOrder(preFix,legacy,'kill');
+assert.equal(order.error,'corporation.buyMaterial: corporation.buyMaterial exited before returning a result');
+const inputs=[['Water Utilities','Sector-12','Hardware',9,2],['Water Utilities','Sector-12','Robots',4,0]];
+for(const mode of ['success','kill','late']){
+  order=await materialOrder(corpMain,inputs,mode);assert.equal(order.error,undefined);
+  assert.equal(order.result,mode==='success');assert.deepEqual(order.rates,{Hardware:2,Robots:0});
+}
+order=await materialOrder(corpMain,legacy,'kill');assert.equal(order.result,false);assert.deepEqual(order.rates,{Hardware:0,Robots:0});
+for(const [mode,message] of [['invalid','Invalid material order'],['phase-error','Corporation API unavailable'],['cleanup-error','Could not restore material buy rates']]){
+  order=await materialOrder(corpMain,inputs,mode);assert.match(order.error,new RegExp(message));
+  assert.equal(order.rates.Robots,0,'Continue cleaning up other entries when one fails');
+}
+console.log('Official division getter, worker cleanup and PID port: deprecated alias avoidance, early-exit reproduction, input-rate restoration, one reply and error propagation passed.');

@@ -14,12 +14,19 @@ export async function main(ns) {
   ns.ramOverride(23.6);
   const port = ns.getPortHandle(ns.pid);
   const [fn, ...args] = ns.args;
-  let response = `ERROR:corporation.${String(fn)} exited before returning a result`;
-  let clearBuys;
+  const exitFallback = `ERROR:corporation.${String(fn)} exited before returning a result`;
+  let response = exitFallback;
+  let restoreBuys;
 
   ns.atExit(() => {
-    // Buy rates persist in the game. Even an interrupted one-phase order must be cancelled.
-    if (clearBuys) clearBuys();
+    // The engine can run this hook before a killed helper's await/catch resumes.
+    // A verified cleanup makes an interrupted booster order safe to skip, never to replay.
+    if (restoreBuys) {
+      try {
+        restoreBuys();
+        if (response === exitFallback) response = false;
+      } catch (error) { response = `ERROR:Could not restore material buy rates: ${String(error)}`; }
+    }
     try {
       port.write(response);
     } catch (error) {
@@ -43,22 +50,29 @@ export async function main(ns) {
         typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)))))
         throw new Error('Invalid corporation batch');
       if (once) {
-        if (!calls.every(a => a.length === 4 && typeof a[3] === 'number' && a[3] >= 0))
+        if (!calls.every(a => (a.length === 4 || a.length === 5) && typeof a[3] === 'number' && a[3] >= 0 &&
+          (a.length === 4 || (typeof a[4] === 'number' && a[4] >= 0 && a[4] <= a[3]))))
           throw new Error('Invalid material purchase orders');
-        clearBuys = () => {
-          for (const a of calls) {
-            try { f(a[0], a[1], a[2], 0); } catch { /* A division may have been removed. */ }
+        let applied = 0;
+        restoreBuys = () => {
+          let failure;
+          for (let i = 0; i < applied; i++) {
+            const [div, city, material, , inputRate = 0] = calls[i];
+            try { f(div, city, material, inputRate); } catch (error) { failure = error; }
           }
+          if (failure !== undefined) throw failure;
         };
-      }
-      const results = [];
-      for (const a of calls) results.push(prepareCorporationResultForPort(fn, await f(...a)));
-      if (once) {
+        // buyMaterial is synchronous in Netscript. Arm the cleanup before waiting for the phase.
+        for (const [div, city, material, rate] of calls) { f(div, city, material, rate); applied++; }
         const state = await ns.corporation.nextUpdate();
-        clearBuys();
-        clearBuys = undefined;
+        restoreBuys();
+        restoreBuys = undefined;
         response = state === 'PURCHASE';
-      } else response = results;
+      } else {
+        const results = [];
+        for (const a of calls) results.push(prepareCorporationResultForPort(fn, await f(...a)));
+        response = results;
+      }
     } else response = prepareCorporationResultForPort(fn, await f(...args));
   } catch (error) {
     response = `ERROR:${String(error?.stack ?? error)}`;

@@ -28,6 +28,7 @@ const INVESTMENT_REVIEW_CYCLES = 12
 let investmentReview = null
 let reviewedProductLineup = ''
 let roundTwoGrowthCycles = 0
+let roundTwoAllocation = { forSetup: false, goal: 0, saved: 0, maySave: true }
 let tobaccoBooster = false
 const ta2DB = Object.create(null) // TA2 cache keyed by division + city + item
 const indDataDB = []
@@ -487,6 +488,7 @@ export async function main(ns) {
   investmentReview = null
   reviewedProductLineup = ''
   roundTwoGrowthCycles = 0
+  roundTwoAllocation = { forSetup: false, goal: 0, saved: 0, maySave: true }
   boostOrdersInitialized = false
   boostTargets = []
   while (true) {
@@ -536,8 +538,8 @@ export async function main(ns) {
         continue
       }
       if (round !== 2) continue
-      await updateHud(ns)
       await manageProducts(ns)
+      await updateHud(ns)
       let hasDiv2 = false
       // Chemical becomes round-two supply support after the Tobacco product is underway.    
       let count = 0
@@ -681,12 +683,12 @@ async function updateHud(ns) {
     + await getUpgradeLevel(ns, "FocusWires")
   const capitalTarget = getInvestmentCapitalTarget(invest.round, bnMults.CorporationValuation)
   const projectedCapital = getProjectedInvestmentCapital(invest.funds, cObj.funds)
-  const minRound = invest.round === 2 ? "-BareMin 30b" : ""
   const produpgrades = await getUpgradeLevel(ns, "Smart Factories") + await getUpgradeLevel(ns, "Smart Storage")
-  //ns.printf(`${invest.round} ${invest.funds} ${offer} ${minRound}`)
-  ns.printf("Round: %s Offer: %s Capital: %s/%s CorpVal: x%s %s", invest.round, ns.format.number(invest.funds, 3), ns.format.number(projectedCapital, 3), Number.isFinite(capitalTarget) ? ns.format.number(capitalTarget, 3) : "n/a", ns.format.number(bnMults.CorporationValuation, 3), minRound)
+  ns.printf("Round: %s Offer: %s Capital: %s/%s CorpVal: x%s", invest.round, ns.format.number(invest.funds, 3), ns.format.number(projectedCapital, 3), Number.isFinite(capitalTarget) ? ns.format.number(capitalTarget, 3) : "n/a", ns.format.number(bnMults.CorporationValuation, 3))
   if (investmentReview)
     ns.printf("Investment review: %s cycles left. Selling normally; growth purchases paused.", investmentReview.remaining)
+  else if (invest.round === 2 && roundTwoAllocation.goal > 0)
+    ns.printf("Saving for %s: $%s / $%s above operating cash.", roundTwoAllocation.forSetup ? 'required expansion' : 'next Tobacco product', ns.format.number(roundTwoAllocation.saved, 3), ns.format.number(roundTwoAllocation.goal, 3))
 
   ns.printf("Empl Upgrades: %s Prod Upgrades: %s Profit Upgrades: %s Wilson: %s", upgrades, produpgrades, await getUpgradeLevel(ns, "ABC SalesBots"), await getUpgradeLevel(ns, "Wilson Analytics"))
   const state = cObj.nextState === "PURCHASE" ? "START"
@@ -769,6 +771,7 @@ async function checkInvest(ns) {
 
   if (investmentReview && investmentReview.round !== round) investmentReview = null
   if (investmentPeakRound !== round) resetInvestmentPeakTracking(round)
+  if (round === 2) roundTwoAllocation.maySave = Number.isFinite(corp.revenue) && corp.revenue > 0
 
   let offerFunds = Number(investOffer.funds)
   const capitalTarget = getInvestmentCapitalTarget(round, bnMults.CorporationValuation)
@@ -867,8 +870,25 @@ async function corpFunds(ns, reserve = ROUND_ONE_OPERATING_RESERVE) {
   if (latest.nextState !== corporation.nextState) return -Infinity
   // Material purchases have already happened, but the game deducts these bills at START.
   const unpaid = divisions.reduce((sum, div) => sum + div.thisCycleExpenses, 0)
-  return Number.isFinite(unpaid) ? latest.funds - unpaid - pendingInputPurchases -
-    reserve : -Infinity
+  const available = latest.funds - unpaid - pendingInputPurchases - reserve
+  if (!Number.isFinite(available)) return -Infinity
+  if (reserve > 0 && investOffer?.round === 2 && roundTwoAllocation.goal > 0) {
+    // Only quoting the priority purchase updates savings. Other purchases can repeatedly
+    // read their remaining allowance without reserving the same cash again.
+    return available - Math.min(Math.max(0, available), roundTwoAllocation.saved)
+  }
+  return available
+}
+
+// Quote the first blocked setup step or an empty Tobacco slot. Once per earning cycle,
+// set aside half the uncommitted cash, up to the price plus its existing cushion.
+function saveRoundTwoCapital(available, cost, reserve, forSetup) {
+  if (investOffer?.round !== 2 || !Number.isFinite(cost) || cost <= 0 || !Number.isFinite(available)) return
+  if (roundTwoAllocation.forSetup) return // First blocked construction step takes priority this pass.
+  const goal = cost + reserve
+  const prior = Math.min(roundTwoAllocation.saved, goal, Math.max(0, available))
+  const deposit = roundTwoAllocation.maySave ? Math.max(0, available - prior) / 2 : 0
+  roundTwoAllocation = { forSetup, goal, saved: Math.min(goal, prior + deposit), maySave: false }
 }
 
 async function corporationBatch(ns, fn, calls, once = false) {
@@ -900,6 +920,7 @@ async function expandCities(ns, division, options = {}) {
     const startingCost = Number(industryData?.startingCost)
     const funds = await corpFunds(ns)
     if (!canAffordCorporationPurchase(funds, startingCost, reserve)) {
+      saveRoundTwoCapital(funds, startingCost, reserve, true)
       return false
     }
 
@@ -928,6 +949,7 @@ async function expandCities(ns, division, options = {}) {
       const combinedCost = Number(constants.officeInitialCost) + Number(constants.warehouseInitialCost)
       const funds = await corpFunds(ns)
       if (!canAffordCorporationPurchase(funds, combinedCost, reserve)) {
+        saveRoundTwoCapital(funds, combinedCost, reserve, true)
         return true
       }
 
@@ -965,7 +987,10 @@ async function expandCities(ns, division, options = {}) {
 
     const warehouseCost = Number(constants.warehouseInitialCost)
     const funds = await corpFunds(ns)
-    if (!canAffordCorporationPurchase(funds, warehouseCost, reserve)) return true
+    if (!canAffordCorporationPurchase(funds, warehouseCost, reserve)) {
+      saveRoundTwoCapital(funds, warehouseCost, reserve, true)
+      return true
+    }
 
     await corpRun(ns, 'purchaseWarehouse', division, city)
     if (await corpRun(ns, 'hasWarehouse', division, city) !== true) {
@@ -984,7 +1009,11 @@ async function tryPurchaseUnlock(ns, purchase) {
   }
 
   const cost = Number(await corpRun(ns, 'getUnlockCost', purchase))
-  if (!canAffordCorporationPurchase(await corpFunds(ns), cost)) return false
+  const funds = await corpFunds(ns)
+  if (!canAffordCorporationPurchase(funds, cost)) {
+    saveRoundTwoCapital(funds, cost, 0, true)
+    return false
+  }
 
   await corpRun(ns, 'purchaseUnlock', purchase)
   const unlocked = await corpRun(ns, 'hasUnlock', purchase) === true
@@ -997,6 +1026,10 @@ async function prep(ns) {
   investOffer = await readInvestmentOffer(ns)
   const round = Number(investOffer?.round)
   if (investmentReview && investmentReview.round !== round) investmentReview = null
+  // Re-establish the current goal from live infrastructure/product snapshots each pass.
+  // Keep saved cash across phases while required purchases remain unaffordable.
+  roundTwoAllocation.goal = 0
+  roundTwoAllocation.forSetup = false
   if (!Number.isFinite(round)) {
     return false
   }
@@ -1318,14 +1351,20 @@ async function manageProducts(ns) {
     const reserve = Number(investOffer?.round) === 2 && div === div3
       ? ROUND_TWO_TOBACCO_RESERVE
       : 0
-    if (!Number.isFinite(investment) ||
-      !canAffordCorporationPurchase(await corpFunds(ns), investment * 2, reserve)) continue
+    if (!Number.isFinite(investment)) continue
+    const funds = await corpFunds(ns)
+    if (!canAffordCorporationPurchase(funds, investment * 2, reserve)) {
+      if (round === 2 && div === div3 && division.products.length < division.maxProducts)
+        saveRoundTwoCapital(funds, investment * 2, reserve, false)
+      continue
+    }
 
     // An unfunded replacement must not remove an existing source of revenue.
     if (await discontinueManagedProduct(ns, div, worstProduct))
       division = await corpRun(ns, 'getDivision', div)
     if (division.products.length >= division.maxProducts) continue
     await corpRun(ns, 'makeProduct', div, "Sector-12", 'Prod v' + (version + 1), investment, investment)
+    if (round === 2 && div === div3 && !roundTwoAllocation.forSetup) roundTwoAllocation.saved = 0
   }
 }
 /**
@@ -2124,7 +2163,7 @@ async function purchaseBoostMaterials(ns, divisions = industries) {
     if (![stored, marketPrice, p.target].every(Number.isFinite) || stored < 0 || marketPrice <= 0 || p.target < 0) continue
     const industry = indDataDB[hasDivDB[p.div].industry]
     const input = !!industry.requiredMaterials[p.mat]
-    const inputRate = input ? materials[i].desiredBuyAmount : 0
+    const inputRate = input ? materials[i].buyAmount : 0
     if (!Number.isFinite(inputRate) || inputRate < 0) continue
     const managedAsGoods = input || industry.producedMaterials?.includes(p.mat)
     plans.push({...p, stored, marketPrice, inputRate, managedAsGoods})
@@ -2145,10 +2184,16 @@ async function purchaseBoostMaterials(ns, divisions = industries) {
     } else {
       if (!p.managedAsGoods) sales.push([p.div, p.city, p.mat, 0, 'MP'])
       // Hardware/AI Cores can also be recipe inputs. Preserve their funded input order.
-      buys.push([p.div, p.city, p.mat, p.inputRate + (p.target - p.stored) * fraction / rateDivisor])
+      buys.push([p.div, p.city, p.mat, p.inputRate + (p.target - p.stored) * fraction / rateDivisor, p.inputRate])
     }
   }
-  await corporationBatch(ns, 'buyMaterial', clears)
+  // Retrying a cancellation after a confirmed helper exit cannot buy additional stock.
+  try { await corporationBatch(ns, 'buyMaterial', clears) }
+  catch (error) {
+    if (error?.message !== 'corporation.buyMaterial: corporation.buyMaterial exited before returning a result') throw error
+    await corporationBatch(ns, 'buyMaterial', clears)
+    return false
+  }
   await corporationBatch(ns, 'sellMaterial', sales)
   // Planning may span a state transition, especially with bonus time. Retry next cycle if late.
   if (!buys.length || (await getCorp(ns)).nextState !== 'PURCHASE') return false
