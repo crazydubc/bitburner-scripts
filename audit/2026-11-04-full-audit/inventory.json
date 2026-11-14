@@ -1,0 +1,9 @@
+{
+  "files": 119,
+  "syntaxErrors": [],
+  "unusedImports": [],
+  "privateFunctions": [],
+  "standalone": [
+    "kill-all-scripts.js"
+  ]
+}

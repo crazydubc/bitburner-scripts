@@ -14,6 +14,8 @@ export async function main(ns) {
   });
 
   try {
+    const required = Math.max(5.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`bladeburner.${fn}`));
+    if (ns.ramOverride(required) < required) throw new Error(`Insufficient RAM for bladeburner.${fn}: ${required} GB required`);
     const f = ns.bladeburner?.[fn];
     if (typeof f !== "function") throw new Error(`Invalid bladeburner function: ${String(fn)}`);
 

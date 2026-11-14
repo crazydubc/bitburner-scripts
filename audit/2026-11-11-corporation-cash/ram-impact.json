@@ -1,0 +1,25 @@
+{
+  "baseline": "7e70a867b3ca9e34b23d9c639000af80c3a2e736",
+  "scripts": [
+    {
+      "file": "corporation.js",
+      "before": 5.5,
+      "after": 5.5,
+      "withoutOverride": 33.25,
+      "baselineWithoutOverride": 33.25
+    },
+    {
+      "file": "bin/corpRun.js",
+      "before": 23.6,
+      "after": 23.6,
+      "withoutOverride": 1.6,
+      "baselineWithoutOverride": 1.6
+    }
+  ],
+  "onePhaseHelperDynamicGb": {
+    "base": 1.6,
+    "buyMaterial": 20,
+    "nextUpdate": 2,
+    "total": 23.6
+  }
+}

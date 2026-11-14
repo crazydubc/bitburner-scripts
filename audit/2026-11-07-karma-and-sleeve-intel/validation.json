@@ -1,0 +1,256 @@
+{
+  "engine": "1da7316ffd9d281b45a86c4c54ec532276557892",
+  "node": "v24.22.1",
+  "suites": [
+    {
+      "suite": "api-errors",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.13
+    },
+    {
+      "suite": "augmentation-reset",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.13
+    },
+    {
+      "suite": "batch-correctness",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.19
+    },
+    {
+      "suite": "batch-upgrade-compatibility",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.13
+    },
+    {
+      "suite": "bn1-cycle",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.18
+    },
+    {
+      "suite": "bn1-guide",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.1
+    },
+    {
+      "suite": "bn1-ui",
+      "status": "skipped",
+      "reason": "React/MUI fixture directory not supplied"
+    },
+    {
+      "suite": "corporation-lifecycle",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.07
+    },
+    {
+      "suite": "corporation-port",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.12
+    },
+    {
+      "suite": "corporation-products",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.17
+    },
+    {
+      "suite": "corporation-sale-prices",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.19
+    },
+    {
+      "suite": "darknet-lifecycle",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.08
+    },
+    {
+      "suite": "dispatch-pressure",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.88
+    },
+    {
+      "suite": "go-adaptation",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.18
+    },
+    {
+      "suite": "go-goals",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.11
+    },
+    {
+      "suite": "go-lifecycle",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.09
+    },
+    {
+      "suite": "go-tactics-checks",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 2.25
+    },
+    {
+      "suite": "hash-spending",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.07
+    },
+    {
+      "suite": "infiltration",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.1
+    },
+    {
+      "suite": "passive-factions",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.12
+    },
+    {
+      "suite": "progression-throughput",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.19
+    },
+    {
+      "suite": "progression",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.11
+    },
+    {
+      "suite": "purchase-ram",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.15
+    },
+    {
+      "suite": "remaining-paths",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.12
+    },
+    {
+      "suite": "reset-purchase-reserves",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.08
+    },
+    {
+      "suite": "resource-purchases",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.09
+    },
+    {
+      "suite": "rpc-reserve",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.1
+    },
+    {
+      "suite": "scan-ui",
+      "status": "skipped",
+      "reason": "React/MUI fixture directory not supplied"
+    },
+    {
+      "suite": "share-allocation",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.1
+    },
+    {
+      "suite": "share-handoff",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.18
+    },
+    {
+      "suite": "soa-progression",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.15
+    },
+    {
+      "suite": "speedrun-improvements",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.12
+    },
+    {
+      "suite": "stock-liquidation",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.1
+    },
+    {
+      "suite": "stock-valuation",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.16
+    },
+    {
+      "suite": "stockmaster-recovery",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.27
+    },
+    {
+      "suite": "terminal-ui",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.13
+    },
+    {
+      "suite": "full-audit",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.18
+    },
+    {
+      "suite": "git-pull-prune",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.15
+    },
+    {
+      "suite": "sleeve-restart",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.17
+    },
+    {
+      "suite": "bn7-mechanics",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.13
+    },
+    {
+      "suite": "karma-intel",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.17
+    },
+    {
+      "suite": "shock-model",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 1.33
+    }
+  ]
+}
