@@ -709,6 +709,13 @@ async function updateHud(ns) {
       const status = v2.progress == null ? 'not yet started' : `${v2.progress.toFixed(1)}%${eta}`
       ns.printf("%s Prod v2: %s%s", v2.div, status, v2.note ? ' | '+v2.note : '')
     }
+    const line = cashPlan.tobacco
+    if (line) {
+      ns.printf("Tobacco: $%s/s net over %d market cycles%s", ns.format.number(line.net,3),
+        line.samples.length, line.note ? ' | '+line.note : '')
+      ns.printf("Average units sold/s, all cities: %s",Object.entries(line.soldByProduct)
+        .map(([name,units])=>name+' '+ns.format.number(units,3)).join(' | '))
+    }
     if (invest.round < 5 && fundingStatus) ns.printf("%s", fundingStatus)
     ns.ui.renderTail()
     return // The cycle snapshot already has the division and sales figures.
@@ -1505,6 +1512,191 @@ function secondProductReserve(plan, corp) {
   return Math.max(ROUND_ONE_OPERATING_RESERVE, corp.expenses * 3 * plan.seconds, plan.keptForRep)
 }
 
+// A sale can empty the warehouse in one tick. Compare settled cycles, not the
+// inventory visible on the current screen. Only finance the established Tobacco line.
+function observeTobaccoEarnings(d, corp, liquid, constants, repCost) {
+  if (cashPlan.round !== 5 || d?.industry !== 'Tobacco' || !d.products.every(n => /^Prod v\d+$/.test(n))) return null
+  const goods = cashPlan.goods[d.name], names = [...new Set(goods.map(g => g.product.name))].sort()
+  if (names.length < 2) return null
+  const key = JSON.stringify([d.name, names]), old = cashPlan.tobacco
+  const cities = {}, perProduct = {}
+  for (const {city,product:p} of goods) {
+    const m = cities[city] ??= {made:0, sold:0}
+    m.made += p.productionAmount; m.sold += p.actualSellAmount
+    perProduct[p.name]=(perProduct[p.name] || 0)+p.actualSellAmount
+  }
+  const sample = {cities, perProduct, net:d.lastCycleRevenue-d.lastCycleExpenses,
+    company:(corp.revenue-corp.expenses)*(1-corp.dividendRate)}
+  const samples = [...(old?.key === key ? old.samples : []), sample].slice(-6)
+  const avg = k => samples.reduce((a,s) => a+s[k],0)/samples.length
+  const market = {}, soldByProduct = Object.fromEntries(names.map(n=>[n,
+    samples.reduce((sum,s)=>sum+(s.perProduct[n] || 0),0)/samples.length]))
+  let units = 0, output = 0
+  for (const city of Object.keys(cities)) {
+    const q = k => samples.reduce((a,s) => a+(s.cities[city]?.[k] ?? 0),0)/samples.length
+    units += q('sold'); output += q('made')
+    market[city] = Math.min(q('made'),q('sold')) / names.length
+  }
+  const net = avg('net'), flow = avg('company'), reserve = getCorporationBribeReserve(corp,5)
+  const ready = samples.length >= 3 && Object.values(soldByProduct).filter(n=>n>0).length >= 2 &&
+    net>0 && flow>0 && units>=.9*output && output>0
+  const eligible = repCost > 0 && corp.valuation >= constants.bribeThreshold
+  // With no known bribe, require repayment within the time needed to earn back
+  // today's spare treasury. Never unlock more than a quarter of it per selling lineup.
+  const horizon = (eligible ? repCost+reserve-liquid : liquid-reserve) / flow
+  const floor = old?.key === key && Number.isFinite(old.floor) ?
+    Math.min(liquid,old.floor+Math.max(0,sample.company)*constants.secondsPerMarketCycle/2) :
+    ready ? liquid-Math.max(0,liquid-reserve)/4 : null
+  return {key,samples,market,soldByProduct,units,net,horizon,floor,ready,repCash:eligible ? repCost+reserve : 0,seconds:constants.secondsPerMarketCycle,
+    note:old?.key === key ? old.note : ''}
+}
+
+// Product.finishProduct: Tobacco weights are 70% quality, 10% durability,
+// 20% aesthetics. Input quality caps effective rating, which is used when selling.
+function tobaccoDesign(j, rp, science, design, advertising) {
+  const [o,e,b,m,r] = j, t = o+e+b+m+r
+  if (!(t > 0)) return null
+  const mult = (1.5*o+1.2*e+b+.9*m+1.3*r)/t * (1+design**.1/100) * (1+rp**science/800)
+  const quality = (.10*e+.05*m+.05*r+.02*o+.02*b)*mult
+  const durability = (.05*e+.02*m+.08*r+.05*o+.05*b)*mult
+  const aesthetics = (.08*m+.05*r+.02*o+.10*b)*mult
+  return {rating:.7*quality+.1*durability+.2*aesthetics,
+    inverseMarkup:(1+advertising**.1/100)*(quality+.001)**.65*Math.max((b+m)/t,1/t)/100}
+}
+
+function tobaccoDemand(d, industry, business, product) {
+  const a = d.awareness, p = d.popularity, f = industry.advertisingFactor
+  const advert = ((a+1)**f*(p+1)**f*(a>0?Math.max(.01,(p+.001)/a):.01))**.85
+  const market = Math.max(.1,product.demand*(100-product.competition)/100), b = 1+business
+  return .5*market*(b**.26+b/1e4)*advert*(cashPlan.salesBots ?? 1)
+}
+
+// The five published product stats below are linear combinations of the five
+// creation jobs, all multiplied by the same factor. Solving those equations for
+// (Business + Management) / total cancels that factor, including historical RP.
+function tobaccoSaleTerms(p,d,spec,business) {
+  const {quality:q,performance:t,durability:u,reliability:r,aesthetics:a}=p.stats ?? {}
+  const total = 351*q-108*t+507*u+624*r-234*a
+  const mix = (-31*q+155*t-465*u+155*r+651*a)/total
+  if (!(total>0 && mix>1e-9 && mix<=1+1e-9 && p.advertisingInvestment>=0 && p.productionCost>0 && p.effectiveRating>0)) return null
+  const limit = Math.max(.001,p.effectiveRating)*(1+p.advertisingInvestment**.1/100)*(q+.001)**.65*Math.min(1,mix)/100
+  const capacity = p.effectiveRating**.65*tobaccoDemand(d,spec,business,p)
+  return Number.isFinite(limit) && limit>0 && Number.isFinite(capacity) && capacity>0 ? {limit,capacity,mp:p.productionCost} : null
+}
+
+const officeOutput = ([op,en,,mg]) => (op**.4+en**.3)*(1+mg/(1.2*(op+en+mg)))
+
+async function useSmallDesignTeam(ns,div,o) {
+  const plan=cashPlan?.tobacco, d=hasDivDB[div], spec=d && indDataDB[d.industry]
+  if (!plan?.ready || !spec || d.industry!=='Tobacco' || !spec.makesProducts || !(plan.market['Sector-12']>0)) return false
+  const j=o.employeeProductionByJob, workers=o.employeeJobs
+  if (!(workers.Operations===1 && workers.Engineer===1 && workers.Business+workers.Management===1)) return false
+  const [,nominal] = await getMult(ns,div,'Sector-12')
+  if (!(nominal>0) || plan.market['Sector-12']<.9*nominal) return workers.Management===1
+  const observed = role => {
+    if (workers[role]) return j[role]/workers[role]
+    const units = d.cities.map(c=>hasOfficeDB[div+c]).filter(x=>x?.employeeJobs[role]>0)
+      .map(x=>x.employeeProductionByJob[role]/x.employeeJobs[role]).filter(n=>n>0)
+    return units.length ? Math.min(...units) : Math.min(j.Operations,j.Engineer,j.Business || j.Management)
+  }
+  const bus=observed('Business'), manager=observed('Management'), goods=cashPlan.goods[div].filter(g=>g.city==='Sector-12')
+  if (!(bus>0 && manager>0 && goods.length)) return false
+  const production = m=>officeOutput([j.Operations,j.Engineer,0,m])
+  const q0=plan.market['Sector-12']/production(j.Management)
+  const net = (b,m) => goods.reduce((sum,g)=>{
+    const s=tobaccoSaleTerms(g.product,d,spec,b), q=q0*production(m)
+    if (!s || !(q>0)) return NaN
+    return sum + Math.min(s.capacity,q)*(s.mp+s.limit*Math.sqrt(s.capacity/q))-q*s.mp/5
+  },0)
+  // Moving the only salesperson changes today's receipts. Require the management
+  // mix to earn at least as much in this city before crediting any design benefit.
+  return net(0,manager)>=net(bus,0)
+}
+
+function officeDesignJobs(office, remote) {
+  const roles = ['Operations','Engineer','Business','Management','Research & Development']
+  const jobs = roles.map(k=>office.employeeProductionByJob[k])
+  const unit = roles.map((k,i)=>office.employeeJobs[k] > 0 ? jobs[i]/office.employeeJobs[k] : 0)
+  const measured = unit.filter(x=>x>0)
+  // Steam omits individual attributes. Use the weakest observed per-worker
+  // productivity for an entirely new role instead of assuming perfect hires.
+  const more = cashOfficeJobs(office.numEmployees+3,remote,true).slice(0,5)
+    .map((n,i)=>n*(unit[i] || (measured.length ? Math.min(...measured) : 0)))
+  return {jobs,more}
+}
+
+async function growEstablishedTobacco(ns, d) {
+  const plan = cashPlan.tobacco, homeCity = 'Sector-12', homeOffice = hasOfficeDB[d.name+homeCity]
+  if (!plan?.ready || !homeOffice || !hasWarehouseDB[d.name+homeCity]) return false
+  if (cashPlan.goal || !(plan.horizon>0)) { plan.note=plan.repCash ? 'holding cash for the faction target' : 'holding operating cash'; return false }
+  const spec = indDataDB[d.industry] ??= await corpRun(ns,'getIndustryData',d.industry)
+  const corp = await getCorp(ns), budget = projectBudget(Math.max(...d.products.map(parseVersion)),corp,5)
+  const kept = Math.max(plan.floor,getCorporationBribeReserve(corp,5)) + Math.max(budget,cashPlan.designHold || 0)
+  const available = await corpFunds(ns,0,corp)-kept
+  if (!(available > 0)) { plan.note='holding cash for bills, the next design and faction savings'; return false }
+  const rate = designRate(homeOffice)
+  if (!(rate > 0)) return false
+  const goods = cashPlan.goods[d.name], finished = new Set(goods.map(g=>g.product.name)).size
+  const cycles = Math.ceil(100/rate)
+  const remaining = cashPlan.finishAt>0 ? Math.max(0,(cashPlan.finishAt-Date.now())/1000) :
+    d.maxProducts*cycles*plan.seconds
+  const horizon = Math.min(remaining,plan.horizon)
+  if (!(horizon>2*plan.seconds)) { plan.note='holding cash near the expected end of the run'; return false }
+  // Credit the first *fully* improved design. A project already underway may have
+  // been started elsewhere, and its accumulated job factors are not public.
+  const delay = (2+cycles*(d.products.length>finished ? 2 : 1))*plan.seconds
+  // Each later design can replace an old slot; cap the number earning the
+  // improvement at today's slot count, with one full development period between them.
+  let sellingSeconds = 0
+  for (let i=0;i<d.maxProducts;i++) sellingSeconds += Math.max(0,horizon-delay-i*cycles*plan.seconds)
+  const places = Object.keys(plan.market).filter(c=>hasWarehouseDB[d.name+c] && plan.market[c]>0)
+  const offices = places.map(c=>hasOfficeDB[d.name+c])
+  const market = places.map((c,i)=>{
+    const products = goods.filter(g=>g.city===c).map(g=>g.product)
+    const factor = Math.min(...products.map(g=>tobaccoDemand(d,spec,offices[i].employeeProductionByJob.Business,g)))
+    return {q:plan.market[c],quality:cashPlan.plantQuality?.[c],factor,
+      margin:Math.min(plan.net/plan.units,...products.map(g=>.8*g.productionCost))}
+  })
+  // Sale formula above market price: premium = markupLimit * sqrt(capacity/units).
+  // Price one future product in today's markets; do not credit unpurchased upgrades.
+  function forecast(jobs,rp) {
+    const design = tobaccoDesign(jobs,rp,spec.scienceFactor,budget/2,budget/2)
+    let premium = 0
+    for (const {q,quality,factor} of market) if (design && Number.isFinite(quality) && Number.isFinite(factor)) {
+      const eff = Math.min(design.rating,(1+quality)*Math.sqrt(design.rating))
+      const capacity = eff**.65*factor
+      premium += Math.min(q,capacity)*eff*design.inverseMarkup*Math.sqrt(Math.max(1,capacity/q))
+    }
+    return {rating:design?.rating,premium}
+  }
+  const hq = officeDesignJobs(homeOffice,false), base = forecast(hq.jobs,d.researchPoints)
+  const prices = await corporationBatch(ns,'getOfficeSizeUpgradeCost',places.map(c=>[d.name,c,3]))
+  let best
+  for (const [i,c] of places.entries()) {
+    const o = offices[i], cost = prices[i], remote = c !== homeCity
+    if (o.numEmployees !== o.size || !(cost>0 && cost<=available)) continue
+    const {jobs,more} = remote ? officeDesignJobs(o,true) : hq
+    // Funding satellites is limited to establishing a first researcher without
+    // taking an existing seller off its job. Four non-START phases earn RP.
+    if (remote && (jobs[4]>0 || !(more[4]>0))) continue
+    const gainRP = remote ? .016*Math.sqrt(more[4])*cycles : 0
+    const next = forecast(remote ? hq.jobs : more,d.researchPoints+gainRP)
+    const [ ,maxOutput] = await getMult(ns,d.name,c)
+    const q = market[i].q, keep = (1-corp.dividendRate)/2
+    // If ingredients, not staff, limit this city, do not count increased capacity.
+    const extra = maxOutput>0 && q>=.9*maxOutput ? Math.max(0,officeOutput(more)/officeOutput(jobs)-1)*q*finished : 0
+    const nowGain = keep*extra*market[i].margin, laterGain = keep*Math.max(0,next.premium-base.premium)
+    const value = nowGain*(horizon-2*plan.seconds)+laterGain*sellingSeconds
+    if (!Number.isFinite(value) || !(value>cost)) continue
+    if (!best || value/cost>best.value/best.cost) best={city:c,cost,value,rating:next.rating}
+  }
+  if (!best) { plan.note = 'holding cash: no three-seat upgrade repays before the bribe or run horizon'; return false }
+  const bought = await corpRun(ns,'upgradeOfficeSize','--earning-line',d.name,best.cost,kept+pendingInputPurchases,corp.nextState,
+    JSON.stringify(d.products),best.city,plan.repCash ? plan.repCash+pendingInputPurchases : 0)
+  if (bought === true) plan.note = `${best.city} +3 seats: next full design rating ~${Math.round(base.rating)} → ${Math.round(best.rating)}`
+  return bought === true
+}
+
 async function prepareCashOperations(ns, round) {
   const corp = await getCorp(ns)
   const phase = cashPhases.indexOf(corp.nextState)
@@ -1516,7 +1708,14 @@ async function prepareCashOperations(ns, round) {
   }
   cashPlan.phase = phase
   if (!newCycle && Number.isFinite(cashPlan.floor)) return
-  const report = await corpRun(ns, 'getCorporation', '--cash-plan')
+  const historyDue = round === 5 && Number.isInteger(companyReset?.currentNode) && companyReset.lastNodeReset>0 &&
+    Date.now() >= (cashPlan.nextHistory ?? 0)
+  const report = historyDue ? await corpRun(ns,'getCorporation','--cash-plan',companyReset.currentNode,companyReset.lastNodeReset) :
+    await corpRun(ns,'getCorporation','--cash-plan')
+  if (historyDue) {
+    cashPlan.finishAt = report?.finishAt || 0
+    cashPlan.nextHistory = Date.now()+300000
+  }
   const live = report?.corporation, constants = await getCorporationConstants(ns)
   if (!live || getCorporationPhase(live, report.offer) !== round || !(constants?.secondsPerMarketCycle > 0)) return
   const liquid = await corpFunds(ns, 0, live)
@@ -1550,7 +1749,10 @@ async function prepareCashOperations(ns, round) {
     if (round === 5 && city === 'Sector-12') headquarters.set(d+':'+name, products[i])
     if (products[i].developmentProgress === 100) cashPlan.goods[d].push({city, product:products[i]})
   })
-  cashPlan.factory = await corpRun(ns, 'getUpgradeLevel', 'Smart Factories')
+  if (round === 5 && divisions.some(d=>d.industry==='Tobacco')) {
+    const [factories,bots] = await corporationBatch(ns,'getUpgradeLevel',[['Smart Factories'],['ABC SalesBots']])
+    cashPlan.factory = factories; cashPlan.salesBots = 1+.01*bots
+  } else cashPlan.factory = await corpRun(ns, 'getUpgradeLevel', 'Smart Factories')
   // A restarted manager may inherit production research bought hours ago. Match
   // the engine's material/product rates before ordering the next batch of ingredients.
   const upgrades = divisions.flatMap(d => ['Drones - Assembly','Self-Correcting Assemblers',
@@ -1565,7 +1767,8 @@ async function prepareCashOperations(ns, round) {
   // three winning cycles to divert growth from an established product line.
   const existingLine = tobacco ?? divisions.find(d => d.makesProducts && d.products.length) ?? divisions.find(d => d.makesProducts)
   const candidate = winner?.name ?? (hasDivDB[cashPlan.focus] ? cashPlan.focus : existingLine?.name ?? div3)
-  const established = cashPlan.goods[cashPlan.focus]?.some(g => g.product.actualSellAmount > 0)
+  const established = cashPlan.goods[cashPlan.focus]?.some(g => g.product.actualSellAmount > 0 ||
+    (hasDivDB[cashPlan.focus]?.industry==='Tobacco' && cashPlan.tobacco?.soldByProduct[g.product.name]>0))
   cashPlan.wins = cashPlan.challenger === candidate ? cashPlan.wins + 1 : 1
   cashPlan.challenger = candidate
   if (cashPlan.focus !== candidate && (!established || cashPlan.wins >= 3)) {
@@ -1577,6 +1780,7 @@ async function prepareCashOperations(ns, round) {
   const sold = goods.reduce((sum,g) => sum + g.product.actualSellAmount,0)
   const made = goods.reduce((sum,g) => sum + g.product.productionAmount,0)
   cashPlan.v2 = observeSecondProduct(line, headquarters, live, liquid, constants, cost)
+  cashPlan.tobacco = observeTobaccoEarnings(line,live,liquid,constants,cost)
   cashPlan.boost = !!line && profit(line) > 0 && sold > 0 && made > 0 && sold >= .9 * made
 
   const unlocks = ['Market Research - Demand', 'Market Data - Competition', 'Export']
@@ -1611,6 +1815,8 @@ async function buyCashInputs(ns) {
   }
   const warehouses = await corporationBatch(ns, 'getWarehouse', locations)
   const stock = await corporationBatch(ns, 'getMaterial', inputs.map(p => p.key))
+  if (cashPlan.tobacco) cashPlan.plantQuality = Object.fromEntries(inputs.flatMap((p,i) =>
+    p.key[0] === cashPlan.focus && p.key[2] === 'Plants' ? [[p.key[1],stock[i].quality]] : []))
   const missing = [...new Set(inputs.map(p => p.key[2]).filter(n => !matDataDB[n]))]
   const data = await corporationBatch(ns, 'getMaterialData', missing.map(n => [n]))
   missing.forEach((n,i) => {matDataDB[n]=data[i]})
@@ -1702,6 +1908,7 @@ async function growSecondDesign(ns) {
 // observed margin and throughput; neither paper valuation nor idle capacity earns cash.
 async function growCashDivision(ns) {
   const div = cashPlan.focus, d = hasDivDB[div], goods = cashPlan.goods?.[div] ?? []
+  if (d && await growEstablishedTobacco(ns,d)) return
   const margin = d?.lastCycleRevenue - d?.lastCycleExpenses
   if (!(margin > 0) || !goods.some(g => g.product.actualSellAmount > 0)) return
   if (await growSecondDesign(ns)) return
@@ -2087,6 +2294,9 @@ async function staffCashOffice(ns, div, city, hasOutput) {
   // existing cities can manufacture it; keep a quarter of remote staff researching.
   const jobs = ['Operations', 'Engineer', 'Business', 'Management', 'Research & Development', 'Intern']
   const counts = cashOfficeJobs(n, remote, hasOutput)
+  if (n===3 && !remote && hasOutput && await useSmallDesignTeam(ns,div,office)) {
+    counts[2]=0; counts[3]=1
+  }
   if (jobs.every((j, i) => office.employeeJobs[j] === counts[i])) return
   const ok = await corporationBatch(ns, 'setJobAssignment', [
     ...jobs.map(j => [div, city, j, 0]), ...jobs.flatMap((j, i) => counts[i] ? [[div, city, j, counts[i]]] : []),
@@ -3190,6 +3400,7 @@ async function warehouseUpgrade(ns) {
 /** @param {NS} ns */
 async function getSellPrice(ns, div, city, prod) {
   const ta2 = ta2DB[div + city + prod]
+  if (Number.isFinite(ta2?.productQuote) && ta2.productQuote>0) return ta2.productQuote
   if (!ta2 || !Number.isFinite(ta2.markupLimit) || ta2.markupLimit === 0) return 0
   const product = await corpRun(ns, 'getProduct', div, city, prod)
   if (!product || !Number.isFinite(product.productionCost)) return 0
@@ -3253,6 +3464,7 @@ async function manualSalePrice(ns, div, city, name, item, isProduct, exported = 
 /** @param {NS} ns */
 async function sellCashOutput(ns) {
   const divisions = await corporationBatch(ns, 'getDivision', industries.filter(d => hasDivDB[d]).map(d => [d]))
+  const liveDivisions = new Map(divisions.map(d=>[d.name,d]))
   const ta = await corporationBatch(ns, 'hasResearched', divisions.map(d => [d.name, 'Market-TA.II']))
   const manual = researchedDB["Market Research - Demand"] && researchedDB["Market Data - Competition"]
   const prod = [], mats = [], taProd = [], taMat = []
@@ -3273,7 +3485,22 @@ async function sellCashOutput(ns) {
       if (ta && isProduct && !taProd.some(([d,n]) => d === key[0] && n === key[2])) taProd.push([key[0],key[2],true])
       if (ta && !isProduct) taMat.push([...key,true])
       // Use the live inventory after EXPORT. MAX sells what's actually left in this city.
-      const price = ta ? '0' : manual ? await manualSalePrice(ns, ...key, item, isProduct) : 'MP'
+      let price
+      if (ta) price='0'
+      else if (!manual) price='MP'
+      else {
+        const d=liveDivisions.get(key[0]), office=hasOfficeDB[key[0]+key[1]], spec=d && indDataDB[d.industry]
+        const terms=isProduct && cashPlan?.tobacco && d?.industry==='Tobacco' && spec && office?.employeeProductionByJob &&
+          tobaccoSaleTerms(item,d,spec,office.employeeProductionByJob.Business)
+        // This is the game's Market-TA.II price for MAX, before that research is
+        // available. API productionCost is already the UI market price (5x inputs).
+        const premium=terms && terms.limit*Math.sqrt(terms.capacity*cashPlan.tobacco.seconds/item.stored)
+        const quote=terms && terms.mp+premium
+        if (Number.isFinite(quote) && quote>0) {
+          price='MP+'+premium
+          ta2DB[key.join('')]={productQuote:quote,markupLimit:terms.limit}
+        } else price=await manualSalePrice(ns,...key,item,isProduct)
+      }
       sales.push([...key,'MAX',price])
     }
     await corporationBatch(ns, isProduct ? 'setProductMarketTA2' : 'setMaterialMarketTA2', isProduct ? taProd : taMat)

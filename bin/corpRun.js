@@ -9,6 +9,17 @@ export function prepareCorporationResultForPort(fn, result) {
   return division;
 }
 
+function observedNodeFinish(runs, node, start) {
+  if (!Array.isArray(runs)) return 0;
+  const timing = r => Array.isArray(r?.milestones) ? r.milestones.find(m=>m?.kind==='bn-finish-ready')?.sinceNodeMs : null;
+  const elapsed = timing(runs.find(r=>r?.runKey===node+':'+start));
+  if (Number.isFinite(elapsed) && elapsed>0) return start+elapsed;
+  const peers = runs.filter(r=>r?.node===node && r.endTime && r.startTime<start)
+    .map(timing).filter(ms=>Number.isFinite(ms) && ms>0).slice(-3).sort((a,b)=>a-b);
+  if (!peers.length) return 0;
+  return start+(peers[Math.floor((peers.length-1)/2)]+peers[Math.floor(peers.length/2)])/2;
+}
+
 /** @param {NS} ns */
 export async function main(ns) {
   ns.ramOverride(23.6);
@@ -49,14 +60,18 @@ export async function main(ns) {
       const read = path => { try { return JSON.parse(ns.read(path) || 'null'); } catch { return null; } };
       const data = read('/Temp/affordable-augs.txt');
       const corporation = ns.corporation.getCorporation();
+      let finishAt;
+      if (corporation.public && Number.isInteger(args[1]) && Number.isFinite(args[2]) && args[2]>0)
+        finishAt = observedNodeFinish(read('/data/bn-run-log.json')?.runs,args[1],args[2]);
       response = {offer: corporation.public ? {round:5, funds:0, shares:0} : ns.corporation.getInvestmentOffer(), corporation,
         snapshot: data && {current_node: data.current_node, last_aug_reset: data.last_aug_reset,
           generated_at: data.generated_at, stock_value_known: data.stock_value_known, reset_planning: data.reset_planning},
-        route: read('/Temp/infiltration-target.txt')};
+        route: read('/Temp/infiltration-target.txt'), finishAt};
       return;
     }
-    if (fn === 'upgradeOfficeSize' && args[0] === '--second-design') {
-      const [, division, quotedCost, kept, phase, latestProgress] = args, city = 'Sector-12';
+    if (fn === 'upgradeOfficeSize' && (args[0] === '--second-design' || args[0] === '--earning-line')) {
+      const [policy, division, quotedCost, kept, phase, expected] = args;
+      const city = policy === '--earning-line' ? args[6] : 'Sector-12';
       response = false;
       if (!(Number.isFinite(quotedCost) && quotedCost > 0 && Number.isFinite(kept) && kept >= 0)) return;
       const methods = ['getCorporation','getDivision','getProduct','getOfficeSizeUpgradeCost',fn];
@@ -66,12 +81,18 @@ export async function main(ns) {
       if (!corp.public || corp.nextState !== phase || !corp.divisions.includes(division)) return;
       const all = corp.divisions.map(d => ns.corporation.getDivision(d));
       const line = all.find(d => d.name === division);
-      if (!line?.cities.includes(city) || line.products.length !== 2 || !line.products.includes('Prod v1') ||
-        !line.products.includes('Prod v2')) return;
-      const progress = ns.corporation.getProduct(division,city,'Prod v2').developmentProgress;
+      if (!line?.cities.includes(city)) return;
+      if (policy === '--second-design') {
+        if (line.products.length !== 2 || !line.products.includes('Prod v1') || !line.products.includes('Prod v2')) return;
+        const progress = ns.corporation.getProduct(division,city,'Prod v2').developmentProgress;
+        if (!(progress >= 0 && progress < 100 && progress <= expected)) return;
+      } else if (line.industry !== 'Tobacco' || JSON.stringify(line.products) !== expected ||
+        line.products.filter(n => ns.corporation.getProduct(division,city,n).developmentProgress === 100).length < 2) return;
       const cost = ns.corporation.getOfficeSizeUpgradeCost(division,city,3);
       const bills = all.reduce((n,d) => d.thisCycleExpenses >= 0 ? n + d.thisCycleExpenses : NaN,0);
-      if (!(progress >= 0 && progress < 100 && progress <= latestProgress && cost > 0 && cost === quotedCost && corp.funds - bills - kept >= cost)) return;
+      if (!(cost > 0 && cost === quotedCost && corp.funds - bills - kept >= cost)) return;
+      if (policy==='--earning-line' && (!(Number.isFinite(args[7]) && args[7]>=0) ||
+        (corp.funds-bills>=args[7] && corp.funds-bills-cost<args[7]))) return;
       ns.corporation[fn](division,city,3);
       response = true;
       return;

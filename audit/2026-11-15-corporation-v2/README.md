@@ -1,5 +1,7 @@
 # Getting a public corporation's second product to market
 
+Once v2 is selling, see [when to reinvest in the next Tobacco product](../2026-11-15-corporation-capital/README.md).
+
 The objective is **time until the company can actually afford faction reputation**. In round five, the old manager valued three new Sector-12 seats only by their share of today's product sales. That missed what the same staff do for tomorrow's sales: only the office designing v2 advances it, but once it finishes, every equipped city can sell it alongside v1.
 
 The public corporation now uses its existing office and sales snapshots to make two decisions:

@@ -57,12 +57,12 @@ export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,u
   const ownedResearch=new Set();
   const info=k=>{const d=lines[k].d;return {name:k,industry:k,cities,products:[...d.products.keys()],makesProducts:true,maxProducts:3,
     lastCycleRevenue:d.lastCycleRevenue,lastCycleExpenses:d.lastCycleExpenses,thisCycleExpenses:d.thisCycleExpenses,productionMult:d.productionMult,
-    awareness:d.awareness,popularity:d.popularity};};
-  const costs={advert:1e25,factory:1e25,seats:1e25};
+    awareness:d.awareness,popularity:d.popularity,researchPoints:d.researchPoints};};
+  const costs={advert:1e25,factory:1e25,seats:1e25}, levels={}, history={finishAt:0};
   let restrict=Infinity, beforeProject;
   const seatCost=(o,n)=>typeof costs.seats==='function'?costs.seats(o.size,n):costs.seats;
   function rpc(_,fn,...a) {
-    if(a[0]==='--cash-project'||a[0]==='--second-design'){
+    if(a[0]==='--cash-project'||a[0]==='--second-design'||a[0]==='--earning-line'){
       beforeProject?.();beforeProject=undefined;
       let cb,reply;
       return homeHelper({args:[fn,...a],pid:1,atExit:f=>cb=f,getPortHandle:()=>({write:v=>reply=v}),
@@ -74,7 +74,7 @@ export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,u
     const [k,c,n,v]=a, l=lines[k], o=l?.offices[c], w=l?.warehouses[c], p=l?.products.get(n);
     switch(fn) {
       case 'getConstants':return constants;
-      case 'getCorporation':return k==='--cash-plan'?{corporation:{...corp},offer:{round:5,funds:0},route,snapshot}:{...corp};
+      case 'getCorporation':return k==='--cash-plan'?{corporation:{...corp},offer:{round:5,funds:0},route,snapshot,...history}:{...corp};
       case 'getDivision':return info(k);case 'hasWarehouse':return !!w;
       case 'getOffice':return {...o,employeeJobs:{...o.employeeJobs},employeeProductionByJob:{...o.employeeProductionByJob}};
       case 'setJobAssignment':return o.autoAssignJob(n,v);
@@ -84,7 +84,7 @@ export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,u
         l.products.set(n,{...structuredClone(p0),name:n,developmentProgress:0,finished:false});return;
       }
       case 'getProduct':return {...p,...p.cityData[c]};
-      case 'getUpgradeLevel':return 0;case 'getOfficeSizeUpgradeCost':return seatCost(o,n);
+      case 'getUpgradeLevel':return levels[k]??0;case 'getOfficeSizeUpgradeCost':return seatCost(o,n);
       case 'upgradeOfficeSize':{const price=seatCost(o,n);assert(corp.funds>=price);corp.funds-=price;o.size+=n;return;}
       case 'hireEmployee':return o.hireRandomEmployee(CorpEmployeeJob.Unassigned);
       case 'getIndustryData':return l.specs;case 'getUpgradeLevelCost':return costs.factory;
@@ -117,7 +117,7 @@ export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,u
   function apply() {for(const {d,offices} of Object.values(lines))for(const o of Object.values(offices)){
     Object.assign(o.employeeJobs,o.employeeNextJobs);o.calculateEmployeeProductivity(corp,d);
   }}
-  return {corp,lines,api,costs,ns,route,snapshot,calls,prepare,cycle,apply,ownedResearch,reset,limitRam:n=>restrict=n,intervene:fn=>beforeProject=fn};
+  return {corp,lines,api,costs,levels,history,ns,route,snapshot,calls,prepare,cycle,apply,ownedResearch,reset,limitRam:n=>restrict=n,intervene:fn=>beforeProject=fn};
 }
 
 async function produce(code,ta) {
