@@ -55,6 +55,27 @@ export async function main(ns) {
         route: read('/Temp/infiltration-target.txt')};
       return;
     }
+    if (fn === 'upgradeOfficeSize' && args[0] === '--second-design') {
+      const [, division, quotedCost, kept, phase, latestProgress] = args, city = 'Sector-12';
+      response = false;
+      if (!(Number.isFinite(quotedCost) && quotedCost > 0 && Number.isFinite(kept) && kept >= 0)) return;
+      const methods = ['getCorporation','getDivision','getProduct','getOfficeSizeUpgradeCost',fn];
+      const ram = methods.reduce((n,m) => n + ns.getFunctionRamCost(`corporation.${m}`), ns.getFunctionRamCost('baseCost'));
+      if (ns.ramOverride(ram) < ram) return;
+      const corp = ns.corporation.getCorporation();
+      if (!corp.public || corp.nextState !== phase || !corp.divisions.includes(division)) return;
+      const all = corp.divisions.map(d => ns.corporation.getDivision(d));
+      const line = all.find(d => d.name === division);
+      if (!line?.cities.includes(city) || line.products.length !== 2 || !line.products.includes('Prod v1') ||
+        !line.products.includes('Prod v2')) return;
+      const progress = ns.corporation.getProduct(division,city,'Prod v2').developmentProgress;
+      const cost = ns.corporation.getOfficeSizeUpgradeCost(division,city,3);
+      const bills = all.reduce((n,d) => d.thisCycleExpenses >= 0 ? n + d.thisCycleExpenses : NaN,0);
+      if (!(progress >= 0 && progress < 100 && progress <= latestProgress && cost > 0 && cost === quotedCost && corp.funds - bills - kept >= cost)) return;
+      ns.corporation[fn](division,city,3);
+      response = true;
+      return;
+    }
     if (fn === 'makeProduct' && args[0] === '--cash-project') {
       const [, division, city, name, investment, retire, kept, phase] = args;
       response = false;

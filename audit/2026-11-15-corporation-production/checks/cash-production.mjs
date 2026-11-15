@@ -2,6 +2,8 @@
 // Run with Node 24 and the Bitburner engine checkout as the first argument.
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import {Division, Warehouse, Material, MaterialInfo, materialNames, industry, sale, bare, build, source, CorpEmployeeJob}
   from '../../2026-11-10-tobacco-warehouse/checks/tobacco-warehouse.mjs';
@@ -19,7 +21,7 @@ const officeType = build(source('Corporation/OfficeSpace.ts'), {CorpEmployeeJob,
 const constants={secondsPerMarketCycle:10,officeInitialCost:4e9,warehouseInitialCost:5e9,
   bribeThreshold:100e12,bribeAmountPerReputation:1e9};
 const reset={currentNode:3,lastAugReset:Date.now()-360000,lastNodeReset:Date.now()-86400000};
-function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,unpaid=0,ta=true}={}) {
+export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,unpaid=0,ta=true}={}) {
   const kinds=restaurantOnly ? ['Restaurant'] : restaurant ? ['Tobacco','Restaurant'] : ['Tobacco'];
   const corp={funds,expenses:100e6,revenue:900e6,public:true,valuation:120e12,dividendRate:.01,
     divisions:kinds, nextState:'PURCHASE',state:{nextName:'PURCHASE'},getProductionMultiplier:one,getSalesMult:one,
@@ -58,8 +60,9 @@ function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,unpaid=0
     awareness:d.awareness,popularity:d.popularity};};
   const costs={advert:1e25,factory:1e25,seats:1e25};
   let restrict=Infinity, beforeProject;
+  const seatCost=(o,n)=>typeof costs.seats==='function'?costs.seats(o.size,n):costs.seats;
   function rpc(_,fn,...a) {
-    if(a[0]==='--cash-project'){
+    if(a[0]==='--cash-project'||a[0]==='--second-design'){
       beforeProject?.();beforeProject=undefined;
       let cb,reply;
       return homeHelper({args:[fn,...a],pid:1,atExit:f=>cb=f,getPortHandle:()=>({write:v=>reply=v}),
@@ -81,7 +84,9 @@ function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,unpaid=0
         l.products.set(n,{...structuredClone(p0),name:n,developmentProgress:0,finished:false});return;
       }
       case 'getProduct':return {...p,...p.cityData[c]};
-      case 'getUpgradeLevel':return 0;case 'getOfficeSizeUpgradeCost':return costs.seats;
+      case 'getUpgradeLevel':return 0;case 'getOfficeSizeUpgradeCost':return seatCost(o,n);
+      case 'upgradeOfficeSize':{const price=seatCost(o,n);assert(corp.funds>=price);corp.funds-=price;o.size+=n;return;}
+      case 'hireEmployee':return o.hireRandomEmployee(CorpEmployeeJob.Unassigned);
       case 'getIndustryData':return l.specs;case 'getUpgradeLevelCost':return costs.factory;
       case 'getHireAdVertCost':return costs.advert;
       case 'hireAdVert':corp.funds-=costs.advert;return;
@@ -112,7 +117,7 @@ function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,unpaid=0
   function apply() {for(const {d,offices} of Object.values(lines))for(const o of Object.values(offices)){
     Object.assign(o.employeeJobs,o.employeeNextJobs);o.calculateEmployeeProductivity(corp,d);
   }}
-  return {corp,lines,api,costs,ns,route,snapshot,calls,prepare,cycle,apply,ownedResearch,limitRam:n=>restrict=n,intervene:fn=>beforeProject=fn};
+  return {corp,lines,api,costs,ns,route,snapshot,calls,prepare,cycle,apply,ownedResearch,reset,limitRam:n=>restrict=n,intervene:fn=>beforeProject=fn};
 }
 
 async function produce(code,ta) {
@@ -146,6 +151,7 @@ async function produce(code,ta) {
   }
   return {sellingCities:selling.length,researchEmployees:research,netPerSecond:measuredNet/samples};
 }
+if(import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
 const comparisons={};
 for(const ta of [false,true]){
   const former=await produce(before,ta), production=await produce(after,ta);
@@ -219,3 +225,4 @@ const paid=poor.calls.filter(([m])=>m==='buyMaterial').reduce((s,[,div,city,name
 assert(Math.abs(paid-1000)<1e-6);assert(poor.calls.some(([m,d,,name,rate])=>m==='buyMaterial'&&d==='Restaurant'&&name==='Water'&&rate>0));
 console.log(JSON.stringify({comparisons,
   modeledAdditionalCashProtectedOver10Minutes:api.plan().floor-base}));
+}

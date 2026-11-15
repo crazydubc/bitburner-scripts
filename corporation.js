@@ -703,6 +703,12 @@ async function updateHud(ns) {
       ns.printf("%s: $%s/s%s", div, ns.format.number(d.lastCycleRevenue - d.lastCycleExpenses, 3),
         d.makesProducts ? ` | product sales in ${sellingCities.size}/${d.cities.length} cities` : '')
     }
+    const v2 = cashPlan.v2
+    if (v2) {
+      const eta = v2.confirmed && Number.isFinite(v2.remaining) ? ` (~${Math.ceil(v2.remaining / 60)} min at normal speed)` : ''
+      const status = v2.progress == null ? 'not yet started' : `${v2.progress.toFixed(1)}%${eta}`
+      ns.printf("%s Prod v2: %s%s", v2.div, status, v2.note ? ' | '+v2.note : '')
+    }
     if (invest.round < 5 && fundingStatus) ns.printf("%s", fundingStatus)
     ns.ui.renderTail()
     return // The cycle snapshot already has the division and sales figures.
@@ -1443,6 +1449,62 @@ function projectBudget(version, corp, round) {
   return Math.min(normal, Math.max(2e9, (corp.revenue - corp.expenses) * 60))
 }
 
+// Product.createProduct advances this many percentage points per market cycle. The
+// game uses the design office alone. Predict new hires with measured per-worker output.
+function designRate(office, extra = 0) {
+  if (!office?.employeeProductionByJob) return 0
+  const counts = extra ? cashOfficeJobs(office.numEmployees + extra, false, true) : null
+  const perRole = (job, countIndex) => {
+    const output = office.employeeProductionByJob[job]
+    if (!counts) return output
+    const workers = office.employeeJobs[job]
+    return workers > 0 ? output / workers * counts[countIndex] : 0
+  }
+  const ops = perRole('Operations',0), eng = perRole('Engineer',1), mgmt = perRole('Management',3)
+  const total = ops + eng + mgmt
+  return total > 0 ? .01 * (eng ** .34 + ops ** .2) * (1 + mgmt / (1.2 * total)) : 0
+}
+
+// For the second product, existing rep cash and running costs have first claim.
+// Cash retained for a distant bribe may instead pay for demonstrably earlier sales.
+function observeSecondProduct(d, headquarters, corp, liquid, constants, repCost) {
+  if (cashPlan.round !== 5 || !d?.makesProducts || d.maxProducts < 2 ||
+      !d.products.includes('Prod v1') || d.products.some(n => n !== 'Prod v1' && n !== 'Prod v2')) return null
+  if (headquarters.get(d.name+':Prod v1')?.developmentProgress !== 100) return null
+  const pending = d.products.includes('Prod v2'), p = headquarters.get(d.name+':Prod v2')
+  if (pending && !(p?.developmentProgress >= 0 && p.developmentProgress < 100)) return null
+  const progress = pending ? p.developmentProgress : null
+  const old = cashPlan.v2?.div === d.name ? cashPlan.v2 : null
+  const seconds = constants.secondsPerMarketCycle, office = hasOfficeDB[d.name+'Sector-12'], rate = designRate(office)
+  // The 3.0.1 API omits creationCity. After a restart, identify a managed project
+  // only if two observed advances match HQ and distinguish it from the other offices.
+  const delta = pending && old?.progress != null ? progress - old.progress : 0
+  const matches = r => r > 0 && Math.abs(delta - r) <= .02 * r
+  const match = matches(old?.rate) && !d.cities.some(c => c !== 'Sector-12' && matches(designRate(hasOfficeDB[d.name+c])))
+  const votes = match ? (old?.votes ?? 0) + 1 : delta === 0 ? old?.votes ?? 0 : 0
+  const confirmed = pending && (old?.startedHere || (old?.confirmed && progress >= old.progress) || votes >= 2)
+  const goods = cashPlan.goods[d.name].filter(g => g.product.name === 'Prod v1')
+  const sold = goods.reduce((sum,g) => sum + g.product.actualSellAmount,0)
+  const made = goods.reduce((sum,g) => sum + g.product.productionAmount,0)
+  const retainedRate = 1 - (corp.public ? corp.dividendRate : 0)
+  const profit = made > 0 && sold >= .9 * made ? retainedRate * Math.max(0,
+    Math.min(corp.revenue - corp.expenses, d.lastCycleRevenue - d.lastCycleExpenses)) : 0
+  const income = Math.min(old?.profit ?? 0, profit)
+  const remaining = rate > 0 ? Math.ceil((100 - (progress ?? 0)) / rate) * seconds : Infinity
+  const need = repCost > 0 && corp.valuation >= constants.bribeThreshold
+    ? repCost + getCorporationBribeReserve(corp, 5) : 0
+  const fundsBeforeRelease = liquid + Math.max(0,corp.revenue-corp.expenses) * retainedRate * remaining
+  const bribeFirst = need > 0 && (cashPlan.goal > 0 || liquid >= need || need <= fundsBeforeRelease)
+  const note = pending && !confirmed ? 'checking which office is designing v2' :
+    !income ? 'waiting for two profitable cycles of v1 sales' : old?.progress === progress ? old?.note : ''
+  return {div:d.name, progress, rate, seconds, remaining, votes, confirmed, profit, income,
+    keptForRep:bribeFirst ? need : 0, note}
+}
+
+function secondProductReserve(plan, corp) {
+  return Math.max(ROUND_ONE_OPERATING_RESERVE, corp.expenses * 3 * plan.seconds, plan.keptForRep)
+}
+
 async function prepareCashOperations(ns, round) {
   const corp = await getCorp(ns)
   const phase = cashPhases.indexOf(corp.nextState)
@@ -1483,7 +1545,9 @@ async function prepareCashOperations(ns, round) {
     d.cities.flatMap(c => d.products.map(p => [d.name, c, p])))
   const products = await corporationBatch(ns, 'getProduct', rows)
   cashPlan.goods = Object.fromEntries(divisions.map(d => [d.name, []]))
-  rows.forEach(([d,city], i) => {
+  const headquarters = new Map()
+  rows.forEach(([d,city,name], i) => {
+    if (round === 5 && city === 'Sector-12') headquarters.set(d+':'+name, products[i])
     if (products[i].developmentProgress === 100) cashPlan.goods[d].push({city, product:products[i]})
   })
   cashPlan.factory = await corpRun(ns, 'getUpgradeLevel', 'Smart Factories')
@@ -1512,6 +1576,7 @@ async function prepareCashOperations(ns, round) {
   const line = hasDivDB[cashPlan.focus], goods = cashPlan.goods[cashPlan.focus] ?? []
   const sold = goods.reduce((sum,g) => sum + g.product.actualSellAmount,0)
   const made = goods.reduce((sum,g) => sum + g.product.productionAmount,0)
+  cashPlan.v2 = observeSecondProduct(line, headquarters, live, liquid, constants, cost)
   cashPlan.boost = !!line && profit(line) > 0 && sold > 0 && made > 0 && sold >= .9 * made
 
   const unlocks = ['Market Research - Demand', 'Market Data - Competition', 'Export']
@@ -1599,12 +1664,47 @@ async function connectCashSuppliers(ns) {
   cashPlan.exports = footprint
 }
 
+// A sooner second seller benefits every producing city. Give it credit for only half
+// of v1's demonstrated net income, for at most ten minutes of sales brought forward.
+async function growSecondDesign(ns) {
+  const p = cashPlan.v2
+  if (!p?.confirmed || p.progress == null || !(p.income > 0 && p.rate > 0)) return false
+  const city = 'Sector-12', office = hasOfficeDB[p.div+city]
+  if (!office || office.numEmployees !== office.size) return false // Fill paid seats first.
+  const after = designRate(office, 3)
+  if (!(after > p.rate)) return false
+  // Allow two cycles to hire and apply assignments; finishing before then makes seats worthless.
+  const left = 100 - p.progress - 2 * p.rate
+  if (left <= 0) return false
+  const saved = (Math.ceil(left / p.rate) - Math.ceil(left / after)) * p.seconds
+  const credit = Math.min(cashHorizon, saved) * p.income / 2
+  const cost = await corpRun(ns,'getOfficeSizeUpgradeCost',p.div,city,3)
+  if (!(Number.isFinite(cost) && cost > 0 && cost <= credit)) {
+    p.note = 'current team is cheaper than the estimated time saved'
+    return false
+  }
+  const quote = await getCorp(ns)
+  const kept = secondProductReserve(p,quote)
+  if (await corpFunds(ns,0,quote) - kept < cost) {
+    p.note = p.keptForRep ? 'holding cash for the earlier faction bribe' : 'waiting for cash above operating costs'
+    return false
+  }
+  const bought = await corpRun(ns,'upgradeOfficeSize','--second-design',p.div,cost,kept+pendingInputPurchases,quote.nextState,p.progress+2*p.rate)
+  if (bought === true) {
+    p.note = `+3 design seats: estimated ${Math.round(saved/60)} min earlier at current staffing`
+    return true
+  }
+  p.note = 'retrying live cash, phase and home RAM checks'
+  return false
+}
+
 // An upgrade competes with keeping its price for a faction. Use the selling division's
 // observed margin and throughput; neither paper valuation nor idle capacity earns cash.
 async function growCashDivision(ns) {
   const div = cashPlan.focus, d = hasDivDB[div], goods = cashPlan.goods?.[div] ?? []
   const margin = d?.lastCycleRevenue - d?.lastCycleExpenses
   if (!(margin > 0) || !goods.some(g => g.product.actualSellAmount > 0)) return
+  if (await growSecondDesign(ns)) return
   const available = await corpFunds(ns)
   if (!(available > 0)) return
   const sales = goods.reduce((n,g) => n + g.product.actualSellAmount, 0)
@@ -1886,11 +1986,20 @@ async function manageProducts(ns) {
       ? ROUND_TWO_TOBACCO_RESERVE
       : 0
     if (!Number.isFinite(investment)) continue
-    const funds = await corpFunds(ns, ROUND_ONE_OPERATING_RESERVE, quote, true)
+    const second = round === 5 && version === 1 && !worstProduct && cashPlan?.v2?.div === div &&
+      cashPlan.v2.progress === null && cashPlan.v2.income > 0 ? cashPlan.v2 : null
+    // Only draw on retained earnings for a project that v1 can repay. Keep the
+    // normal growth allowance available even to a slow starter.
+    const useRetained = second && investment * 2 <= second.income * cashHorizon / 2
+    const secondReserve = second ? Math.max(secondProductReserve(second,quote),
+      useRetained ? 0 : cashGrowthReserve(quote, ROUND_ONE_OPERATING_RESERVE)) : 0
+    const funds = second ? await corpFunds(ns, 0, quote) - secondReserve
+      : await corpFunds(ns, ROUND_ONE_OPERATING_RESERVE, quote, true)
     if (!canAffordCorporationPurchase(funds, investment * 2, reserve)) {
       if (round === 2 && div === div3 && division.products.length < division.maxProducts)
         saveRoundTwoCapital(funds, investment * 2, reserve, false)
       if (cashMode && cashPlan && division.products.length < division.maxProducts) cashPlan.designHold = investment * 2
+      if (second) second.note = second.keptForRep ? 'saving for the earlier faction bribe' : 'waiting for design funds above operating costs'
       continue
     }
 
@@ -1898,12 +2007,19 @@ async function manageProducts(ns) {
       // Bribes can move cash between helper launches. Fund the new design and retire
       // the old seller in one game turn, or leave the whole lineup alone.
       const nextName = 'Prod v' + (version + 1)
-      const kept = cashGrowthReserve(quote, ROUND_ONE_OPERATING_RESERVE) + pendingInputPurchases
+      const kept = (second ? secondReserve : cashGrowthReserve(quote, ROUND_ONE_OPERATING_RESERVE)) + pendingInputPurchases
       const started = await corpRun(ns, 'makeProduct', '--cash-project', div, 'Sector-12', nextName,
         investment, worstProduct ?? '', kept, quote.nextState)
       if (started === true) {
         if (worstProduct) clearProductPricingCache(div, worstProduct)
+        if (round === 5 && nextName === 'Prod v2' && cashPlan.v2) {
+          cashPlan.v2.startedHere = true
+          cashPlan.v2.note = 'design started in Sector-12'
+        }
         cashPlan.designHold = 0
+      } else if (second) {
+        cashPlan.designHold = investment * 2
+        second.note = 'retrying live cash, phase and home RAM checks'
       }
       continue
     }
@@ -1949,6 +2065,15 @@ async function setJob(ns, div, city, job, total) {
   (await corpRun(ns, 'setJobAssignment', div, city, job, total));
 }
 
+function cashOfficeJobs(n, remote, hasOutput) {
+  const research = remote ? (hasOutput ? Math.floor(n / 4) : n) : 0
+  const workers = n - research
+  const eng = workers > 0 ? Math.max(1, Math.floor(workers / 4)) : 0
+  const ops = workers > 1 ? Math.max(1, Math.floor(workers / 4)) : 0
+  const sales = workers > 2 ? Math.max(1, hasOutput ? Math.floor(workers / 6) : 1) : 0
+  return [ops, eng, sales, workers - ops - eng - sales, research, 0]
+}
+
 async function staffCashOffice(ns, div, city, hasOutput) {
   let office = hasOfficeDB[div + city]
   if (!office?.employeeJobs) office = await corpRun(ns, 'getOffice', div, city)
@@ -1960,12 +2085,8 @@ async function staffCashOffice(ns, div, city, hasOutput) {
   const n = office.numEmployees, remote = city !== 'Sector-12'
   // Before v1 finishes the satellite labs help the design. Once it can sell, all
   // existing cities can manufacture it; keep a quarter of remote staff researching.
-  const research = remote ? (hasOutput ? Math.floor(n / 4) : n) : 0
-  const workers = n - research, jobs = ['Operations', 'Engineer', 'Business', 'Management', 'Research & Development', 'Intern']
-  const eng = workers > 0 ? Math.max(1, Math.floor(workers / 4)) : 0
-  const ops = workers > 1 ? Math.max(1, Math.floor(workers / 4)) : 0
-  const sales = workers > 2 ? Math.max(1, hasOutput ? Math.floor(workers / 6) : 1) : 0
-  const counts = [ops, eng, sales, workers - ops - eng - sales, research, 0]
+  const jobs = ['Operations', 'Engineer', 'Business', 'Management', 'Research & Development', 'Intern']
+  const counts = cashOfficeJobs(n, remote, hasOutput)
   if (jobs.every((j, i) => office.employeeJobs[j] === counts[i])) return
   const ok = await corporationBatch(ns, 'setJobAssignment', [
     ...jobs.map(j => [div, city, j, 0]), ...jobs.flatMap((j, i) => counts[i] ? [[div, city, j, counts[i]]] : []),
