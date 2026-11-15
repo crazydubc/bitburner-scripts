@@ -88,7 +88,7 @@ function fixture(options = {}, manager = current) {
   function quote(value) {model.valuation = value / (constants.fundingRoundShares[model.fundingRound] * constants.fundingRoundMultiplier[model.fundingRound]);}
   quote(settings.quote);
   async function tick(value) {if (value !== undefined) quote(value); return api.tick(ns, model.getInvestmentOffer());}
-  async function run(n, offers) {let r; for (let i=0; i<n; i++) r=await tick(offers?.(i)); return r;}
+  async function run(n, offers) {const start=model.getInvestmentOffer().round; let r=start; for (let i=0; i<n && r===start; i++) r=await tick(offers?.(i)); return r;}
   return {api, model, snapshot, route, calls, events, run, tick, quote, getInfo, settings, accepts: () => accepts,
     race: f => {race=f;}, restrictRam: () => {lowRam=true;},
     stage: async () => {await api.init(ns); return api.stage(ns,round,getInfo());}};
@@ -115,6 +115,13 @@ for (const [round, options] of [[1,{names:['Agriculture'],locked:['Export','Mark
   if(round===1) assert(Math.abs(p.minimum - (70e9+20e9+10*9e9+30e9+2e9+15e9+seatCost(3,7)))<1);
   if(round===2) assert(Math.abs(p.full - (9e9+70e9+10*9e9+5e9+seatCost(10,96)+5*seatCost(3,103)))<1);
   assert.equal(await f.run(13),round+1);
+}
+// A real, already-selling late Tobacco office does not need capital for speculatively
+// building a support division, six enormous offices or a Restaurant.
+for (const round of [3,4]) {
+  const lean=fixture({round,names:['Tobacco'],cities:{Tobacco:['Sector-12']},funds:3e9,revenue:100e6,expenses:10e6,quote:20e9});
+  const stage=await lean.stage();assert.equal(stage.minimum,9e9);
+  assert.equal(await lean.tick(),round+1);assert(!lean.calls.some(([fn,div])=>fn==='getIndustryData' && div!=='Tobacco'));
 }
 // A modest round-one offer must still cover the actual Tobacco project, HQ seats,
 // footprint, missing market data, incurred expenses and runway before it can qualify.
@@ -208,8 +215,8 @@ for (const round of [3,4]) {
   let r=round; for(let i=0;i<26 && r===round;i++) r=await f.tick();
   assert.equal(r,round+1); assert.equal(f.accepts(),1,'Sales outside HQ also resume offer reviews');
 }
-const lostSale=fixture({round:4,quote:7.56e12});
-await lostSale.run(12); lostSale.settings.sales={}; assert.equal(await lostSale.tick(),4);
+const lostSale=fixture({round:4,quote:1e6});
+assert.equal(await lostSale.tick(),4); lostSale.settings.sales={}; assert.equal(await lostSale.tick(7.56e12),4);
 assert.equal(lostSale.api.review(),null);assert.equal(lostSale.accepts(),0,'Recheck before committing equity');
 // Liquidity emergencies and an actual player milestone still override waiting for sales.
 const noDesign=fixture({round:3,funds:1e9,products:[],sales:{},revenue:1,expenses:1,quote:80e12});

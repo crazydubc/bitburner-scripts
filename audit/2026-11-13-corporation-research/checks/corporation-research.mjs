@@ -182,7 +182,7 @@ function designProgress(h, nCycles, start = 0) {
   for(let i=0;i<nCycles;i++) division.processProducts(1,{state:{nextName:'PRODUCTION'}});
   return p.developmentProgress;
 }
-const publicCase={round:5,funds:1.664e9,size:3,employees:3,division:'Restaurant'};
+const publicCase={round:5,funds:1.664e9,size:3,employees:3,division:'Restaurant',progress:28.18};
 const stalled=fixture(publicBefore,publicCase), recovered=fixture(fixed,publicCase);
 for(const f of [stalled,recovered]) {await f.assign();f.apply();}
 const roles=h=>['Operations','Engineer','Business','Management'].map(key=>h.plan()['Sector-12'][key]);

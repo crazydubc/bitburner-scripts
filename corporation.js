@@ -30,8 +30,13 @@ const INVESTMENT_REVIEW_CYCLES = 12
 let investmentReview = null
 let bn3Reset = null
 let fundingGrowthCycles = 0
+let fundingSettleCycles = 0
 let fundingStatus = ''
 let seedCapitalSamples = []
+let companyReset, cashPlan
+const cashPhases = ['PURCHASE', 'PRODUCTION', 'EXPORT', 'SALE', 'START']
+const cashHorizon = 600 // Compare growth with keeping ten minutes of earnings for a bribe.
+const usesCashPolicy = round => round === 5 || (!!bn3Reset && (round === 3 || round === 4))
 const ROUND_THREE_TOBACCO_SEATS = 106
 const ROUND_FOUR_TOBACCO_SEATS = 250
 let reviewedProductLineup = ''
@@ -101,8 +106,10 @@ export function getCorporationPhase(corporation, offer) {
 }
 
 async function readInvestmentOffer(ns) {
+  const corporation = await getCorp(ns)
+  if (corporation?.public) return {round:5, funds:0, shares:0}
   const offer = await corpRun(ns, 'getInvestmentOffer')
-  const round = getCorporationPhase(await getCorp(ns), offer)
+  const round = getCorporationPhase(corporation, offer)
   return round ? { ...offer, round } : undefined
 }
 
@@ -469,9 +476,12 @@ export async function main(ns) {
   hasOfficeDB = []
   hasWarehouseDB = []
   const resetInfo = await getReset(ns)
+  companyReset = resetInfo
+  cashPlan = null
   const myBN = resetInfo.currentNode
   bn3Reset = Number(myBN) === 3 ? resetInfo : null
   fundingGrowthCycles = 0
+  fundingSettleCycles = 0
   fundingStatus = ''
   seedCapitalSamples = []
   const sourceFile3Level = getOwnedSourceFileLevel(resetInfo, 3)
@@ -614,6 +624,11 @@ export async function main(ns) {
         continue
       }
       if (round !== 3 && round !== 4) continue
+      if (usesCashPolicy(round)) {
+        round = await runCashPhase(ns, round)
+        await ns.corporation.nextUpdate()
+        continue
+      }
       await updateHud(ns)
       await manageProducts(ns)
       while ((await corpRun(ns, 'getUpgradeLevel', "Smart Factories")) < 20 && (await corpRun(ns, 'getUpgradeLevelCost', "Smart Factories")) <= await corpFunds(ns))
@@ -650,26 +665,7 @@ export async function main(ns) {
         continue
       }
       if (round < 5) continue
-      await updateHud(ns)
-      await manageProducts(ns)
-      await spendRP(ns)
-      const nState = (await getCorp(ns)).nextState
-      if (nState === "SALE")
-        await sell(ns)
-      if (nState === "PURCHASE") {
-        await updateMisc(ns)
-        await basicExporImport(ns)
-        await purchase(ns)
-        await purchaseBoostMaterials(ns)
-      }
-      if (nState === "START") {
-        await manageOffice(ns)
-        teaNeeded = await teaParty(ns)
-      }
-      if (nState === "EXPORT") {
-        await warehouseUpgrade(ns)
-        await optimizeMats(ns)
-      }
+      round = await runCashPhase(ns, round)
       await ns.corporation.nextUpdate();
     }
     log(ns, `Unexpected corporation investment round ${String(round)}; refreshing state.`, true, 'warning')
@@ -692,13 +688,25 @@ async function updateHud(ns) {
   ns.printf("%s | Player dividends: $%s/s | Rate: %s%%", cObj.public ? "Public" : "Private",
     ns.format.number(cObj.dividendEarnings || 0, 3), ns.format.number((cObj.dividendRate || 0) * 100, 2))
   const invest = investOffer
-  const upgrades = await getUpgradeLevel(ns, "Neural Accelerators")
-    + await getUpgradeLevel(ns, "Project Insight")
-    + await getUpgradeLevel(ns, "Nuoptimal Nootropic Injector Implants")
-    + await getUpgradeLevel(ns, "FocusWires")
-    + await getUpgradeLevel(ns, "Speech Processor Implants")
-    + await getUpgradeLevel(ns, "FocusWires")
-  const produpgrades = await getUpgradeLevel(ns, "Smart Factories") + await getUpgradeLevel(ns, "Smart Storage")
+  if (usesCashPolicy(invest.round) && cashPlan) {
+    ns.printf("Cash for factions | growth: %s | operating profit: $%s/s", cashPlan.focus, ns.format.number(cObj.revenue - cObj.expenses, 3))
+    ns.printf("Retaining $%s%s", ns.format.number(cashPlan.floor, 3), cashPlan.goal ? ` | ${cashPlan.faction}: $${ns.format.number(cashPlan.goal, 3)} rep gap` : '')
+    const spendable = await corpFunds(ns, 0, cObj) - getCorporationBribeReserve(cObj, invest.round)
+    ns.printf("Bribe cash after bills: %s | %s (valuation $%s / $%s)", Number.isFinite(spendable) ?
+      '$' + ns.format.number(Math.max(0, spendable), 3) : 'updating',
+      cObj.valuation >= corporationConstants.bribeThreshold ? 'eligible' : 'locked', ns.format.number(cObj.valuation, 3),
+      ns.format.number(corporationConstants?.bribeThreshold ?? 0, 3))
+    for (const div of industries) {
+      const d = hasDivDB[div]
+      if (!d) continue
+      const sellingCities = new Set((cashPlan.goods?.[div] ?? []).filter(g => g.product.actualSellAmount > 0).map(g => g.city))
+      ns.printf("%s: $%s/s%s", div, ns.format.number(d.lastCycleRevenue - d.lastCycleExpenses, 3),
+        d.makesProducts ? ` | product sales in ${sellingCities.size}/${d.cities.length} cities` : '')
+    }
+    if (invest.round < 5 && fundingStatus) ns.printf("%s", fundingStatus)
+    ns.ui.renderTail()
+    return // The cycle snapshot already has the division and sales figures.
+  }
   if (bn3Reset) {
     ns.printf("Round: %s Offer: $%s", invest.round, ns.format.number(invest.funds, 3))
     if (invest.round < 5 && fundingStatus) ns.printf("%s", fundingStatus)
@@ -711,6 +719,13 @@ async function updateHud(ns) {
   else if (invest.round === 2 && roundTwoAllocation.goal > 0)
     ns.printf("Saving for %s: $%s / $%s above operating cash.", roundTwoAllocation.forSetup ? 'required expansion' : 'next Tobacco product', ns.format.number(roundTwoAllocation.saved, 3), ns.format.number(roundTwoAllocation.goal, 3))
 
+  const upgrades = await getUpgradeLevel(ns, "Neural Accelerators")
+    + await getUpgradeLevel(ns, "Project Insight")
+    + await getUpgradeLevel(ns, "Nuoptimal Nootropic Injector Implants")
+    + await getUpgradeLevel(ns, "FocusWires")
+    + await getUpgradeLevel(ns, "Speech Processor Implants")
+
+  const produpgrades = await getUpgradeLevel(ns, "Smart Factories") + await getUpgradeLevel(ns, "Smart Storage")
   ns.printf("Empl Upgrades: %s Prod Upgrades: %s Profit Upgrades: %s Wilson: %s", upgrades, produpgrades, await getUpgradeLevel(ns, "ABC SalesBots"), await getUpgradeLevel(ns, "Wilson Analytics"))
   const state = cObj.nextState === "PURCHASE" ? "START"
     : cObj.nextState === "PRODUCTION" ? "PURCHASE"
@@ -789,7 +804,31 @@ async function quoteBn3Stage(ns, round, corp, constants) {
   const {officeInitialCost, warehouseInitialCost, officeInitialSize, secondsPerMarketCycle} = constants
   if (![officeInitialCost, warehouseInitialCost, officeInitialSize, secondsPerMarketCycle].every(x => Number.isFinite(x) && x > 0))
     return null
-  const names = round === 4 ? [div1, div3, div2, div4] : [div1, div3, div2]
+  if (round >= 3) {
+    // Price this company's next design and operating cash. A paper build of six
+    // 250-seat offices, a Restaurant, or a missing support division is not a cash goal.
+    const line = cashPlan?.focus ?? div3
+    const d = corp.divisions.includes(line) ? await corpRun(ns, 'getDivision', line) : null
+    const rows = d?.products.flatMap(n => d.cities.map(c => [line,c,n])) ?? []
+    const products = await corporationBatch(ns, 'getProduct', rows)
+    const productSelling = products.some(p => p?.developmentProgress === 100 && p.actualSellAmount > 0)
+    const version = Math.max(0, ...(d?.products ?? []).map(parseVersion))
+    const design = projectBudget(version, corp, round)
+    const runway = Math.max(ROUND_ONE_OPERATING_RESERVE, corp.expenses * secondsPerMarketCycle * 3)
+    const startup = !d ? (await corpRun(ns,'getIndustryData',line)).startingCost :
+      !(await corpRun(ns,'hasWarehouse',line,'Sector-12')) ? warehouseInitialCost : 0
+    const names = ['Market Research - Demand', 'Market Data - Competition']
+    const owned = await corporationBatch(ns,'hasUnlock',names.map(n => [n]))
+    const costs = await corporationBatch(ns,'getUnlockCost',names.filter((_,i) => !owned[i]).map(n => [n]))
+    const setup = startup + costs.reduce((a,b) => a+b,0)
+    const firstDesignCash = !setup && d?.products.length ? 0 :
+      ROUND_ONE_OPERATING_RESERVE + setup + (startup ? ROUND_TWO_TOBACCO_RESERVE : 2e9)
+    const minimum = Math.max(runway + setup + design, firstDesignCash)
+    if (![minimum, design, runway].every(x => Number.isFinite(x) && x > 0)) return null
+    return {line, productSelling, minimum, next:minimum, full:minimum, design, runway,
+      firstDesignCash, seconds:secondsPerMarketCycle}
+  }
+  const names = [div1, div3, div2]
   const existing = names.filter(name => corp.divisions.includes(name))
   const missing = names.filter(name => !existing.includes(name))
   const divisions = await corporationBatch(ns, 'getDivision', existing.map(name => [name]))
@@ -810,33 +849,29 @@ async function quoteBn3Stage(ns, round, corp, constants) {
   setup += prices.reduce((a, b) => a + b, 0)
 
   const tobacco = divisions.find(d => d.name === div3)
-  const productDivision = round === 4 ? div4 : div3
-  const products = divisions.find(d => d.name === productDivision)?.products ?? []
+  const products = tobacco?.products ?? []
   const version = Math.max(0, ...products.map(name => Number(/(\d+)$/.exec(name)?.[1] ?? 0)))
-  const design = 2e9 * 2 ** version // The actual design + marketing budget in manageProducts.
+  const design = projectBudget(version, corp, round)
   const runway = Math.max(ROUND_ONE_OPERATING_RESERVE, corp.expenses * secondsPerMarketCycle * 3)
   let minimum = setup + design + runway + (round === 1 ? ROUND_TWO_TOBACCO_RESERVE : 0)
   let next = minimum, full = minimum
-  if (round < 4) {
-    const currentCities = tobacco?.cities ?? []
-    const offices = await corporationBatch(ns, 'getOffice', currentCities.map(city => [div3, city]))
-    const target = round === 1 ? ROUND_TWO_TOBACCO_HOME_OFFICE_TARGET :
-      round === 2 ? ROUND_THREE_TOBACCO_SEATS : ROUND_FOUR_TOBACCO_SEATS
-    // Official office pricing depends only on seat count. This also prices future cities
-    // where getOfficeSizeUpgradeCost cannot yet be called.
-    const seats = (size, end) => end <= size ? 0 :
-      officeInitialCost / 0.09 * 1.09 ** (size / 3) * (1.09 ** ((end - size) / 3) - 1)
-    for (const city of round === 1 ? ['Sector-12'] : cities) {
-      const index = currentCities.indexOf(city)
-      const size = index < 0 ? officeInitialSize : offices[index]?.size
-      if (!Number.isFinite(size) || size <= 0) return null
-      const cost = seats(size, target)
-      if (city === 'Sector-12') {
-        minimum += round === 1 ? cost : seats(size, Math.min(target, size + officeInitialSize))
-        next += cost
-      }
-      full += cost
+  const currentCities = tobacco?.cities ?? []
+  const offices = await corporationBatch(ns, 'getOffice', currentCities.map(city => [div3, city]))
+  const target = round === 1 ? ROUND_TWO_TOBACCO_HOME_OFFICE_TARGET : ROUND_THREE_TOBACCO_SEATS
+  // Official office pricing depends only on seat count. This also prices future cities
+  // where getOfficeSizeUpgradeCost cannot yet be called.
+  const seats = (size, end) => end <= size ? 0 :
+    officeInitialCost / 0.09 * 1.09 ** (size / 3) * (1.09 ** ((end - size) / 3) - 1)
+  for (const city of round === 1 ? ['Sector-12'] : cities) {
+    const index = currentCities.indexOf(city)
+    const size = index < 0 ? officeInitialSize : offices[index]?.size
+    if (!Number.isFinite(size) || size <= 0) return null
+    const cost = seats(size, target)
+    if (city === 'Sector-12') {
+      minimum += round === 1 ? cost : seats(size, Math.min(target, size + officeInitialSize))
+      next += cost
     }
+    full += cost
   }
   if (![minimum, next, full, design, runway].every(x => Number.isFinite(x) && x > 0)) return null
   const stage = {minimum, next, full, design, runway, seconds: secondsPerMarketCycle}
@@ -846,23 +881,18 @@ async function quoteBn3Stage(ns, round, corp, constants) {
     const exportIndex = missingUnlocks.indexOf('Export')
     stage.tobaccoCapital = full - buildCost[div2] - (exportIndex < 0 ? 0 : prices[exportIndex])
   }
-  if (round >= 3) {
-    // Total company or division revenue can come from Agriculture or selling boosters.
-    // Check actual finished-product sales in any Tobacco city, including custom product names.
-    const rows = tobacco?.products.flatMap(name => tobacco.cities.map(city => [div3, city, name])) ?? []
-    const productsByCity = await corporationBatch(ns, 'getProduct', rows)
-    stage.tobaccoSelling = productsByCity.some(p => p?.developmentProgress === 100 &&
-      Number.isFinite(p.actualSellAmount) && p.actualSellAmount > 0)
-    // The first design needs $1b in design and $1b in marketing. If Tobacco itself is
-    // missing, expansion also needs its industry price, two market unlocks and its cash cushion.
-    const marketData = missingUnlocks.reduce((sum, name, i) =>
-      sum + (name === 'Export' ? 0 : prices[i]), 0)
-    const hq = locations.findIndex(([name, city]) => name === div3 && city === 'Sector-12')
-    const startup = !tobacco ? industryData[missing.indexOf(div3)].startingCost : hq >= 0 && !warehouses[hq] ? warehouseInitialCost : 0
-    stage.firstDesignCash = !startup && !marketData && tobacco?.products.length ? 0 :
-      ROUND_ONE_OPERATING_RESERVE + marketData + (startup ? startup + ROUND_TWO_TOBACCO_RESERVE : 2e9)
-  }
   return stage
+}
+
+function factionCashGoal(constants, snapshot, route, reset) {
+  const now = Date.now(), fresh = t => Number.isFinite(t) && t >= reset.lastAugReset && t <= now && now - t <= 90_000
+  if (!reset || snapshot?.current_node !== reset.currentNode || snapshot?.last_aug_reset !== reset.lastAugReset ||
+      !fresh(snapshot.generated_at) || snapshot.reset_planning?.version !== 1 || !route ||
+      !fresh(route.updatedAt) || route.lastNodeReset !== reset.lastNodeReset || route.lastAugReset !== reset.lastAugReset ||
+      !['faction-rep','donation-unlock'].includes(route.kind) || typeof route.faction !== 'string' ||
+      !Number.isFinite(constants?.bribeAmountPerReputation) || constants.bribeAmountPerReputation <= 0) return 0
+  const cost = Math.ceil((route.targetRep - snapshot.reset_planning.reputation?.[route.faction]) * constants.bribeAmountPerReputation)
+  return Number.isFinite(cost) && cost > 0 ? cost : 0
 }
 
 // Money raised belongs to the company. Count a player benefit only when a current plan can use it.
@@ -874,10 +904,8 @@ function bn3FundingBenefit(round, corp, offer, cash, stage, constants, snapshot,
   if (snapshot?.current_node !== bn3Reset.currentNode || snapshot?.last_aug_reset !== bn3Reset.lastAugReset ||
       !fresh(snapshot.generated_at) || plan?.version !== 1) return ''
   const post = cash + offer.funds
-  if (corp.valuation >= constants.bribeThreshold && Number.isFinite(constants.bribeAmountPerReputation) &&
-      constants.bribeAmountPerReputation > 0 && route && fresh(route.updatedAt) && route.lastNodeReset === bn3Reset.lastNodeReset &&
-      route.lastAugReset === bn3Reset.lastAugReset && ['faction-rep', 'donation-unlock'].includes(route.kind)) {
-    const cost = Math.ceil((route.targetRep - plan.reputation?.[route.faction]) * constants.bribeAmountPerReputation)
+  if (corp.valuation >= constants.bribeThreshold) {
+    const cost = factionCashGoal(constants, snapshot, route, bn3Reset)
     const spendable = (funds, r) => funds - getCorporationBribeReserve({funds, expenses: corp.expenses}, r)
     if (Number.isFinite(cost) && cost > 0 && spendable(cash, round) < cost &&
         spendable(post, round + 1) >= cost && post - cost >= stage.minimum)
@@ -904,7 +932,7 @@ function evaluateBn3Offer(stage, corp, cash, offer, offerRate, extraCycles, bene
   if (!usable) return {action: 'grow', reason: 'waiting for a valid cash balance and offer'}
   const affordable = capital >= stage.minimum
   if (affordable && benefit) return {action: 'accept', reason: benefit}
-  if (stage.tobaccoSelling === false) {
+  if (stage.productSelling === false) {
     // While a first design is progressing, cash for a new Restaurant alone is no reason
     // to give up private funding. Allow a real rescue if operations cannot pay for the
     // first design or cannot stay solvent through the next review.
@@ -913,7 +941,7 @@ function evaluateBn3Offer(stage, corp, cash, offer, offerRate, extraCycles, bene
     const rescue = (stage.firstDesignCash > 0 && Math.max(cash, nextCash) < stage.firstDesignCash) ||
       (net <= 0 && nextCash < 0)
     return affordable && rescue ? {action: 'accept', reason: 'funds a blocked first product or operating shortfall'} :
-      {action: 'grow', reason: 'waiting for Tobacco product sales; keeping growth and design running'}
+      {action: 'grow', reason: `waiting for ${stage.line} product sales; keeping growth and design running`}
   }
   const goal = capital < stage.minimum ? stage.minimum : capital < stage.next ? stage.next : stage.full
   const gap = goal - capital
@@ -934,18 +962,18 @@ function evaluateBn3Offer(stage, corp, cash, offer, offerRate, extraCycles, bene
 async function reviewBn3Offer(ns, round, corp) {
   let review = investmentReview, constants, stage
   if (!review) {
-    if (round !== 1 && fundingGrowthCycles > 0 && --fundingGrowthCycles > 0) return round
-    if (!hasDivDB[div1] || !(investOffer.funds > 0) || (round === 1 && !(corp.revenue > 0))) return round
+    if (round >= 3 && fundingSettleCycles > 0 && --fundingSettleCycles > 0) return round
+    if (round === 2 && fundingGrowthCycles > 0 && --fundingGrowthCycles > 0) return round
+    if ((round <= 2 && !hasDivDB[div1]) || !(investOffer.funds > 0) || (round === 1 && !(corp.revenue > 0))) return round
     if (round >= 3) {
       constants = await getCorporationConstants(ns)
       stage = constants && await quoteBn3Stage(ns, round, corp, constants)
     }
-    if (round === 1 || (round >= 3 && !stage?.tobaccoSelling)) {
-      // Check the full seed transition each START while Agriculture grows. Later, check
-      // urgent funding without interrupting an unproven product.
+    if (round !== 2) {
+      // Seed and late offers are checked during normal operations. With an established
+      // business, check the value of taking the money without pausing designers or sales.
       review = {remaining: 1, offers: [], extra: 0}
     } else {
-      if (round >= 3) tobaccoBooster = true
       beginInvestmentReview(ns, round, 'measuring the offer against the next build')
       investmentReview.offers = []
       investmentReview.extra = INVESTMENT_REVIEW_CYCLES
@@ -1029,7 +1057,7 @@ async function reviewBn3Offer(ns, round, corp) {
     if (next > round) log(ns, `Round ${round}: took $${money(offer.funds)}; ${decision.reason}.`, true, 'info')
     return next
   }
-  if (round !== 1) log(ns, `Round ${round}: resuming growth. ${fundingStatus}`, true, 'info')
+  if (round === 2) log(ns, `Round ${round}: resuming growth. ${fundingStatus}`, true, 'info')
   return round
 }
 
@@ -1138,6 +1166,7 @@ async function acceptReviewedOffer(ns, round, offerFunds, quote) {
   teaNeeded = true
   if (round === 3 || bn3Reset) tobaccoBooster = false
   if (bn3Reset) {
+    fundingSettleCycles = INVESTMENT_REVIEW_CYCLES
     fundingGrowthCycles = INVESTMENT_REVIEW_CYCLES
     fundingStatus = ''
   }
@@ -1146,8 +1175,12 @@ async function acceptReviewedOffer(ns, round, offerFunds, quote) {
   const resolvedNextRound = Number.isInteger(nextRound) && nextRound > round ? nextRound : round + 1
   return resolvedNextRound
 }
+function cashGrowthReserve(corp, reserve) {
+  const goal = cashPlan.goal > 0 ? cashPlan.goal + getCorporationBribeReserve(corp, investOffer.round) : 0
+  return Math.max(reserve, cashPlan.floor, goal)
+}
 /** @param {NS} ns */
-async function corpFunds(ns, reserve = ROUND_ONE_OPERATING_RESERVE, expected) {
+async function corpFunds(ns, reserve = ROUND_ONE_OPERATING_RESERVE, expected, forDesign = false) {
   // Employee care uses reserve=0; recipe inputs are funded separately in purchase().
   if (investmentReview && reserve > 0) return 0
   const corporation = expected ?? await getCorp(ns)
@@ -1160,6 +1193,11 @@ async function corpFunds(ns, reserve = ROUND_ONE_OPERATING_RESERVE, expected) {
   const unpaid = divisions.reduce((sum, div) => sum + div.thisCycleExpenses, 0)
   const available = latest.funds - unpaid - pendingInputPurchases - reserve
   if (!Number.isFinite(available)) return -Infinity
+  if (reserve > 0 && usesCashPolicy(investOffer?.round) && cashPlan) {
+    if (!Number.isFinite(cashPlan.floor)) return 0
+    return latest.funds - unpaid - pendingInputPurchases - cashGrowthReserve(latest, reserve)
+      - (forDesign ? 0 : cashPlan.designHold || 0)
+  }
   if (reserve > 0 && investOffer?.round === 2 && roundTwoAllocation.goal > 0) {
     // Only quoting the priority purchase updates savings. Other purchases can repeatedly
     // read their remaining allowance without reserving the same cash again.
@@ -1225,7 +1263,7 @@ async function expandCities(ns, division, options = {}) {
     return true
   }
 
-  for (const city of cities) {
+  for (const city of options.homeOnly ? ['Sector-12'] : cities) {
     const key = division + city
     const cityExists = Array.isArray(divisionInfo.cities) && divisionInfo.cities.includes(city)
 
@@ -1328,6 +1366,10 @@ async function prep(ns) {
     boostOrdersInitialized = true
   }
   if (round >= 5) await manageCorporationPayout(ns, round, dividendRate)
+  if (usesCashPolicy(round)) {
+    await prepareCashOperations(ns, round)
+    return Number.isFinite(cashPlan.floor) && !!cashPlan.goods
+  }
 
   if (round >= 1) {
   const agriculture = await getOptionalDivision(ns, div1)
@@ -1392,25 +1434,242 @@ async function prep(ns) {
       }
     }
   }
-  if (round >= 5) {
-    await expandCities(ns, div4);
-    if ((await getCorp(ns)).revenue >= 1e70) {
-      await tryPurchaseUnlock(ns, "Government Partnership")
-      await tryPurchaseUnlock(ns, "Shady Accounting")
-      // Reuse the normal creation/expansion path: verify division existence and actual funds explicitly.
-      // Keep the existing late-expansion revenue gate and reserve the same eight real industries.
-      for (const division of [div5, div6, div7, div8]) await expandCities(ns, division);
-
-    }
-  }
   return true
 }
 /** @param {NS} ns */
+function projectBudget(version, corp, round) {
+  const normal = 2e9 * 2 ** version
+  if (!usesCashPolicy(round)) return normal
+  return Math.min(normal, Math.max(2e9, (corp.revenue - corp.expenses) * 60))
+}
+
+async function prepareCashOperations(ns, round) {
+  const corp = await getCorp(ns)
+  const phase = cashPhases.indexOf(corp.nextState)
+  const moved = !cashPlan || cashPlan.round !== round
+  const newCycle = moved || phase < cashPlan.phase
+  if (moved) {
+    cashPlan = {round, phase, floor:Infinity, goal:0, focus:div3, exports:''}
+    boostTargets = [] // Do not replay orders from the previous strategy or round.
+  }
+  cashPlan.phase = phase
+  if (!newCycle && Number.isFinite(cashPlan.floor)) return
+  const report = await corpRun(ns, 'getCorporation', '--cash-plan')
+  const live = report?.corporation, constants = await getCorporationConstants(ns)
+  if (!live || getCorporationPhase(live, report.offer) !== round || !(constants?.secondsPerMarketCycle > 0)) return
+  const liquid = await corpFunds(ns, 0, live)
+  const net = Math.max(0, live.revenue - live.expenses)
+  if (!Number.isFinite(liquid) || !Number.isFinite(net)) return
+  const first = !Number.isFinite(cashPlan.floor)
+  const openCredit = Math.min(Math.max(0, liquid) / 4, Math.max(2e9, net * cashHorizon))
+  const netAfterPayout = net * (1 - (live.public ? live.dividendRate : 0))
+  const retained = netAfterPayout * constants.secondsPerMarketCycle / 2
+  cashPlan.floor = Math.max(0, first ? liquid - openCredit : Math.min(liquid, cashPlan.floor + retained))
+  const cost = factionCashGoal(constants, report.snapshot, report.route, companyReset)
+  const reserve = getCorporationBribeReserve(live, round)
+  cashPlan.goal = cost > 0 && live.valuation >= constants.bribeThreshold && liquid + netAfterPayout * cashHorizon - reserve >= cost ? cost : 0
+  cashPlan.faction = cashPlan.goal ? report.route.faction : ''
+
+  // Discover the actual footprint, including an existing Restaurant or a manual IPO.
+  const names = live.divisions.filter(d => industries.includes(d))
+  const divisions = await corporationBatch(ns, 'getDivision', names.map(d => [d]))
+  const locations = divisions.flatMap(d => d.cities.map(c => [d.name, c]))
+  const offices = await corporationBatch(ns, 'getOffice', locations)
+  const warehouses = await corporationBatch(ns, 'hasWarehouse', locations)
+  hasDivDB = []; hasOfficeDB = []; hasWarehouseDB = []
+  for (const d of divisions) hasDivDB[d.name] = d
+  locations.forEach(([d,c], i) => {hasOfficeDB[d+c] = offices[i]; hasWarehouseDB[d+c] = warehouses[i]})
+  const rows = divisions.filter(d => d.makesProducts).flatMap(d =>
+    d.cities.flatMap(c => d.products.map(p => [d.name, c, p])))
+  const products = await corporationBatch(ns, 'getProduct', rows)
+  cashPlan.goods = Object.fromEntries(divisions.map(d => [d.name, []]))
+  rows.forEach(([d,city], i) => {
+    if (products[i].developmentProgress === 100) cashPlan.goods[d].push({city, product:products[i]})
+  })
+  cashPlan.factory = await corpRun(ns, 'getUpgradeLevel', 'Smart Factories')
+  // A restarted manager may inherit production research bought hours ago. Match
+  // the engine's material/product rates before ordering the next batch of ingredients.
+  const upgrades = divisions.flatMap(d => ['Drones - Assembly','Self-Correcting Assemblers',
+    ...(d.makesProducts ? ['uPgrade: Fulcrum'] : [])].filter(n => !researchedDB[d.name+n]).map(n => [d.name,n]))
+  const done = await corporationBatch(ns, 'hasResearched', upgrades)
+  upgrades.forEach(([d,n],i) => {researchedDB[d+n] = done[i]})
+  const profit = d => d.lastCycleRevenue - d.lastCycleExpenses
+  const tobacco = hasDivDB[div3]
+  const winner = divisions.filter(d => cashPlan.goods[d.name].some(g => g.product.actualSellAmount > 0) && profit(d) > 0)
+    .sort((a,b) => profit(b) - profit(a))[0]
+  // A single sale of excess material can move the division's reported profit. Require
+  // three winning cycles to divert growth from an established product line.
+  const existingLine = tobacco ?? divisions.find(d => d.makesProducts && d.products.length) ?? divisions.find(d => d.makesProducts)
+  const candidate = winner?.name ?? (hasDivDB[cashPlan.focus] ? cashPlan.focus : existingLine?.name ?? div3)
+  const established = cashPlan.goods[cashPlan.focus]?.some(g => g.product.actualSellAmount > 0)
+  cashPlan.wins = cashPlan.challenger === candidate ? cashPlan.wins + 1 : 1
+  cashPlan.challenger = candidate
+  if (cashPlan.focus !== candidate && (!established || cashPlan.wins >= 3)) {
+    cashPlan.designHold = 0
+    cashPlan.focus = candidate
+  }
+
+  const line = hasDivDB[cashPlan.focus], goods = cashPlan.goods[cashPlan.focus] ?? []
+  const sold = goods.reduce((sum,g) => sum + g.product.actualSellAmount,0)
+  const made = goods.reduce((sum,g) => sum + g.product.productionAmount,0)
+  cashPlan.boost = !!line && profit(line) > 0 && sold > 0 && made > 0 && sold >= .9 * made
+
+  const unlocks = ['Market Research - Demand', 'Market Data - Competition', 'Export']
+  const owned = await corporationBatch(ns, 'hasUnlock', unlocks.map(n => [n]))
+  unlocks.forEach((n,i) => {researchedDB[n] = owned[i]})
+  // Do not strand a manually advanced company without a way to earn.
+  if (!hasDivDB[cashPlan.focus]?.products.length && !winner && first && !cashPlan.goal)
+    cashPlan.floor = Math.min(cashPlan.floor, Math.max(ROUND_ONE_OPERATING_RESERVE, live.expenses * constants.secondsPerMarketCycle * 3))
+  if (!existingLine) await expandCities(ns, div3, {allowExpansion:false})
+  else if (cashPlan.focus === div3 && tobacco && (tobacco.cities.length < cities.length || !hasCompleteDivisionInfrastructure(div3)))
+    await expandCities(ns, div3, {allowExpansion:true, homeOnly:!cashPlan.goods[div3].some(g => g.product.actualSellAmount > 0), reserve:ROUND_TWO_TOBACCO_RESERVE})
+  for (const n of unlocks.slice(0,2)) if (!researchedDB[n]) await tryPurchaseUnlock(ns, n)
+  if (hasDivDB[div1] && hasDivDB[div3] && !researchedDB.Export) await tryPurchaseUnlock(ns, 'Export')
+}
+
+async function buyCashInputs(ns) {
+  pendingInputPurchases = 0
+  const inputs = [], locations = []
+  for (const div of industries) {
+    const d = hasDivDB[div]
+    if (!d) continue
+    const industry = indDataDB[d.industry] ??= await corpRun(ns, 'getIndustryData', d.industry)
+    for (const city of d.cities) {
+      if (!hasWarehouseDB[div+city]) continue
+      const [materials, products] = await getMult(ns, div, city)
+      const slots = cashPlan.goods?.[div]?.filter(g => g.city === city).length ?? 0
+      const output = ((industry.makesMaterials ? materials : 0) + slots * products) * 10
+      const index = locations.push([div, city]) - 1
+      for (const [name, coefficient] of Object.entries(industry.requiredMaterials))
+        inputs.push({key:[div,city,name], index, target:output * coefficient})
+    }
+  }
+  const warehouses = await corporationBatch(ns, 'getWarehouse', locations)
+  const stock = await corporationBatch(ns, 'getMaterial', inputs.map(p => p.key))
+  const missing = [...new Set(inputs.map(p => p.key[2]).filter(n => !matDataDB[n]))]
+  const data = await corporationBatch(ns, 'getMaterialData', missing.map(n => [n]))
+  missing.forEach((n,i) => {matDataDB[n]=data[i]})
+  const needSpace = warehouses.map(() => 0)
+  for (const [i,p] of inputs.entries()) {
+    p.qty = Math.max(0, p.target - stock[i].stored)
+    needSpace[p.index] += p.qty * matDataDB[p.key[2]].size
+  }
+  for (const [i,w] of warehouses.entries()) {
+    if (locations[i][0] === div3 && needSpace[i] > Math.max(0, w.size - w.sizeUsed))
+      await makeRoomForPlants(ns, div3, locations[i][1], w)
+  }
+  let total = 0
+  for (const [i,p] of inputs.entries()) {
+    const w = warehouses[p.index]
+    if (needSpace[p.index] > 0) p.qty *= Math.min(1, Math.max(0, w.size - w.sizeUsed) / needSpace[p.index])
+    total += p.qty * stock[i].marketPrice
+  }
+  const liquid = await corpFunds(ns, 0)
+  if (!Number.isFinite(total) || !Number.isFinite(liquid) || (await getCorp(ns)).nextState !== 'PURCHASE') return
+  const fraction = total > 0 ? Math.min(1, Math.max(0, liquid) / total) : 0
+  // Clear inherited zero-price sales. Sell only actual excess recipe stock; keep a
+  // material that doubles as a production booster. Never discard scarce ingredients.
+  await corporationBatch(ns, 'sellMaterial', inputs.map((p,i) =>
+    [...p.key, BOOST_MATERIALS.includes(p.key[2]) ? 0 : Math.max(0, stock[i].stored - p.target) / 10, 'MP']))
+  if ((await getCorp(ns)).nextState !== 'PURCHASE') return
+  await corporationBatch(ns, 'buyMaterial', inputs.map(p => [...p.key, p.qty * fraction / 10]))
+  pendingInputPurchases = total * fraction
+}
+
+// Keep existing routes, including manual exports. Add missing local supply only between
+// warehouses that exist. Recheck the topology when a division or warehouse appears.
+async function connectCashSuppliers(ns) {
+  const divisions = industries.filter(d => hasDivDB[d])
+  const footprint = JSON.stringify(divisions.map(d => [d, ...cities.map(c => !!hasWarehouseDB[d+c])]))
+  if (cashPlan.exports === footprint) return
+  for (const d of divisions) indDataDB[hasDivDB[d].industry] ??= await corpRun(ns, 'getIndustryData', hasDivDB[d].industry)
+  const rows = [], targets = []
+  for (const from of divisions) for (const name of indDataDB[hasDivDB[from].industry].producedMaterials ?? []) {
+    for (const city of cities) {
+      if (!hasWarehouseDB[from+city]) continue
+      const destinations = divisions.filter(to => from !== to && hasWarehouseDB[to+city] && indDataDB[hasDivDB[to].industry].requiredMaterials[name] > 0)
+      if (destinations.length) { rows.push([from,city,name]); targets.push(destinations) }
+    }
+  }
+  const stock = await corporationBatch(ns, 'getMaterial', rows)
+  const routes = rows.flatMap(([from,city,name],i) => targets[i].filter(to =>
+    !stock[i].exports.some(e => e.division === to && e.city === city))
+    .map(to => [from,city,to,city,name,'(-IPROD-IINV/10)']))
+  await corporationBatch(ns, 'exportMaterial', routes)
+  cashPlan.exports = footprint
+}
+
+// An upgrade competes with keeping its price for a faction. Use the selling division's
+// observed margin and throughput; neither paper valuation nor idle capacity earns cash.
+async function growCashDivision(ns) {
+  const div = cashPlan.focus, d = hasDivDB[div], goods = cashPlan.goods?.[div] ?? []
+  const margin = d?.lastCycleRevenue - d?.lastCycleExpenses
+  if (!(margin > 0) || !goods.some(g => g.product.actualSellAmount > 0)) return
+  const available = await corpFunds(ns)
+  if (!(available > 0)) return
+  const sales = goods.reduce((n,g) => n + g.product.actualSellAmount, 0)
+  const produced = goods.reduce((n,g) => n + g.product.productionAmount, 0)
+  if (!(sales > 0 && produced > 0)) return
+  const throughput = Math.min(1, sales / produced)
+  let best
+  function consider(fn, args, cost, gain) {
+    const payback = cost / gain
+    if (Number.isFinite(payback) && gain > 0 && cost > 0 && cost <= available &&
+        payback <= cashHorizon && (!best || payback < best.payback)) best = {fn,args,cost,payback}
+  }
+  const specs = await corpRun(ns, 'getIndustryData', d.industry)
+  const advertCost = await corpRun(ns, 'getHireAdVertCost', div)
+  const adv = 1 + .005 * await corpRun(ns, 'getUpgradeLevel', 'Wilson Analytics')
+  const advertising = (a,p) => ((a+1)**specs.advertisingFactor * (p+1)**specs.advertisingFactor *
+    (a > 0 ? Math.max(.01, (p+.001)/a) : .01)) ** .85
+  const factor = advertising((d.awareness+3*adv)*1.005*adv,(d.popularity+adv)*1.005*adv) / advertising(d.awareness,d.popularity)
+  consider('hireAdVert',[div],advertCost,margin * (Math.sqrt(factor) - 1))
+  // Extra factory/office output only pays when existing output sells.
+  if (throughput >= .9) {
+    consider('levelUpgrade',['Smart Factories'],await corpRun(ns,'getUpgradeLevelCost','Smart Factories'),
+      margin * throughput * .03 / (1 + .03 * cashPlan.factory))
+    const sites = d.cities.filter(c => hasWarehouseDB[div+c] && hasOfficeDB[div+c]?.numEmployees > 0)
+    const costs = await corporationBatch(ns, 'getOfficeSizeUpgradeCost', sites.map(c => [div,c,3]))
+    const wh = await corporationBatch(ns, 'getWarehouse', sites.map(c => [div,c]))
+    for (const [i,city] of sites.entries()) {
+      const o = hasOfficeDB[div+city], cityGoods = goods.filter(g => g.city === city)
+      const citySales = cityGoods.reduce((n,g) => n + g.product.actualSellAmount, 0)
+      if (!(citySales > 0) || o.numEmployees < o.size) continue
+      const cityProfit = margin * citySales / sales
+      const grossOutputSpace = cityGoods.reduce((n,g) => n + g.product.productionAmount * g.product.size * 10, 0)
+      if (grossOutputSpace > wh[i].size - wh[i].sizeUsed && wh[i].sizeUsed > .9 * wh[i].size)
+        consider('upgradeWarehouse',[div,city],await corpRun(ns,'getUpgradeWarehouseCost',div,city),cityProfit / wh[i].level)
+      else consider('upgradeOfficeSize',[div,city,3],costs[i],cityProfit * ((1 + 3/o.size)**.3 - 1))
+    }
+  }
+  if (best && best.cost <= await corpFunds(ns)) await corpRun(ns, best.fn, ...best.args)
+}
+
+async function runCashPhase(ns, round) {
+  const phase = (await getCorp(ns)).nextState
+  if (phase === 'PURCHASE') {
+    await buyCashInputs(ns)
+    if (cashPlan.boost) await purchaseBoostMaterials(ns, [cashPlan.focus])
+  } else if (phase === 'SALE') await sellCashOutput(ns)
+  else if (phase === 'EXPORT') {
+    await manageOffice(ns)
+    await manageProducts(ns)
+    await growCashDivision(ns)
+    if (cashPlan.boost) await optimizeMats(ns, [cashPlan.focus])
+    if (researchedDB.Export) await connectCashSuppliers(ns)
+  } else if (phase === 'START') {
+    teaNeeded = await teaParty(ns)
+    await spendRP(ns)
+    if (round < 5) round = await checkInvest(ns)
+    await updateHud(ns)
+  }
+  return round
+}
+
 async function updateMisc(ns) {
   if (investmentReview) return
   const round = investOffer.round
   const mult = round === 3 ? 3 : 2.5
-  let hasDiv4 = false
   let hasDiv3 = false
   let div3Count = 0
   for (const city of cities)
@@ -1419,22 +1678,11 @@ async function updateMisc(ns) {
   if (div3Count === 6) hasDiv3 = true
 
 
-  let div4Count = 0
-  for (const city of cities)
-    if (hasWarehouseDB[div4 + city])
-      div4Count++
-  if (div4Count === 6) hasDiv4 = true
-
   if (round === 3 && !hasDiv3) return
   if (round >= 3
     && (await corpRun(ns, 'getUpgradeLevelCost', "Wilson Analytics")) < await corpFunds(ns)
-    && (((round >= 5)
-      && (hasDiv4
-        && ((await corpRun(ns, 'getDivision', div4)).awareness < Number.MAX_VALUE
-          || (await corpRun(ns, 'getDivision', div4)).popularity < Number.MAX_VALUE)))
-      || (hasDiv3
-        && ((await corpRun(ns, 'getDivision', div3)).awareness < Number.MAX_VALUE
-          || (await corpRun(ns, 'getDivision', div3)).popularity < Number.MAX_VALUE)))) {
+    && hasDiv3 && ((await corpRun(ns, 'getDivision', div3)).awareness < Number.MAX_VALUE
+      || (await corpRun(ns, 'getDivision', div3)).popularity < Number.MAX_VALUE)) {
     (await corpRun(ns, 'levelUpgrade', "Wilson Analytics"))
   }
   while ((round === 3)
@@ -1445,7 +1693,6 @@ async function updateMisc(ns) {
   if (round < 5 && (await corpRun(ns, 'getUpgradeLevelCost', "ABC SalesBots")) * mult / 2 < await corpFunds(ns)) {
     (await corpRun(ns, 'levelUpgrade', "ABC SalesBots"))
   }
-  while (round >= 5 && await corpRun(ns, 'getUpgradeLevelCost', "ABC SalesBots") * mult / 2 < await corpFunds(ns)) (await corpRun(ns, 'levelUpgrade', "ABC SalesBots"))
   if ((round === 3 && (await getCorp(ns)).revenue >= 8e7) || round >= 4) {
     if (await corpRun(ns, 'getUpgradeLevel', "Neural Accelerators") < 500 && await corpRun(ns, 'getUpgradeLevelCost', "Neural Accelerators") * mult < await corpFunds(ns)) {
       (await corpRun(ns, 'levelUpgrade', "Neural Accelerators"))
@@ -1472,15 +1719,6 @@ async function updateMisc(ns) {
         && ((await corpRun(ns, 'getDivision', div)).awareness < Number.MAX_VALUE || (await corpRun(ns, 'getDivision', div)).popularity < Number.MAX_VALUE)) {
         (await corpRun(ns, 'hireAdVert', div))
       }
-    }
-  }
-  if (round === 5) {
-    for (const div of industries) {
-      if (!hasDivDB[div]) continue
-      while (["Tobacco", "Restaurant", "Computer Hardware"].includes(hasDivDB[div].industry)
-        && await corpFunds(ns) >= await corpRun(ns, 'getHireAdVertCost', div) * mult / 2
-        && ((await corpRun(ns, 'getDivision', div)).awareness < Number.MAX_VALUE || (await corpRun(ns, 'getDivision', div)).popularity < Number.MAX_VALUE))
-        (await corpRun(ns, 'hireAdVert', div))
     }
   }
 }
@@ -1570,6 +1808,7 @@ async function manageProducts(ns) {
   if (investmentReview) return
   for (const div of industries) {
     if (!hasDivDB[div] || !hasDivDB[div].makesProducts) continue
+    if (usesCashPolicy(investOffer?.round) && div !== (cashPlan?.focus ?? div3)) continue
 
     let division = await corpRun(ns, 'getDivision', div)
     const completedProducts = []
@@ -1629,21 +1868,43 @@ async function manageProducts(ns) {
 
       // If every completed product is still waiting for a valid price/quality, keep all slots intact and retry.
       if (!worstProduct) continue
+      if (cashPlan?.goods && usesCashPolicy(round)) {
+        // Keep at least one verified seller while its replacement would be in design.
+        const othersSell = cashPlan.goods[div]?.some(g => g.product.name !== worstProduct && g.product.actualSellAmount > 0)
+        if (!othersSell) continue
+      }
     }
 
     if (!worstProduct && division.products.length >= division.maxProducts) continue
 
     // Price the next version before retiring anything, including when the newest product is weakest.
     const version = await getLatestProductVersion(ns, div)
-    const investment = 1e9 * 2 ** version
+    const cashMode = usesCashPolicy(round)
+    const quote = cashMode ? await getCorp(ns) : undefined
+    const investment = cashMode ? projectBudget(version, quote, round) / 2 : 1e9 * 2 ** version
     const reserve = Number(investOffer?.round) === 2 && div === div3
       ? ROUND_TWO_TOBACCO_RESERVE
       : 0
     if (!Number.isFinite(investment)) continue
-    const funds = await corpFunds(ns)
+    const funds = await corpFunds(ns, ROUND_ONE_OPERATING_RESERVE, quote, true)
     if (!canAffordCorporationPurchase(funds, investment * 2, reserve)) {
       if (round === 2 && div === div3 && division.products.length < division.maxProducts)
         saveRoundTwoCapital(funds, investment * 2, reserve, false)
+      if (cashMode && cashPlan && division.products.length < division.maxProducts) cashPlan.designHold = investment * 2
+      continue
+    }
+
+    if (cashMode && cashPlan) {
+      // Bribes can move cash between helper launches. Fund the new design and retire
+      // the old seller in one game turn, or leave the whole lineup alone.
+      const nextName = 'Prod v' + (version + 1)
+      const kept = cashGrowthReserve(quote, ROUND_ONE_OPERATING_RESERVE) + pendingInputPurchases
+      const started = await corpRun(ns, 'makeProduct', '--cash-project', div, 'Sector-12', nextName,
+        investment, worstProduct ?? '', kept, quote.nextState)
+      if (started === true) {
+        if (worstProduct) clearProductPricingCache(div, worstProduct)
+        cashPlan.designHold = 0
+      }
       continue
     }
 
@@ -1679,13 +1940,7 @@ async function getLatestProductVersion(ns, division) {
  * @returns {number}
  */
 function parseVersion(name) {
-  let version = '';
-  for (let i = 1; i <= name.length; i++) {
-    let slice = name.slice(-i);
-    if (!isNaN(slice)) version = slice;
-    else if (version === '') throw new Error(`Product name must end with version number`);
-    else return parseInt(version);
-  }
+  return Number(/(\d+)$/.exec(name)?.[1] ?? 0)
 }
 
 //setJob is used due to migrating to 3.0.0 breakages
@@ -1694,38 +1949,41 @@ async function setJob(ns, div, city, job, total) {
   (await corpRun(ns, 'setJobAssignment', div, city, job, total));
 }
 
-async function staffPublicProductOffice(ns, div, city) {
-  let office = await corpRun(ns, 'getOffice', div, city)
-  while (office.size < 1500 && await corpFunds(ns) >= await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1)) {
-    const size = office.size
-    await corpRun(ns, 'upgradeOfficeSize', div, city, 1)
+async function staffCashOffice(ns, div, city, hasOutput) {
+  let office = hasOfficeDB[div + city]
+  if (!office?.employeeJobs) office = await corpRun(ns, 'getOffice', div, city)
+  const hires = Math.min(3, office.size - office.numEmployees)
+  if (hires > 0) {
+    await corporationBatch(ns, 'hireEmployee', Array.from({length:hires}, () => [div, city]))
     office = await corpRun(ns, 'getOffice', div, city)
-    if (office.size <= size) break
   }
-  while (office.numEmployees < office.size && await corpRun(ns, 'hireEmployee', div, city))
-    office = await corpRun(ns, 'getOffice', div, city)
-  const n = office.numEmployees
-  const jobs = ['Operations', 'Engineer', 'Business', 'Management', 'Research & Development', 'Intern']
-  let counts
-  if (city !== 'Sector-12') counts = [0, 0, 0, 0, n, 0]
-  else {
-    const engineers = n > 0 ? Math.max(1, Math.floor(n / 4)) : 0
-    const operations = n > 1 ? Math.max(1, Math.floor(n / 4)) : 0
-    const business = n > 2 ? 1 : 0
-    counts = [operations, engineers, business, n - operations - engineers - business, 0, 0]
-  }
-  if (jobs.every((job, i) => office.employeeJobs[job] === counts[i])) return
-  // getOffice exposes current jobs, not pending assignments. Release first, then fill
-  // from the same headcount, in one home helper even when the manager is offloaded.
-  const result = await corporationBatch(ns, 'setJobAssignment', [
-    ...jobs.map(job => [div, city, job, 0]),
-    ...jobs.flatMap((job, i) => counts[i] ? [[div, city, job, counts[i]]] : []),
+  const n = office.numEmployees, remote = city !== 'Sector-12'
+  // Before v1 finishes the satellite labs help the design. Once it can sell, all
+  // existing cities can manufacture it; keep a quarter of remote staff researching.
+  const research = remote ? (hasOutput ? Math.floor(n / 4) : n) : 0
+  const workers = n - research, jobs = ['Operations', 'Engineer', 'Business', 'Management', 'Research & Development', 'Intern']
+  const eng = workers > 0 ? Math.max(1, Math.floor(workers / 4)) : 0
+  const ops = workers > 1 ? Math.max(1, Math.floor(workers / 4)) : 0
+  const sales = workers > 2 ? Math.max(1, hasOutput ? Math.floor(workers / 6) : 1) : 0
+  const counts = [ops, eng, sales, workers - ops - eng - sales, research, 0]
+  if (jobs.every((j, i) => office.employeeJobs[j] === counts[i])) return
+  const ok = await corporationBatch(ns, 'setJobAssignment', [
+    ...jobs.map(j => [div, city, j, 0]), ...jobs.flatMap((j, i) => counts[i] ? [[div, city, j, counts[i]]] : []),
   ])
-  if (result.some(ok => ok !== true)) log(ns, `Could not staff ${div} in ${city}; will retry next cycle.`, false, 'warning')
+  if (ok.some(v => v !== true)) log(ns, `Could not staff ${div} in ${city}; will retry next cycle.`, false, 'warning')
 }
 
 async function manageOffice(ns) {
   const round = investOffer.round
+  if (usesCashPolicy(round)) {
+    for (const div of industries) {
+      const d = hasDivDB[div]
+      if (!d) continue
+      const output = !d.makesProducts || (cashPlan?.goods ? cashPlan.goods[div]?.length > 0 : await hasCompletedManagedProduct(ns, div))
+      for (const city of cities) if (hasOfficeDB[div + city]) await staffCashOffice(ns, div, city, output && !!hasWarehouseDB[div + city])
+    }
+    return
+  }
   let hasDiv2 = false
   if (hasDivDB[div2]) {
     let cityCount = 0
@@ -1859,23 +2117,6 @@ async function manageOffice(ns) {
                 await setJob(ns, div, city, "Research & Development", left)
               }
               break
-            case 5:
-              if ((await corpRun(ns, 'getOffice', div, city)).size < 300 &&
-                  await corpFunds(ns) >= await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))
-                await corpRun(ns, 'upgradeOfficeSize', div, city, 1)
-              if ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size) (await corpRun(ns, 'hireEmployee', div, city))
-              await resetOffice(ns, div, city)
-              {
-                const n = (await corpRun(ns, 'getOffice', div, city)).numEmployees
-                const ops = Math.min(n, 1), business = n > 1 ? 1 : 0
-                const engineers = Math.floor(n / 2.5), management = Math.min(engineers, n - ops - business - engineers)
-                await setJob(ns, div, city, "Operations", ops)
-                await setJob(ns, div, city, "Business", business)
-                await setJob(ns, div, city, "Engineer", engineers)
-                await setJob(ns, div, city, "Management", management)
-                await setJob(ns, div, city, "Research & Development", n - ops - business - engineers - management)
-              }
-              break
           }
           break
         case "Chemical":
@@ -1919,23 +2160,6 @@ async function manageOffice(ns) {
                 await setJob(ns, div, city, "Management", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4))
                 const left = (await corpRun(ns, 'getOffice', div, city)).numEmployees - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - 1
                 await setJob(ns, div, city, "Research & Development", left)
-              }
-              break
-            case 5:
-              if ((await corpRun(ns, 'getOffice', div, city)).size < 300 &&
-                  await corpFunds(ns) >= await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))
-                await corpRun(ns, 'upgradeOfficeSize', div, city, 1)
-              if ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size) (await corpRun(ns, 'hireEmployee', div, city))
-              await resetOffice(ns, div, city)
-              {
-                const n = (await corpRun(ns, 'getOffice', div, city)).numEmployees
-                const ops = Math.floor(n / 4), business = n > 0 ? 1 : 0
-                const engineers = Math.floor(n / 3), management = Math.min(engineers, n - ops - business - engineers)
-                await setJob(ns, div, city, "Operations", ops)
-                await setJob(ns, div, city, "Business", business)
-                await setJob(ns, div, city, "Engineer", engineers)
-                await setJob(ns, div, city, "Management", management)
-                await setJob(ns, div, city, "Research & Development", n - ops - business - engineers - management)
               }
               break
           }
@@ -2050,88 +2274,6 @@ async function manageOffice(ns) {
                 await setJob(ns, div, city, "Management", left)
               }
             }
-              break
-            case 5:
-              await staffPublicProductOffice(ns, div, city)
-              break
-          }
-          break
-        case "Restaurant":
-          switch (round) {
-            case 5:
-              await staffPublicProductOffice(ns, div, city)
-              break
-          }
-          break
-        case "Water Utilities":
-          switch (round) {
-            case 5:
-              while ((await corpRun(ns, 'getOffice', div, city)).size < 6500 && await corpFunds(ns) >= (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
-              while ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size && (await corpRun(ns, 'hireEmployee', div, city))) { }
-              await resetOffice(ns, div, city)
-              {
-                await setJob(ns, div, city, "Operations", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4))
-                await setJob(ns, div, city, "Business", 1)
-                await setJob(ns, div, city, "Engineer", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
-                await setJob(ns, div, city, "Management", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
-                const office = (await corpRun(ns, 'getOffice', div, city))
-                const left = office.numEmployees - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - 1
-                await setJob(ns, div, city, "Research & Development", left)
-              }
-              break
-          }
-          break
-        case "Computer Hardware":
-          switch (round) {
-            case 5:
-              while ((await corpRun(ns, 'getOffice', div, city)).size < 4500 && await corpFunds(ns) >= (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
-              while ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size && (await corpRun(ns, 'hireEmployee', div, city))) { }
-              await resetOffice(ns, div, city)
-              {
-                await setJob(ns, div, city, "Operations", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
-                await setJob(ns, div, city, "Business", 1)
-                await setJob(ns, div, city, "Engineer", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4))
-                await setJob(ns, div, city, "Management", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
-                const office = (await corpRun(ns, 'getOffice', div, city))
-                const left = office.numEmployees - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - 1
-                await setJob(ns, div, city, "Research & Development", left)
-              }
-              break
-          }
-          break
-        case "Refinery":
-          switch (round) {
-            case 5:
-              while ((await corpRun(ns, 'getOffice', div, city)).size < 6500 && await corpFunds(ns) >= (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
-              while ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size && (await corpRun(ns, 'hireEmployee', div, city))) { }
-              await resetOffice(ns, div, city)
-              {
-                await setJob(ns, div, city, "Operations", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
-                await setJob(ns, div, city, "Business", 1)
-                await setJob(ns, div, city, "Engineer", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4))
-                await setJob(ns, div, city, "Management", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
-                const office = (await corpRun(ns, 'getOffice', div, city))
-                const left = office.numEmployees - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - 1
-                await setJob(ns, div, city, "Research & Development", left)
-              }
-              break
-          }
-          break
-        case "Mining":
-          switch (round) {
-            case 5:
-              while ((await corpRun(ns, 'getOffice', div, city)).size < 1500 && await corpFunds(ns) >= (await corpRun(ns, 'getOfficeSizeUpgradeCost', div, city, 1))) (await corpRun(ns, 'upgradeOfficeSize', div, city, 1))
-              while ((await corpRun(ns, 'getOffice', div, city)).numEmployees < (await corpRun(ns, 'getOffice', div, city)).size && (await corpRun(ns, 'hireEmployee', div, city))) { }
-              await resetOffice(ns, div, city)
-              {
-                await setJob(ns, div, city, "Operations", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4))
-                await setJob(ns, div, city, "Business", 1)
-                await setJob(ns, div, city, "Engineer", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
-                await setJob(ns, div, city, "Management", Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3))
-                const office = (await corpRun(ns, 'getOffice', div, city))
-                const left = office.numEmployees - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 3) - Math.floor((await corpRun(ns, 'getOffice', div, city)).numEmployees / 4) - 1
-                await setJob(ns, div, city, "Research & Development", left)
-              }
               break
           }
           break
@@ -2988,6 +3130,36 @@ async function manualSalePrice(ns, div, city, name, item, isProduct, exported = 
 }
 
 /** @param {NS} ns */
+async function sellCashOutput(ns) {
+  const divisions = await corporationBatch(ns, 'getDivision', industries.filter(d => hasDivDB[d]).map(d => [d]))
+  const ta = await corporationBatch(ns, 'hasResearched', divisions.map(d => [d.name, 'Market-TA.II']))
+  const manual = researchedDB["Market Research - Demand"] && researchedDB["Market Data - Competition"]
+  const prod = [], mats = [], taProd = [], taMat = []
+  for (const [i,d] of divisions.entries()) {
+    const data = indDataDB[d.industry] ??= await corpRun(ns, 'getIndustryData', d.industry)
+    for (const city of d.cities) {
+      if (!hasWarehouseDB[d.name+city]) continue
+      for (const name of d.products) prod.push({key:[d.name,city,name], ta:ta[i]})
+      for (const name of data.producedMaterials ?? []) mats.push({key:[d.name,city,name], ta:ta[i]})
+    }
+  }
+  for (const [isProduct, rows] of [[true,prod], [false,mats]]) {
+    const stock = await corporationBatch(ns, isProduct ? 'getProduct' : 'getMaterial', rows.map(r => r.key))
+    const sales = []
+    for (const [i,{key,ta}] of rows.entries()) {
+      const item = stock[i]
+      if ((isProduct && item.developmentProgress !== 100) || !(item.stored > 0)) continue
+      if (ta && isProduct && !taProd.some(([d,n]) => d === key[0] && n === key[2])) taProd.push([key[0],key[2],true])
+      if (ta && !isProduct) taMat.push([...key,true])
+      // Use the live inventory after EXPORT. MAX sells what's actually left in this city.
+      const price = ta ? '0' : manual ? await manualSalePrice(ns, ...key, item, isProduct) : 'MP'
+      sales.push([...key,'MAX',price])
+    }
+    await corporationBatch(ns, isProduct ? 'setProductMarketTA2' : 'setMaterialMarketTA2', isProduct ? taProd : taMat)
+    await corporationBatch(ns, isProduct ? 'sellProduct' : 'sellMaterial', sales)
+  }
+}
+
 async function sell(ns) {
   for (const div of industries) {
     if (!hasDivDB[div]) continue
@@ -3055,7 +3227,8 @@ async function sell(ns) {
 async function getMult(ns, div, city) {
   if (!hasOfficeDB[div + city]) return [0, 0]
   const seed = bn3Reset && investOffer?.round === 1 && div === div1
-  const office = seed && hasOfficeDB[div + city]?.employeeProductionByJob
+  const cash = usesCashPolicy(investOffer?.round)
+  const office = (seed || cash) && hasOfficeDB[div + city]?.employeeProductionByJob
     ? hasOfficeDB[div + city] : await corpRun(ns, 'getOffice', div, city)
   const operationEmployeesProduction = office.employeeProductionByJob.Operations
   const engineerEmployeesProduction = office.employeeProductionByJob.Engineer
@@ -3069,23 +3242,22 @@ async function getMult(ns, div, city) {
   const officeMultiplierMaterial = balancingMultiplier * employeesProductionMultiplier;
 
   // Multiplier from Smart Factories
-  const upgradeMultiplier = 1 + (await corpRun(ns, 'getUpgradeLevel', "Smart Factories") * 0.03)
+  const factory = cash && Number.isFinite(cashPlan?.factory) ? cashPlan.factory : await corpRun(ns, 'getUpgradeLevel', "Smart Factories")
+  const upgradeMultiplier = 1 + factory * 0.03
   // Multiplier from researches
   let researchMultiplier = 1
   researchMultiplier *=
     (researchedDB[div + "Drones - Assembly"] ? 1.2 : 1)
     * (researchedDB[div + "Self-Correcting Assemblers"] ? 1.1 : 1);
-  if (hasDivDB[div].makesProducts) {
-    researchMultiplier *= (researchedDB[div + "uPgrade: Fulcrum"] ? 1.05 : 1);
-  }
-  if (seed) {
-    // prep refreshes the division each phase. The game already sums all six booster
-    // inventories; avoid relaunching up to 24 inventory readers per ingredient forecast.
+  const productResearch = hasDivDB[div].makesProducts && researchedDB[div + "uPgrade: Fulcrum"] ? 1.05 : 1
+  if (seed || cash) {
+    // The game publishes the division's booster multiplier. Fulcrum only boosts products.
     const mult = hasDivDB[div].productionMult
     if (Number.isFinite(mult) && mult >= 1)
       return [officeMultiplierMaterial * mult * upgradeMultiplier * researchMultiplier,
-        officeMultiplierProduct * mult * upgradeMultiplier * researchMultiplier]
+        officeMultiplierProduct * mult * upgradeMultiplier * researchMultiplier * productResearch]
   }
+  researchMultiplier *= productResearch
   let multSum = 0;
   if (!indDataDB[hasDivDB[div].industry])
     indDataDB[hasDivDB[div].industry] = await corpRun(ns, 'getIndustryData', hasDivDB[div].industry)

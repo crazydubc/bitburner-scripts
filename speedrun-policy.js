@@ -37,11 +37,12 @@ export function getHacknetPayoffSeconds(configured, snapshot, reset, now = Date.
   return Math.min(configured, Math.max(0, (deadline - now) / 1000 - 60));
 }
 
-/** Allow a milestone bribe while retaining growth capital and ten minutes of operating costs. */
+/** Protect setup in rounds 1–2 and growth in 3. Late profits are available for actual rep milestones. */
 export function getCorporationBribeReserve({funds, expenses = 0} = {}, round = 5) {
   if (!Number.isFinite(funds) || funds < 0 || !Number.isFinite(expenses) || expenses < 0 ||
     !Number.isInteger(round) || round < 1 || round > 5) return Infinity;
   // Never interrupt Agriculture/Tobacco/Chemical setup in the first two private rounds.
   if (round <= 2) return Infinity;
+  if (round >= 4) return Math.max(5e9, expenses * 600);
   return Math.max(1e12, expenses * 600, funds * 0.9);
 }

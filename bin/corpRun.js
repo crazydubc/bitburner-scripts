@@ -38,14 +38,43 @@ export async function main(ns) {
     const once = args[0] === '--once';
     const batch = once || args[0] === '--batch';
     if (once && fn !== 'buyMaterial') throw new Error('One-phase orders require buyMaterial');
-    if (fn === 'getInvestmentOffer' && args[0] === '--bn3-review') {
+    if (fn === 'hasCorporation' && args[0] === '--bribe-phase') {
+      if (!ns.corporation.hasCorporation()) { response = false; return; }
+      const corp = ns.corporation.getCorporation();
+      response = {round: corp.public ? 5 : ns.corporation.getInvestmentOffer().round, investorShares: corp.investorShares};
+      return;
+    }
+    if ((fn === 'getInvestmentOffer' && args[0] === '--bn3-review') || (fn === 'getCorporation' && args[0] === '--cash-plan')) {
       // Both information reads fit the ordinary helper budget. Optional plans live on home.
       const read = path => { try { return JSON.parse(ns.read(path) || 'null'); } catch { return null; } };
       const data = read('/Temp/affordable-augs.txt');
-      response = {offer: ns.corporation.getInvestmentOffer(), corporation: ns.corporation.getCorporation(),
+      const corporation = ns.corporation.getCorporation();
+      response = {offer: corporation.public ? {round:5, funds:0, shares:0} : ns.corporation.getInvestmentOffer(), corporation,
         snapshot: data && {current_node: data.current_node, last_aug_reset: data.last_aug_reset,
           generated_at: data.generated_at, stock_value_known: data.stock_value_known, reset_planning: data.reset_planning},
         route: read('/Temp/infiltration-target.txt')};
+      return;
+    }
+    if (fn === 'makeProduct' && args[0] === '--cash-project') {
+      const [, division, city, name, investment, retire, kept, phase] = args;
+      response = false;
+      if (![division,city,name].every(v => typeof v === 'string' && v.trim() === v && v.length) ||
+        /[<>]/.test(name) || typeof retire !== 'string' || retire === name ||
+        !(Number.isFinite(investment) && investment > 0 && Number.isFinite(kept) && kept >= 0)) return;
+      const methods = ['getCorporation', 'getDivision', fn, ...(retire ? ['discontinueProduct'] : [])];
+      const ram = methods.reduce((n, method) => n + ns.getFunctionRamCost(`corporation.${method}`), ns.getFunctionRamCost('baseCost'));
+      if (ns.ramOverride(ram) < ram) return; // Keep producing; try the project next cycle.
+      const corp = ns.corporation.getCorporation();
+      if (corp.nextState !== phase || !corp.divisions.includes(division)) return;
+      const all = corp.divisions.map(d => ns.corporation.getDivision(d));
+      const line = all.find(d => d.name === division);
+      const bills = all.reduce((n,d) => d.thisCycleExpenses >= 0 ? n + d.thisCycleExpenses : NaN,0);
+      if (!Number.isFinite(bills) || !(corp.funds - bills - kept >= investment * 2) || !line?.makesProducts ||
+        !line.cities.includes(city) || line.products.includes(name) ||
+        (retire ? line.products.length !== line.maxProducts || !line.products.includes(retire) : line.products.length >= line.maxProducts)) return;
+      if (retire) ns.corporation.discontinueProduct(division, retire);
+      ns.corporation[fn](division, city, name, investment, investment);
+      response = true;
       return;
     }
     if (fn === 'acceptInvestmentOffer' && args[0] === '--if-current') {

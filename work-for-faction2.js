@@ -18,8 +18,6 @@ const INFILTRATION_POLL_INTERVAL = 5 * 1000;
 const INVITE_REPLAN_INTERVAL = 15 * 1000;
 const GANG_KARMA_REQUIREMENT = -54_000;
 const COMPANY_FACTION_REP = 400_000;
-const CORPORATION_BRIBE_MIN_RESERVE = 1e12;
-const CORPORATION_BRIBE_OPERATING_RESERVE_SECONDS = 10 * 60;
 
 /** Wake for the next actual deadline; screen requests should not wait for the full planning interval. */
 export function factionWorkerDelay(now, nextPlan, nextProgressCheck, activePlan, infiltrationEnabled) {
@@ -27,42 +25,6 @@ export function factionWorkerDelay(now, nextPlan, nextProgressCheck, activePlan,
   return Math.max(50, Math.min(LOOP_SLEEP, nextPlan - now,
     repPlan ? nextProgressCheck - now : Infinity,
     infiltrationEnabled ? INFILTRATION_POLL_INTERVAL : Infinity));
-}
-
-/** Return the exact full bribe cost, or zero when corporation excess cannot finish the target. */
-export function getCorporationBribeAmount({
-  funds,
-  expenses = 0,
-  currentRep,
-  targetRep,
-  bribeAmountPerReputation,
-  minimumReserve = CORPORATION_BRIBE_MIN_RESERVE,
-  operatingReserveSeconds = CORPORATION_BRIBE_OPERATING_RESERVE_SECONDS,
-} = {}) {
-  const corporationFunds = Number(funds);
-  const corporationExpenses = Math.max(0, Number(expenses) || 0);
-  const current = Number(currentRep);
-  const target = Number(targetRep);
-  const costPerRep = Number(bribeAmountPerReputation);
-  if (!Number.isFinite(corporationFunds) || corporationFunds <= 0 ||
-    !Number.isFinite(current) || !Number.isFinite(target) || target <= current ||
-    !Number.isFinite(costPerRep) || costPerRep <= 0) return 0;
-
-  const reserve = Math.max(
-    Math.max(0, Number(minimumReserve) || 0),
-    corporationExpenses * Math.max(0, Number(operatingReserveSeconds) || 0),
-  );
-  const required = Math.ceil((target - current) * costPerRep);
-  return corporationFunds - reserve >= required ? required : 0;
-}
-
-
-/** Normalize the only dynamic Corporation API arguments before they reach ns.exec(). */
-export function normalizeCorporationBribeRequest(plan, amount) {
-  const faction = typeof plan?.faction === "string" ? plan.faction.trim() : "";
-  const numericAmount = Number(amount);
-  if (!faction || !Number.isFinite(numericAmount) || numericAmount <= 0) return null;
-  return { faction, amount: numericAmount };
 }
 
 const FACTIONS = [
@@ -658,9 +620,10 @@ export async function main(ns) {
     if (!faction || !Number.isFinite(targetRep)) return false;
 
     try {
-      if (await corpRun(ns, "hasCorporation") !== true) return false;
+      const phase = await corpRun(ns, "hasCorporation", "--bribe-phase");
+      if (!phase || !Number.isInteger(phase.round) || phase.round < 3 || !Number.isSafeInteger(phase.investorShares)) return false;
 
-      const result = await runScriptLocal(ns, 'bin/bribe-faction.js', false, [faction, targetRep]);
+      const result = await runScriptLocal(ns, 'bin/bribe-faction.js', false, [faction, targetRep, phase.round, phase.investorShares]);
       if (!result || typeof result !== 'object' || !Number.isFinite(result.updatedRep) ||
         !Number.isFinite(result.amount)) throw new Error(`Invalid bribe result: ${String(result)}`);
       if (!result.success) return false;

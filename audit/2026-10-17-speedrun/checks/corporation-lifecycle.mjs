@@ -186,10 +186,11 @@ for (const initialRound of [1, 2, 3, 4]) {
     let round=${initialRound}, investOffer;
     let reads=0;
     async function prep() { reads++; investOffer={round:5}; return true; }
-    async function updateHud() { state.reads=reads; throw STOP; }
+    async function runCashPhase(ns, round) { state.round=round; state.reads=reads; throw STOP; }
     ${loop}`);
   const state = {};
   await assert.rejects(run({}, state, STOP), error => error === STOP);
+  assert.equal(state.round, 5);
   assert.equal(state.reads, 2, 'Re-enter public management after refreshing the phase');
 }
 for (const rate of [-0.01, 1.01, NaN]) {

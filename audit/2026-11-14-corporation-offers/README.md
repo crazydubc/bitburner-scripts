@@ -8,8 +8,10 @@ BN3 now prices the next stage from the current divisions, unlocks, office sizes,
 | --- | --- |
 | 1 → 2 | Fund the Agriculture footprint, market data, six Tobacco cities, the design office and first project. Prefer funding Chemical and Export too when reachable soon. See the [BN3 opener comparison](../2026-11-14-corporation-opener/README.md). |
 | 2 → 3 | Cover unfinished setup, the next Tobacco design and the first HQ hires. The larger opportunities are the HQ and then all six offices at the round-three staffing target. |
-| 3 → 4 | Fund the next design and HQ hires. Compare raising the rest for the round-four offices now with earning it after advancing. |
-| 4 → IPO | Price the missing Restaurant footprint and its next project. When a fresh augmentation plan is waiting for player cash, estimate dividends from actual profit, retained shares, tribute and the configured rate. |
+| 3 → 4 | Compare the offer to operating earnings and the cost of the next design at the earning division. Keep production running. |
+| 4 → IPO | Use the same production and cash test. An affordable faction bribe or a real player dividend gap can justify funding. Restaurant is not required. |
+
+See the [late production and bribe policy](../2026-11-15-corporation-production/README.md) for the current implementation. The remainder describes the earlier funding and design fixes.
 
 **BN3.2 follow-up: round five with two unfinished v1s.** The screenshots show $1.627b–$1.664b in company funds, $8.41m/s net across all divisions, and zero revenue for Tobacco and Restaurant. Tobacco has a staffed design office and v1 is 28.18% complete. Restaurant has three people at its design office: zero Operations, zero Engineering, one Business and two Management. The manager took the integer part of one quarter of three for each technical role. Management multiplies technical productivity, so that mix yields exactly zero design progress. Recipe materials and storage are not involved in this calculation.
 

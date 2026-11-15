@@ -8,7 +8,7 @@ import {main as goStatsMain} from '../../../bin/go-stats.js';
 import {main as bribeMain} from '../../../bin/bribe-faction.js';
 import {getStocksValue, getGoSnapshot, getRunningScriptNames, isScriptRunning} from '../../../utils.js';
 import {getHacknetPayoffSeconds, getCorporationBribeReserve} from '../../../speedrun-policy.js';
-import {getCorporationBribeAmount, normalizeCorporationBribeRequest} from '../../../work-for-faction2.js';
+import {main as phaseMain} from '../../../bin/corpRun.js';
 import {updateRunLog, RUNLOG_FILE} from '../../../logger.js';
 import {EARLY_UNLOCK_ROUTE, selectNextBitNode} from '../../../progression.js';
 import {selectGoOpponent, HIDDEN_GO_OPPONENT} from '../../../go.js';
@@ -165,26 +165,27 @@ assert.match(await helper(horizonMain, {...io, args: ['update', now, 1]}), /^ERR
 
 // Bribe the selected milestone well below the former 1e18 reserve; do not raid setup/growth/operating cash.
 const corp = {funds: 20e15, expenses: 1e9};
-const bribe = reserve => getCorporationBribeAmount({...corp, currentRep: 0, targetRep: 1e6,
-  bribeAmountPerReputation: 1e9, minimumReserve: reserve});
-assert.equal(bribe(getCorporationBribeReserve(corp, 3)), 1e15);
-assert.equal(bribe(getCorporationBribeReserve(corp, 2)), 0);
-assert.equal(bribe(getCorporationBribeReserve({...corp, expenses: 40e12}, 3)), 0);
-assert.equal(bribe(getCorporationBribeReserve({...corp, funds: NaN}, 3)), 0);
+assert.equal(getCorporationBribeReserve(corp, 2), Infinity);
+assert.equal(getCorporationBribeReserve(corp, 3), corp.funds * .9);
+assert.equal(getCorporationBribeReserve(corp, 5), 600e9);
+assert.equal(getCorporationBribeReserve({...corp, funds: NaN}, 4), Infinity);
 {
   const text = source('work-for-faction2.js');
   const code = section(text, '  async function tryCorporationBribe(', '  async function executeRepPlan(');
-  const calls = [], events = []; let rep = 0, round = 3, funds = corp.funds;
+  const calls = [], events = []; let rep = 0, round = 3, funds = corp.funds, bills = 0, shares = 450e6, valuation = 1e15, race;
   const corporation = {
-    getCorporation: () => ({...corp, funds, valuation: 1e15}),
+    hasCorporation: () => true,
+    getCorporation: () => ({...corp, funds, valuation, public:round===5, divisions:['Tobacco'], investorShares:shares}),
+    getDivision: () => ({thisCycleExpenses:bills}),
     getConstants: () => ({bribeThreshold: 100e12, bribeAmountPerReputation: 1e9}),
     getInvestmentOffer: () => ({round}),
     bribe: (faction, amount) => {calls.push({faction, amount}); funds -= amount; rep += amount / 1e9; return true;},
   };
   const run = Function('corpRun', 'runScriptLocal', 'recordRunEvents', `
     const ns={format:{number:String}}, factionRep={}, log=()=>{};let lastCorporationBribeError='';
-    ${code};return tryCorporationBribe;`)(async (_ns, method, faction, amount) => {
-      assert.equal(method, 'hasCorporation'); return true;
+    ${code};return tryCorporationBribe;`)(async (_ns, ...args) => {
+      const phase = await helper(phaseMain, {args, corporation, ramOverride:n=>n});
+      race?.(); race=undefined; return phase;
     }, async (_ns, file, persistent, args) => {
       assert.equal(file, 'bin/bribe-faction.js');
       return helper(bribeMain, {args, corporation, singularity: {getFactionRep: () => rep}});
@@ -195,6 +196,15 @@ assert.equal(bribe(getCorporationBribeReserve({...corp, funds: NaN}, 3)), 0);
   round = 2; rep = 0; assert(!await run({faction:'Daedalus',targetRep:1e6})); assert.equal(calls.length, 1);
   round = 3; funds = 5e15; assert(!await run({faction:'Daedalus',targetRep:1e6}));
   assert.equal(calls.length, 1, 'An earlier quote must not spend money consumed by intervening upgrades');
+  round=4; funds=2e12; bills=500e9; const target={faction:'Daedalus',targetRep:1000,kind:'faction-rep'};
+  assert(!await run(target),'Book unpaid material purchases before a late bribe');
+  bills=400e9; valuation=99e12; assert(!await run(target),'Ineligible valuation');
+  valuation=100e12; race=()=>{shares+=1;}; assert(!await run(target),'Equity changed between helpers');
+  assert(await run(target)); assert.equal(funds,1e12);
+  assert(await run(target)); assert.equal(calls.length,2,'Already earned reputation is never bought twice');
+  round=5; rep=900; assert(!await run(target),'Final cash still covers bills and the operating reserve');
+  bills=300e9; assert(await run(target)); assert.equal(calls.at(-1).amount,100e9);
+
 }
 
 assert.equal(selectGoOpponent('hidden', true, {ownedAugs:new Map()}, () => 0), 'Netburners');
