@@ -23,8 +23,9 @@ const warehouseCost = build(section(source('Corporation/Actions.ts'), 'export fu
 const accept = build(section(source('Corporation/Actions.ts'), 'export function acceptInvestmentOffer(',
   'export function convertPriceString('), {corpConstants:C}, 'acceptInvestmentOffer');
 const LongTermFundsSources = build(source('Corporation/data/FundsSource.ts'), {}, 'LongTermFundsSources');
+const nodeMults={CorporationValuation:1};
 const Corporation = build(source('Corporation/Corporation.ts'), {...helpers, LongTermFundsSources, corpConstants:C,
-  currentNodeMults:{CorporationValuation:1}}, 'Corporation');
+  currentNodeMults:nodeMults}, 'Corporation');
 const Office = build(source('Corporation/OfficeSpace.ts'), helpers, 'OfficeSpace');
 const ag = Function('return (' + section(source('Corporation/data/IndustryData.ts'),
   '  [IndustryType.Agriculture]: ', '  [IndustryType.Refinery]: ').split(']: ')[1].trim().replace(/,$/,'') + ')')();
@@ -35,6 +36,7 @@ const one = () => 1;
 const ns = {format:{number:String}};
 
 async function run(manager, testCase) {
+  nodeMults.CorporationValuation=testCase.valuation??1;
   const old = manager === previous, upgrades = Object.fromEntries(Object.keys(upgradeByName).map(k=>[k,0]));
   const offices = {}, warehouses = {};
   for (const city of cities) {
@@ -54,7 +56,7 @@ async function run(manager, testCase) {
   division.calculateProductionFactors();
   const seed = 150e9 - ag.startingCost - 5*(C.officeInitialCost+C.warehouseInitialCost) - 2.06e9 - 6*seatCost(3,1);
   const corp = Object.assign(Object.create(Corporation.prototype), {funds:seed, divisions:new Map([[division.name,division]]),
-    investorShares:5e8,totalShares:1.5e9,numShares:1e9,fundingRound:0,public:false,numSharesSold:0,
+    investorShares:testCase.valuation?0:5e8,totalShares:testCase.valuation?1e9:1.5e9,numShares:1e9,fundingRound:0,public:false,numSharesSold:0,
     state:{nextName:'START'}, revenue:0,expenses:0,valuationsList:[],valuation:0,totalAssets:0,numberOfOfficesAndWarehouses:12,
     getEmployeeCreMultiplier:one,getEmployeeChaMult:one,getEmployeeIntMult:one,getEmployeeEffMult:one,getScientificResearchMult:one,
     getProductionMultiplier:()=>1+.03*upgrades['Smart Factories'],getSalesMult:()=>1+.01*upgrades['ABC SalesBots'],
@@ -77,7 +79,7 @@ async function run(manager, testCase) {
       case 'hasResearched':case 'hasUnlock':return false;
       case 'getUnlockCost':return a[0]==='Export'?20e9:5e9;
       case 'hasWarehouse':return !!w; case 'getWarehouse':return {size:w.size,level:w.level,sizeUsed:w.sizeUsed};
-      case 'getOffice':return o; case 'setJobAssignment':return o.autoAssignJob(a[2],a[3]);
+      case 'getHireAdVertCost':return 1e9*1.06**2; case 'getOffice':return o; case 'setJobAssignment':return o.autoAssignJob(a[2],a[3]);
       case 'getUpgradeLevel':return upgrades[a[0]]; case 'getUpgradeLevelCost':return upgradeCost(a[0]);
       case 'getUpgradeWarehouseCost':return warehouseCost(w.level,1);
       case 'levelUpgrade':spend(upgradeCost(a[0]));upgrades[a[0]]++;resize();return true;
@@ -105,16 +107,16 @@ async function run(manager, testCase) {
   }
   // Use the actual old per-phase SalesBots block, not a guessed spend rate.
   const botBlock=section(previous,'      if (hasCompleteDivisionInfrastructure(div1)) {\n        const upgradeCost','      await ns.corporation.nextUpdate();');
-  const m=Function('corpRun','log','recordRunEvents','info',bare(manager)+`
-    bn3Reset={currentNode:3}; bnMults={CorporationValuation:1}; teaNeeded=false; indDataDB.Agriculture=${JSON.stringify(ag)};
+  const m=Function('corpRun','log','recordRunEvents','info','nodeMults',bare(manager)+`
+    bn3Reset={currentNode:nodeMults.CorporationValuation===1?3:nodeMults.CorporationValuation===.2?7:13}; bnMults=nodeMults; teaNeeded=false; indDataDB.Agriculture=${JSON.stringify(ag)};
     for (const c of cities) hasOfficeDB[div1+c]=hasWarehouseDB[div1+c]=true;
     return {refresh:offer=>{investOffer=offer;hasDivDB[div1]=info();pendingInputPurchases=0;},
       getMult,manageOffice,checkInvest,purchase,purchaseBoostMaterials,quoteBn3Stage,
       seedSales:${old?'null':'setSeedSales'},sell,
       grow:async ns=>{${old?'await warehouseUpgrade(ns);await manageRoundOneBoostMaterials(ns)':'await growSeedAgriculture(ns)'}},
-      bots:async ns=>{${old?botBlock:''}}};`)(rpc,()=>{},async()=>{},info);
+      bots:async ns=>{${old?botBlock:''}}};`)(rpc,()=>{},async()=>{},info,nodeMults);
   const configured=new Set();
-  for(cycle=1;cycle<=200&&!acceptCycle;cycle++){
+  for(cycle=1;cycle<=(testCase.valuation?5000:200)&&!acceptCycle;cycle++){
     for(phase of ['START','PURCHASE','PRODUCTION','EXPORT','SALE']){
       corp.state.nextName=phase;
       m.refresh(corp.getInvestmentOffer());
@@ -123,7 +125,7 @@ async function run(manager, testCase) {
         const stage=await m.quoteBn3Stage(ns,1,company(),C);
         minTarget=stage.minimum;
         reservePlan=20e9+5*(C.officeInitialCost+C.warehouseInitialCost)+10e9+2e9+10e9+Math.max(5e9,corp.expenses*30)+seatCost(3,7);
-        if(!old)assert(Math.abs(stage.tobaccoCapital-reservePlan)<1);
+        if(!old) {assert(stage.supportCapital>=(testCase.valuation?20e9:90e9) && stage.full>=stage.supportCapital);reservePlan=stage.supportCapital;}
         maxCapital=Math.max(maxCapital,corp.funds-expenses+corp.getInvestmentOffer().funds);
         if(!firstTobacco&&corp.revenue>0&&corp.funds-expenses+corp.getInvestmentOffer().funds>=reservePlan)firstTobacco=cycle;
         if(!firstEligible&&corp.revenue>0&&corp.funds-expenses+corp.getInvestmentOffer().funds>=stage.minimum)firstEligible=cycle;
@@ -150,13 +152,21 @@ async function run(manager, testCase) {
   assert(minCash>=5e9-.01);assert(hqSales>0);
   return {tobaccoEligible:firstTobacco,fullEligible:firstEligible,accepted:acceptCycle,offerB:amount&&Math.round(amount/1e9),
     spendB:+(spentGrowth/1e9).toFixed(2),minCashB:+(minCash/1e9).toFixed(2),maxCapitalB:+(maxCapital/1e9).toFixed(1),
-    postCashB:postCash&&+(postCash/1e9).toFixed(1),targetB:+(minTarget/1e9).toFixed(1),upgrades};
+    postCashB:postCash&&+(postCash/1e9).toFixed(1),transitionB:+(reservePlan/1e9).toFixed(1),targetB:+(minTarget/1e9).toFixed(1),upgrades};
 }
 for(const [name,opts] of Object.entries({standard:{},researched:{rp:60},expensiveBoosters:{boost:2},weakMarket:{price:.75}})){
   const before=await run(previous,opts), after=await run(current,opts);
   console.log(JSON.stringify({name,before,after}));
   assert(after.accepted&&after.accepted>=after.tobaccoEligible,name);
-  if(after.fullEligible)assert.equal(after.accepted,after.fullEligible,name);
+  if(after.fullEligible)assert(after.accepted>=after.fullEligible || after.accepted>=after.tobaccoEligible+11,name);
   assert(!before.accepted||(after.accepted&&after.accepted<before.accepted),name);
   assert.equal(after.upgrades['ABC SalesBots'],0);assert(after.spendB<before.spendB,name);
+}
+
+// Identical paid seed farm; only discount investor valuations, never shop prices.
+for (const valuation of [.2,.001]) {
+  const result=await run(current,{valuation});console.log(JSON.stringify({seedValuation:valuation,result}));
+  assert(result.accepted && result.postCashB>=result.transitionB && result.transitionB>=27 && result.minCashB>=5);
+  if (valuation===.2) assert(result.offerB>=20,'Keep farming when financing a full new division is achievable');
+  else assert(result.accepted<60,'Do not reinvest cash already sufficient to launch Tobacco for negligible fundraising');
 }

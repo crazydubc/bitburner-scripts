@@ -87,9 +87,10 @@ export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,u
       case 'getUpgradeLevel':return levels[k]??0;case 'getOfficeSizeUpgradeCost':return seatCost(o,n);
       case 'upgradeOfficeSize':{const price=seatCost(o,n);assert(corp.funds>=price);corp.funds-=price;o.size+=n;return;}
       case 'hireEmployee':return o.hireRandomEmployee(CorpEmployeeJob.Unassigned);
-      case 'getIndustryData':return l.specs;case 'getUpgradeLevelCost':return costs.factory;
-      case 'getHireAdVertCost':return costs.advert;
-      case 'hireAdVert':corp.funds-=costs.advert;return;
+      case 'getIndustryData':return l.specs;case 'getUpgradeLevelCost':return k==='Wilson Analytics'?(costs.wilson??costs.factory):costs.factory;
+      case 'levelUpgrade':assert.equal(k,'Wilson Analytics');corp.funds-=rpc(_, 'getUpgradeLevelCost',k);levels[k]=(levels[k]||0)+1;return;
+      case 'getHireAdVertCost':return costs.advert*1.06**(l.d.numAdVerts||0);
+      case 'hireAdVert':corp.funds-=rpc(_,'getHireAdVertCost',k);l.d.numAdVerts=(l.d.numAdVerts||0)+1;return;
       case 'getWarehouse':return {size:w.size,sizeUsed:w.sizeUsed,level:w.level};
       case 'getMaterial':return {...w.materials[n]};case 'getMaterialData':return MaterialInfo[k];
       case 'hasUnlock':return true;case 'hasResearched':return (ta && c==='Market-TA.II') || ownedResearch.has(c);
@@ -168,7 +169,8 @@ seedSell('Tobacco',25); lines.Tobacco.d.awareness=lines.Tobacco.d.popularity=0;
 await f.prepare();const initial=api.plan().floor;
 assert.equal(initial,1.425e12);assert.equal(await api.budget(ns),475e9);
 await f.prepare();assert.equal(api.plan().floor,initial,'Repeated state is not new earnings');
-f.costs.advert=1e9;await api.growCashDivision(ns);assert.deepEqual(f.calls.filter(([m])=>m==='hireAdVert'),[['hireAdVert','Tobacco']]);
+f.costs.advert=1e9;await api.growCashDivision(ns);assert(!f.calls.some(([m])=>m==='hireAdVert'),'Wait for EXPORT to buy an advert');
+corp.nextState='EXPORT';await api.growCashDivision(ns);assert.deepEqual(f.calls.filter(([m])=>m==='hireAdVert'),[['hireAdVert','Tobacco']]);
 await api.manageProducts(ns);assert(lines.Tobacco.products.has('Prod v8'));assert(!f.calls.some(([m,d])=>['makeProduct','discontinueProduct'].includes(m)&&d==='Restaurant'));
 seedSell('Restaurant',10);lines.Restaurant.d.lastCycleRevenue=2e9;
 await f.cycle();assert.equal(api.plan().focus,'Tobacco');await f.cycle();assert.equal(api.plan().focus,'Tobacco');
@@ -192,6 +194,20 @@ for(let i=0;i<60;i++){corp.funds+=(corp.revenue-corp.expenses)*10*.99;await f.cy
 assert.equal(api.plan().floor-base,237.6e9,'60 distinct completed operating cycles at $800m/s, 1% dividends, half retained');
 assert.equal(api.use(2),false);assert.equal(api.use(3),true);assert.equal(api.use(4),true);assert.equal(api.use(5),true);
 assert(!f.calls.some(([m])=>m==='expandIndustry'));
+
+// At high awareness Wilson has no stand-alone effect. It can beat another
+// expensive advert when it is paid first and there is cash for the follow-up.
+const campaign=fixtures(after,{funds:100e12}), line=campaign.lines.Tobacco;
+Object.assign(line.d,{awareness:1e6,popularity:1e6,lastCycleRevenue:1e12});
+for (const product of line.products.values()) for (const row of Object.values(product.cityData))
+  Object.assign(row,{actualSellAmount:10,productionAmount:30});
+campaign.costs.advert=100e9;campaign.costs.wilson=4e9;await campaign.prepare();
+campaign.corp.nextState='EXPORT';const bank=campaign.corp.funds;
+await campaign.api.growCashDivision(campaign.ns);
+const actions=campaign.calls.filter(([m])=>m==='hireAdVert'||m==='levelUpgrade');
+assert.deepEqual(actions[0],['levelUpgrade','Wilson Analytics']);assert(actions.length>=2 && actions.length<=9);
+assert(actions.slice(1).every(([m,d])=>m==='hireAdVert'&&d==='Tobacco'));
+assert(bank>campaign.corp.funds && campaign.corp.funds>=campaign.api.plan().floor);
 
 // Do not retire a city's only selling product to create an untested replacement.
 const sole=fixtures(after,{funds:1e12});const retained=sole.lines.Tobacco.products.get('Prod v5');

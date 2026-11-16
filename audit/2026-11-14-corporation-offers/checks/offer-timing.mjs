@@ -34,7 +34,7 @@ function fixture(options = {}, manager = current) {
     public: false, revenue: settings.revenue, expenses: settings.expenses, totalShares: 1e9, investorShares,
     numShares: 1e9-investorShares, tributeModifier: .15, totalAssets: settings.funds, nextState: 'START'});
   const divisions = Object.fromEntries(names.map(name => [name, {name, industry:name, cities: settings.cities?.[name] ?? cities,
-    thisCycleExpenses: name === 'Agriculture' ? (settings.unpaid ?? 0) : 0,
+    researchPoints:settings.research?.[name] ?? 800, numAdVerts:name==='Agriculture'?2:0, lastCycleRevenue:settings.revenue,lastCycleExpenses:settings.expenses, thisCycleExpenses: name === 'Agriculture' ? (settings.unpaid ?? 0) : 0,
     products: name === 'Tobacco' ? (settings.products ?? ['Prod v1']) : []}]));
   const snapshot = {generated_at: now, current_node: 3, last_aug_reset: reset.lastAugReset, stock_value_known: true,
     reset_planning: {version: 1, wealth: 1e9, goals: [], reputation: {CyberSec: 0}}};
@@ -66,6 +66,9 @@ function fixture(options = {}, manager = current) {
       case 'hasWarehouse': return args.join(':') !== settings.missingWarehouse;
       case 'hasUnlock': return !(settings.locked ?? []).includes(args[0]);
       case 'getUnlockCost': return args[0] === 'Export' ? 20e9 : 5e9;
+      case 'getHireAdVertCost':return 1.06**2*1e9;
+      case 'getWarehouse':return {level:2};
+      case 'getMaterial':return {productionAmount:settings.producing ?? 10,actualSellAmount:settings.selling ?? 10};
       case 'getOffice': return {size: settings.sizes?.[args[1]] ?? settings.size};
       case 'getUpgradeLevelCost': return args[0] === 'Wilson Analytics' ? 1e9 : 1e20;
       case 'getUpgradeLevel': return 500;
@@ -75,7 +78,7 @@ function fixture(options = {}, manager = current) {
   }
   const api = Function('corpRun','log','recordRunEvents','getCorporationBribeReserve','reset','divisions',
     bare(manager) + `
-      bnMults = {CorporationValuation: 1}; Object.assign(hasDivDB, divisions);
+      bnMults = {CorporationValuation: 1}; Object.assign(hasDivDB, divisions);researchedDB.Export=!!divisions.Chemical;
       for (const [name,d] of Object.entries(divisions)) for (const c of d.cities)
         hasOfficeDB[name+c]=hasWarehouseDB[name+c]=true;
       ${baseline ? '' : 'bn3Reset = reset;'}
@@ -112,10 +115,18 @@ for (const [round, options] of [[1,{names:['Agriculture'],locked:['Export','Mark
     [3,{size:106}],[4,{size:250}]]) {
   const f=fixture({round, ...options, quote:round===1?300e9:7.56e12});
   const p=await f.stage();
-  if(round===1) assert(Math.abs(p.minimum - (70e9+20e9+10*9e9+30e9+2e9+15e9+seatCost(3,7)))<1);
+  if(round===1) assert(p.minimum>=p.supportCapital && p.supportCapital===140e9);
   if(round===2) assert(Math.abs(p.full - (9e9+70e9+10*9e9+5e9+seatCost(10,96)+5*seatCost(3,103)))<1);
-  assert.equal(await f.run(13),round+1);
+  assert.equal(await f.run(26),round+1);
 }
+// Reported second cheque. The earlier manager considered a partly built v1
+// and existing treasury sufficient; it did not require a single producing farm.
+const badSettings={funds:20e9,quote:11.728e9,research:{Agriculture:95,Chemical:0},progress:18,sales:{},selling:0,producing:0,revenue:1e6,expenses:0.4e6};
+const lastBranch=execFileSync('git',['show','20d64bc:corporation.js'],{cwd:repo,encoding:'utf8'});
+const badBefore=fixture(badSettings,lastBranch),badNow=fixture(badSettings);
+assert.equal(await badBefore.run(13),3);assert.equal(await badNow.run(40),2);assert.equal(badNow.accepts(),0);assert.equal(badNow.api.review(),null);
+const fundedSeedLegacy=fixture({...badSettings,progress:100,sales:{Aevum:12},funds:80e9});
+assert.equal(await fundedSeedLegacy.run(40),2,'Existing cash must not make a token second cheque valuable');
 // A real, already-selling late Tobacco office does not need capital for speculatively
 // building a support division, six enormous offices or a Restaurant.
 for (const round of [3,4]) {
@@ -123,29 +134,16 @@ for (const round of [3,4]) {
   const stage=await lean.stage();assert.equal(stage.minimum,9e9);
   assert.equal(await lean.tick(),round+1);assert(!lean.calls.some(([fn,div])=>fn==='getIndustryData' && div!=='Tobacco'));
 }
-// A modest round-one offer must still cover the actual Tobacco project, HQ seats,
-// footprint, missing market data, incurred expenses and runway before it can qualify.
-const seedOpts={round:1,names:['Agriculture'],funds:8e9,unpaid:6e9,revenue:3e6,expenses:1e6,
+// The decision is based on the real price of paired Agriculture/Chemical sites,
+// not an inherited dollar gate. A single early high quote cannot sell the seed.
+const seedOpts={round:1,names:['Agriculture'],size:4,funds:8e9,unpaid:6e9,revenue:3e6,expenses:1e6,
   locked:['Market Research - Demand','Market Data - Competition','Export']};
 const seed=fixture(seedOpts), first=await seed.stage(), cash=2e9;
-assert(Math.abs(first.full-first.tobaccoCapital-(70e9+5*9e9+20e9))<1);
-assert(Math.abs(first.tobaccoCapital-(20e9+5*9e9+10e9+15e9+2e9+seatCost(3,7)))<1);
-seed.quote(first.tobaccoCapital-cash-1);
-assert.equal(await seed.run(25),1); assert.equal(seed.api.review(),null);
-assert.equal(await seed.api.budget(ns),cash-5e9,'Only unpaid bills and the reserve reduce cash; no review freeze');
-seed.quote(first.tobaccoCapital-cash+1);
-assert.equal(await seed.run(6),1);
-assert.equal(await seed.tick(first.tobaccoCapital-cash-1),1); // Losing the operating cushion resets the samples.
-seed.quote(first.tobaccoCapital-cash+1);
-assert.equal(await seed.run(11),1);assert.equal(await seed.tick(),2);
-const fullSeed=fixture(seedOpts); assert.equal(await fullSeed.tick(first.full-cash+1),2);
-const risingSeed=fixture(seedOpts);
-assert.equal(await risingSeed.run(12,i=>first.full-cash-(13-i)*5e9),1);
-assert.equal(await risingSeed.tick(first.full-cash-5e9),1);assert.equal(await risingSeed.tick(first.full-cash+1),2);
-const ownedExport=fixture({...seedOpts,names:['Agriculture','Chemical'],cities:{Chemical:['Sector-12']},
-  locked:['Market Research - Demand']});
-const lean=await ownedExport.stage();
-assert(Math.abs(lean.full-lean.tobaccoCapital-5*9e9)<1,'Do not defer the price of already-owned Chemical or Export');
+assert.equal(first.supportCapital,140e9);
+assert(first.full>first.supportCapital+6*seatCost(4,4));
+seed.quote(first.supportCapital-cash-1);assert.equal(await seed.run(25),1);assert.equal(seed.api.review(),null);
+seed.quote(first.supportCapital-cash+1);assert.equal(await seed.run(11),1);assert.equal(await seed.tick(),2);
+const fullSeed=fixture(seedOpts);fullSeed.quote(first.full-cash+1);assert.equal(await fullSeed.run(11),1);assert.equal(await fullSeed.tick(),2);
 const debt=fixture({funds:-4e9,unpaid:5e9,quote:20e9});
 assert.equal(await debt.run(13),2); assert.equal(debt.api.review(),null); assert.equal(debt.accepts(),0);
 assert.equal(await debt.tick(),2); assert.equal(debt.api.review(),null);

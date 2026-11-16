@@ -99,18 +99,20 @@ assert.equal(manufactured(144, 1), 24, 'Lower-quality Plants can reverse the vis
 assert.equal(manufactured(144, 2), 36, 'With identical materials, the stronger design stays stronger');
 assert.equal(manufactured(144, 1, 100, 36), 30, 'Effective rating also retains the quality of unsold stock');
 
-function researchHarness(source, points = 101000) {
+function researchHarness(source, points = 101000, round = 3, owned = []) {
   const state = {points, purchases: [], reads: 0};
   const api = manager(source, (method, args) => {
     if (method === 'getDivision') {state.reads++; return {researchPoints: state.points};}
+    if (method === 'hasResearched') return owned.includes(args[1]);
     if (method === 'getResearchCost') return ResearchMap[args[1]].cost;
     if (method === 'research') {
       const cost = ResearchMap[args[1]].cost;
       assert(state.points >= cost, 'Research purchase must be affordable');
+      assert(!owned.includes(args[1])); owned.push(args[1]);
       state.purchases.push({name: args[1], before: state.points, cost}); state.points -= cost; return;
     }
     assert.fail(`Unexpected research RPC ${method}`);
-  }, {industry: 'Tobacco'});
+  }, {industry: 'Tobacco'}, round);
   return {state, api};
 }
 let r = researchHarness(baseline);
@@ -138,6 +140,20 @@ r = researchHarness(current, 61000);
 await r.api.runResearchList({}, 'Tobacco', lowRatioList, 2);
 assert.equal(r.state.points, 41000);
 assert(r.state.purchases.every(({before, cost}) => cost < before / 2));
+
+// Public/cash-policy companies save the full cost of the TA chain and keep
+// half of the live research bank for the product. Imports/restarts can already own TA.I.
+for (const ownsFirst of [false,true]) {
+  const levels=['Market-TA.I','Market-TA.II'].slice(ownsFirst?1:0);
+  const cost=levels.reduce((n,k)=>n+ResearchMap[k].cost,0);
+  const owned=['Hi-Tech R&D Laboratory',...(ownsFirst?['Market-TA.I']:[])];
+  const r=researchHarness(current,cost*2-1,5,owned);
+  await r.api.spendRP({}); assert.deepEqual(r.state.purchases,[]);
+  ++r.state.points; await r.api.spendRP({});
+  assert.deepEqual(r.state.purchases.map(x=>x.name),levels);
+  assert.equal(r.state.points,cost);
+  await r.api.spendRP({}); assert.deepEqual(r.state.purchases.map(x=>x.name),levels);
+}
 
 function lineup(source, options = {}) {
   const names = options.names ?? ['Prod v1', 'Prod v2', 'Prod v3'];

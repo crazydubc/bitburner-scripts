@@ -78,8 +78,8 @@ function fixture(code, kind, options = {}) {
       // Isolate the round-two sale: bootstrap, HUD and development perform no work in this fixture.
       prep = async () => {setupDivision(); return true;}; updateHud = manageProducts = async () => {};
       return {main, sell, cache: ta2DB};
-    `)(corpRun, () => ({currentNode: 10, ownedSF: new Map([[3, 1]])}),
-    () => ({CorporationValuation: 0.5, CorporationSoftcap: 0.9, CorporationDivisions: 0.9}),
+    `)(corpRun, () => ({currentNode: options.node ?? 10, ownedSF: new Map([[3, 1]])}),
+    () => ({CorporationValuation: options.valuation ?? 0.5, CorporationSoftcap: 0.9, CorporationDivisions: 0.9}),
     (_ns, message) => state.logs.push(message), setup);
   if (options.entry) manager.cache[key] = {...options.entry};
   return {state, snapshot, cache: manager.cache, key, main: () => manager.main(ns), sell: () => manager.sell(ns)};
@@ -92,7 +92,9 @@ for (const kind of ['material', 'product']) {
   const method = kind === 'material' ? 'sellMaterial' : 'sellProduct';
   await assert.rejects(old.main(), new RegExp(`corporation\\.${method}: .*?Invalid value or expression for sell price field: .*?Price: INFINITY\\. sanitizedPrice: \\.`));
   assert(old.state.logs.some(s => s.includes('BN10: valuation x0.5')));
-  const fixed = fixture(after, kind, options);
+  // Exercise the same legacy price controller on a node still using it. Discounted
+  // round two now uses the supply-chain sale controller covered by supply-market.mjs.
+  const fixed = fixture(after, kind, {...options,node:1,valuation:1});
   const siblingKey = 'AgricultureSector-12Food';
   if (options.sibling) fixed.cache[siblingKey] = {...entry, markupLimit: 4};
   await assert.rejects(fixed.main(), error => error === STOP, 'Manager must reach the next corporation update');

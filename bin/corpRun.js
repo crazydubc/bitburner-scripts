@@ -69,7 +69,7 @@ export async function main(ns) {
         route: read('/Temp/infiltration-target.txt'), finishAt};
       return;
     }
-    if (fn === 'upgradeOfficeSize' && (args[0] === '--second-design' || args[0] === '--earning-line')) {
+    if (fn === 'upgradeOfficeSize' && ['--second-design','--earning-line','--first-design'].includes(args[0])) {
       const [policy, division, quotedCost, kept, phase, expected] = args;
       const city = policy === '--earning-line' ? args[6] : 'Sector-12';
       response = false;
@@ -78,22 +78,31 @@ export async function main(ns) {
       const ram = methods.reduce((n,m) => n + ns.getFunctionRamCost(`corporation.${m}`), ns.getFunctionRamCost('baseCost'));
       if (ns.ramOverride(ram) < ram) return;
       const corp = ns.corporation.getCorporation();
-      if (!corp.public || corp.nextState !== phase || !corp.divisions.includes(division)) return;
+      const first = policy === '--first-design', seats = first ? args[6] : 3;
+      if (!Number.isSafeInteger(seats) || seats<=0 || (first ? corp.public!==false : corp.public!==true) ||
+          corp.nextState!==phase || !corp.divisions.includes(division)) return;
       const all = corp.divisions.map(d => ns.corporation.getDivision(d));
       const line = all.find(d => d.name === division);
       if (!line?.cities.includes(city)) return;
-      if (policy === '--second-design') {
+      if (first) {
+        if (!Number.isSafeInteger(expected) || corp.investorShares!==expected || line.industry!=='Tobacco') return;
+        for (const n of line.products) {
+          if (n!=='Prod v1') return;
+          const p=ns.corporation.getProduct(division,city,n).developmentProgress;
+          if (!(p>=0 && p<100 && Number.isFinite(p))) return;
+        }
+      } else if (policy === '--second-design') {
         if (line.products.length !== 2 || !line.products.includes('Prod v1') || !line.products.includes('Prod v2')) return;
         const progress = ns.corporation.getProduct(division,city,'Prod v2').developmentProgress;
         if (!(progress >= 0 && progress < 100 && progress <= expected)) return;
       } else if (line.industry !== 'Tobacco' || JSON.stringify(line.products) !== expected ||
         line.products.filter(n => ns.corporation.getProduct(division,city,n).developmentProgress === 100).length < 2) return;
-      const cost = ns.corporation.getOfficeSizeUpgradeCost(division,city,3);
+      const cost = ns.corporation.getOfficeSizeUpgradeCost(division,city,seats);
       const bills = all.reduce((n,d) => d.thisCycleExpenses >= 0 ? n + d.thisCycleExpenses : NaN,0);
       if (!(cost > 0 && cost === quotedCost && corp.funds - bills - kept >= cost)) return;
       if (policy==='--earning-line' && (!(Number.isFinite(args[7]) && args[7]>=0) ||
         (corp.funds-bills>=args[7] && corp.funds-bills-cost<args[7]))) return;
-      ns.corporation[fn](division,city,3);
+      ns.corporation[fn](division,city,seats);
       response = true;
       return;
     }

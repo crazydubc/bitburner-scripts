@@ -1,5 +1,7 @@
 # BN3: when to take the next investment offer
 
+**Updated strategy:** The [supply-chain audit](../2026-11-15-corporation-supply/README.md) supersedes the Tobacco-first round-two plan below and covers discounted BitNodes. The comparisons here describe the earlier branch.
+
 The BN3 manager previously refused a round-two offer below $8.8t in combined cash and new funding, even after Tobacco was selling and the valuation window had settled. It used different fixed gates in the other three private rounds. None of those amounts is a BitNode completion requirement. Private investment goes to the **corporation**; it helps the player through productive investment, faction reputation or, after the IPO, dividends.
 
 BN3 now prices the next stage from the current divisions, unlocks, office sizes, product version and operating expenses. Other BitNodes keep their existing policy.

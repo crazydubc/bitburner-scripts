@@ -1,5 +1,7 @@
 # BN3: get from Agriculture to a funded Tobacco division
 
+**Updated strategy:** The [supply-chain audit](../2026-11-15-corporation-supply/README.md) supersedes the Tobacco-first round-two plan below and covers discounted BitNodes. The comparisons here describe the earlier branch.
+
 The old opener could spend the seed on empty capacity and then pause growth for twelve cycles as soon as any revenue appeared. A first harvest does not mean the company can afford its next division. The change is limited to the BN3 seed round; other nodes retain their paid/free API bootstrap.
 
 | Tactic | catloversg | Our testing branch |
