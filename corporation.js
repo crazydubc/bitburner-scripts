@@ -724,6 +724,7 @@ async function updateHud(ns) {
     if (line) {
       ns.printf("Tobacco: $%s/s net over %d market cycles%s", ns.format.number(line.net,3),
         line.samples.length, line.note ? ' | '+line.note : '')
+      if (cashPlan.rotation) ns.printf("Product lineup: %s",cashPlan.rotation)
       ns.printf("Average units sold/s, all cities: %s",Object.entries(line.soldByProduct)
         .map(([name,units])=>name+' '+ns.format.number(units,3)).join(' | '))
     }
@@ -1592,13 +1593,22 @@ function observeTobaccoEarnings(d, corp, liquid, constants, repCost) {
   const goods = cashPlan.goods[d.name], names = [...new Set(goods.map(g => g.product.name))].sort()
   if (names.length < 2) return null
   const key = JSON.stringify([d.name, names]), old = cashPlan.tobacco
-  const cities = {}, perProduct = {}
+  const cities = {}, perProduct = {}, produced = {}, receipts = {}
+  const prices=cashPlan.prices?.cycle===cashPlan.cycle-1 ? cashPlan.prices.values : null
+  let priced=!!prices, premium=0
   for (const {city,product:p} of goods) {
     const m = cities[city] ??= {made:0, sold:0}
     m.made += p.productionAmount; m.sold += p.actualSellAmount
     perProduct[p.name]=(perProduct[p.name] || 0)+p.actualSellAmount
+    produced[p.name]=(produced[p.name]||0)+p.productionAmount
+    const quote=prices?.[city+p.name], mp=p.productionCost, price=quote && quote[0]*mp+quote[1]
+    if ((p.actualSellAmount>0 || p.productionAmount>0) && (!(mp>0) || !(price>0))) priced=false
+    else {
+      receipts[p.name]=(receipts[p.name]||0)+(price||0)*p.actualSellAmount-(mp||0)/5*p.productionAmount
+      premium+=Math.max(0,(price||0)-(mp||0))*p.actualSellAmount
+    }
   }
-  const sample = {cities, perProduct, net:d.lastCycleRevenue-d.lastCycleExpenses,
+  const sample = {cities, perProduct, receipts, priced:priced && names.every(n=>produced[n]>0), premium, net:d.lastCycleRevenue-d.lastCycleExpenses,
     company:(corp.revenue-corp.expenses)*(1-corp.dividendRate)}
   const samples = [...(old?.key === key ? old.samples : []), sample].slice(-6)
   const avg = k => samples.reduce((a,s) => a+s[k],0)/samples.length
@@ -1620,7 +1630,11 @@ function observeTobaccoEarnings(d, corp, liquid, constants, repCost) {
   const floor = old?.key === key && Number.isFinite(old.floor) ?
     Math.min(liquid,old.floor+Math.max(0,sample.company)*constants.secondsPerMarketCycle/2) :
     ready ? liquid-Math.max(0,liquid-reserve)/4 : null
-  return {key,samples,market,soldByProduct,units,net,horizon,floor,ready,repCash:eligible ? repCost+reserve : 0,seconds:constants.secondsPerMarketCycle,
+  const settled=samples.filter(s=>s.priced)
+  const earnings=settled.length>=3 ? Object.fromEntries(names.map(n=>[n,
+    settled.reduce((sum,s)=>sum+(s.receipts[n]||0),0)/settled.length])) : null
+  const salePremium=earnings ? settled.reduce((sum,s)=>sum+s.premium,0)/settled.length : 0
+  return {key,samples,market,soldByProduct,earnings,salePremium,units,net,horizon,floor,ready,repCash:eligible ? repCost+reserve : 0,seconds:constants.secondsPerMarketCycle,
     note:old?.key === key ? old.note : ''}
 }
 
@@ -1696,6 +1710,48 @@ function officeDesignJobs(office, remote) {
   const more = cashOfficeJobs(office.numEmployees+3,remote,true).slice(0,5)
     .map((n,i)=>n*(unit[i] || (measured.length ? Math.min(...measured) : 0)))
   return {jobs,more}
+}
+
+// The current product stops earning for the entire development of its successor.
+function publicTobaccoWindow(d, office) {
+  const plan=cashPlan?.tobacco, rate=designRate(office)
+  if (!plan || cashPlan.goal || !(rate>0) || !(plan.horizon>0)) return 0
+  const timeLeft=cashPlan.finishAt>0 ? (cashPlan.finishAt-Date.now())/1000 :
+    d.maxProducts*Math.ceil(100/rate)*plan.seconds
+  return Math.max(0,Math.min(timeLeft,plan.horizon))
+}
+
+function profitableReplacement(d, cost, corp) {
+  const plan=cashPlan.tobacco, office=hasOfficeDB[d.name+'Sector-12']
+  const keep=message=>{cashPlan.rotation=message;return null}
+  if (!plan?.earnings || d.products.some(n=>!Object.hasOwn(plan.earnings,n)))
+    return keep('keeping sellers until three settled cycles price the full lineup')
+  const worst=selectLowestScoredProduct(d.products.map(name=>({name,score:plan.earnings[name]})))
+  if (!worst || !d.products.some(n=>n!==worst && plan.soldByProduct[n]>0))
+    return keep('waiting for another verified seller')
+  const horizon=publicTobaccoWindow(d,office), designTime=Math.ceil(100/designRate(office))*plan.seconds
+  if (!(horizon>designTime)) return keep('keeping all sellers: the next design would arrive after the cash or run goal')
+  const spec=indDataDB[d.industry]
+  if (!spec) return keep('waiting for Tobacco industry data')
+  const design=tobaccoDesign(officeDesignJobs(office,false).jobs,d.researchPoints,spec.scienceFactor,cost/2,cost/2)
+  if (!design) return keep('waiting for design office productivity')
+  // Product.finishProduct rolls competition from 0 to 70; do not credit a perfect roll.
+  const demand=d.awareness===0?20:Math.min(100,(1+(cost/2)**.1/100)*100*d.popularity/d.awareness)
+  let next=0
+  for (const [city,units] of Object.entries(plan.market)) {
+    if (!(units>0)) continue
+    const quality=cashPlan.plantQuality?.[city], office=hasOfficeDB[d.name+city]
+    const good=cashPlan.goods[d.name].find(g=>g.city===city && g.product.productionCost>0)
+    if (!Number.isFinite(quality) || !good || !office?.employeeProductionByJob) return keep('waiting for input and office data')
+    const eff=Math.min(design.rating,(1+quality)*Math.sqrt(design.rating))
+    const cap=eff**.65*tobaccoDemand(d,spec,office.employeeProductionByJob.Business,{demand,competition:35})
+    const mp=good.product.productionCost, price=mp+eff*design.inverseMarkup*Math.sqrt(cap/units)
+    next+=Math.min(units,cap)*price-units*mp/5
+  }
+  const old=plan.earnings[worst], retained=1-corp.dividendRate
+  const benefit=retained*((next-old)*(horizon-designTime)-Math.max(0,old)*designTime)
+  if (!Number.isFinite(benefit) || benefit<=cost) return keep('keeping all sellers: a replacement would not recover the design bill and missed sales')
+  return worst
 }
 
 async function growEstablishedTobacco(ns, d) {
@@ -1904,6 +1960,7 @@ async function prepareCashOperations(ns, round) {
   const liquid = await corpFunds(ns, 0, live)
   const net = Math.max(0, live.revenue - live.expenses)
   if (!Number.isFinite(liquid) || !Number.isFinite(net)) return
+  cashPlan.cycle=(cashPlan.cycle||0)+1
   const first = !Number.isFinite(cashPlan.floor)
   const openCredit = Math.min(Math.max(0, liquid) / 4, Math.max(2e9, net * cashHorizon))
   const netAfterPayout = net * (1 - (live.public ? live.dividendRate : 0))
@@ -2110,8 +2167,15 @@ async function growCashDivision(ns) {
   const margin = d?.lastCycleRevenue - d?.lastCycleExpenses
   if (!(margin > 0) || !goods.some(g => g.product.actualSellAmount > 0)) return
   if (await growSecondDesign(ns)) return
-  const available = await corpFunds(ns)
-  if (!(available > 0)) return
+  const live=await getCorp(ns), available=await corpFunds(ns,ROUND_ONE_OPERATING_RESERVE,live)
+  const plan=cashPlan.tobacco, measured=cashPlan.round===5 && div===div3 && plan?.ready && !!plan.earnings
+  const horizon=measured ? publicTobaccoWindow(d,hasOfficeDB[div+'Sector-12']) : cashHorizon
+  if (measured && !(horizon>0)) return
+  const reserve=measured ? Math.max(plan.floor,cashPlan.goal+getCorporationBribeReserve(live,5))+
+    Math.max(projectBudget(Math.max(...d.products.map(parseVersion)),live,5),cashPlan.designHold||0) : 0
+  const marketingCash=measured ? await corpFunds(ns,0,live)-reserve : available
+  const premium=measured ? Math.min(plan.net,plan.salePremium)*(1-live.dividendRate) : margin
+  if (!(Math.max(available,marketingCash)>0)) return
   const sales = goods.reduce((n,g) => n + g.product.actualSellAmount, 0)
   const produced = goods.reduce((n,g) => n + g.product.productionAmount, 0)
   if (!(sales > 0 && produced > 0)) return
@@ -2119,8 +2183,8 @@ async function growCashDivision(ns) {
   let best
   function consider(fn, args, cost, gain) {
     const payback = cost / gain
-    if (Number.isFinite(payback) && gain > 0 && cost > 0 && cost <= available &&
-        payback <= cashHorizon && (!best || payback < best.payback)) best = {fn,args,cost,payback}
+    if (Number.isFinite(payback) && gain > 0 && cost > 0 && cost <= (fn==='campaign'?marketingCash:available) &&
+        payback <= (fn==='campaign'?horizon:cashHorizon) && (!best || payback < best.payback)) best = {fn,args,cost,payback}
   }
   const specs = await corpRun(ns, 'getIndustryData', d.industry)
   const advertCost = await corpRun(ns, 'getHireAdVertCost', div)
@@ -2134,11 +2198,11 @@ async function growCashDivision(ns) {
     const adv=1+.005*(wilson+levels)
     for (let ads=1;ads<=8;ads++) {
       cost+=advertCost*1.06**(ads-1)
-      if (cost>available) break
+      if (cost>marketingCash) break
       // Use the low end of the popularity roll. Wilson only affects adverts
       // bought AFTER the upgrade; a Wilson level alone has no modeled return.
       a=(a+3*adv)*1.005*adv; p=(p+adv)*1.005*adv
-      consider('campaign',[levels,ads],cost,margin*(Math.sqrt(advertising(a,p)/base)-1))
+      consider('campaign',[levels,ads],cost,premium*(Math.sqrt(advertising(a,p)/base)-1))
     }
   }
   // Extra factory/office output only pays when existing output sells.
@@ -2159,7 +2223,20 @@ async function growCashDivision(ns) {
       else consider('upgradeOfficeSize',[div,city,3],costs[i],cityProfit * ((1 + 3/o.size)**.3 - 1))
     }
   }
-  if (!best || best.cost>await corpFunds(ns)) return
+  if (!best) return
+  if (best.fn==='campaign' && measured) {
+    // Recheck the whole campaign before paying for Wilson. Each paid step uses
+    // the same-turn home guard so a bribe, bill or phase change can stop it.
+    const [levels,ads]=best.args, keep=reserve+pendingInputPurchases, lineup=JSON.stringify(d.products)
+    if (levels && await corpRun(ns,'levelUpgrade','--campaign',div,wilsonCost,advertCost,ads,keep,lineup)!==true) return
+    for (let i=0;i<ads;i++) {
+      const quote=await corpRun(ns,'getHireAdVertCost',div)
+      if (quote>advertCost*1.06**i*(1+1e-12) ||
+          await corpRun(ns,'hireAdVert','--campaign',div,quote,quote,1,keep,lineup)!==true) break
+    }
+    return
+  }
+  if (best.cost>await corpFunds(ns)) return
   if (best.fn==='campaign') {
     const [levels,ads]=best.args
     if ((await getCorp(ns)).nextState!=='EXPORT' ||
@@ -2412,8 +2489,15 @@ async function manageProducts(ns) {
       }
     }
 
-    let worstProduct = null
-    if (active + calculating === division.maxProducts) {
+    let worstProduct = null, approvedBudget
+    const publicLine=round===5 && division.name===div3 && division.industry==='Tobacco' && division.products.every(n=>/^Prod v\d+$/.test(n)) && !!cashPlan
+    if (publicLine && completedProducts.length===division.maxProducts) {
+      const corp=await getCorp(ns), version=Math.max(0,...division.products.map(parseVersion))
+      if (!corp.public || corp.nextState!=='EXPORT') continue
+      approvedBudget=projectBudget(version,corp,round)
+      worstProduct=profitableReplacement(division,approvedBudget,corp)
+      if (!worstProduct) continue
+    } else if (active + calculating === division.maxProducts) {
 
       if (calculating <= 1) {
         const priceCandidates = []
@@ -2446,6 +2530,10 @@ async function manageProducts(ns) {
     const cashMode = usesCashPolicy(round)
     const quote = cashMode ? await getCorp(ns) : undefined
     const investment = cashMode ? projectBudget(version, quote, round) / 2 : 1e9 * 2 ** version
+    if (approvedBudget!==undefined && (quote.nextState!=='EXPORT' || !quote.public || 2*investment!==approvedBudget)) {
+      cashPlan.rotation='keeping sellers: the project quote changed'
+      continue
+    }
     const reserve = Number(investOffer?.round) === 2 && div === div3 && !(supplyPlan && bnMults.CorporationValuation<1 && !version)
       ? ROUND_TWO_TOBACCO_RESERVE
       : 0
@@ -2460,6 +2548,7 @@ async function manageProducts(ns) {
     const funds = second ? await corpFunds(ns, 0, quote) - secondReserve
       : await corpFunds(ns, ROUND_ONE_OPERATING_RESERVE, quote, true)
     if (!canAffordCorporationPurchase(funds, investment * 2, reserve)) {
+      if (approvedBudget!==undefined) cashPlan.rotation='keeping sellers: waiting for design funds above the reserve'
       if (round === 2 && div === div3 && division.products.length < division.maxProducts)
         saveRoundTwoCapital(funds, investment * 2, reserve, false)
       if (cashMode && cashPlan && division.products.length < division.maxProducts) cashPlan.designHold = investment * 2
@@ -2473,14 +2562,18 @@ async function manageProducts(ns) {
       const nextName = 'Prod v' + (version + 1)
       const kept = (second ? secondReserve : cashGrowthReserve(quote, ROUND_ONE_OPERATING_RESERVE)) + pendingInputPurchases
       const started = await corpRun(ns, 'makeProduct', '--cash-project', div, 'Sector-12', nextName,
-        investment, worstProduct ?? '', kept, quote.nextState)
+        investment, worstProduct ?? '', kept, quote.nextState,
+        ...(publicLine && worstProduct ? [JSON.stringify(division.products)] : []))
       if (started === true) {
         if (worstProduct) clearProductPricingCache(div, worstProduct)
+        if (approvedBudget!==undefined) cashPlan.rotation='replaced '+worstProduct+' with '+nextName+' based on earnings across all cities'
         if (round === 5 && nextName === 'Prod v2' && cashPlan.v2) {
           cashPlan.v2.startedHere = true
           cashPlan.v2.note = 'design started in Sector-12'
         }
         cashPlan.designHold = 0
+      } else if (approvedBudget!==undefined) {
+        cashPlan.rotation='keeping sellers: the live purchase check deferred the replacement'
       } else if (second) {
         cashPlan.designHold = investment * 2
         second.note = 'retrying live cash, phase and home RAM checks'
@@ -2550,6 +2643,12 @@ async function staffCashOffice(ns, div, city, hasOutput) {
   // Before v1 finishes the satellite labs help the design. Once it can sell, all
   // existing cities can manufacture it; keep a quarter of remote staff researching.
   const counts = cashOfficeJobs(n, remote, hasOutput)
+  // A three-seat satellite has no spare researcher. Avoid a permanent zero-RP
+  // division: use one paid HQ management seat until a satellite can cover R&D.
+  if (!remote && div===div3 && investOffer?.round===5 && hasOutput && counts[3]>1 &&
+      !hasDivDB[div].cities.some(c=>c!==city && hasWarehouseDB[div+c] && hasOfficeDB[div+c]?.numEmployees>=4)) {
+    counts[3]--;counts[4]++
+  }
   if (!remote && !hasOutput && n>=3 && bn3Reset && investOffer?.round===3 && div===div3) {
     counts[0]=Math.max(1,Math.round(n*.04))
     counts[1]=Math.max(1,Math.round(n*.51))
@@ -3744,6 +3843,7 @@ async function sellCashOutput(ns) {
   const ta = await corporationBatch(ns, 'hasResearched', divisions.map(d => [d.name, 'Market-TA.II']))
   const manual = researchedDB["Market Research - Demand"] && researchedDB["Market Data - Competition"]
   const prod = [], mats = [], taProd = [], taMat = []
+  const prices=cashPlan?.round===5 ? {cycle:cashPlan.cycle,values:{}} : null
   for (const [i,d] of divisions.entries()) {
     const data = indDataDB[d.industry] ??= await corpRun(ns, 'getIndustryData', d.industry)
     for (const city of d.cities) {
@@ -3773,22 +3873,38 @@ async function sellCashOutput(ns) {
       }
       else {
         const d=liveDivisions.get(key[0]), office=hasOfficeDB[key[0]+key[1]], spec=d && indDataDB[d.industry]
-        const terms=isProduct && cashPlan?.tobacco && d?.industry==='Tobacco' && spec && office?.employeeProductionByJob &&
+        const terms=isProduct && cashPlan?.round===5 && d?.industry==='Tobacco' && spec && office?.employeeProductionByJob &&
           tobaccoSaleTerms(item,d,spec,office.employeeProductionByJob.Business)
         // This is the game's Market-TA.II price for MAX, before that research is
         // available. API productionCost is already the UI market price (5x inputs).
-        const premium=terms && terms.limit*Math.sqrt(terms.capacity*cashPlan.tobacco.seconds/item.stored)
+        const premium=terms && terms.limit*Math.sqrt(terms.capacity*corporationConstants.secondsPerMarketCycle/item.stored)
         const quote=terms && terms.mp+premium
         if (Number.isFinite(quote) && quote>0) {
           price='MP+'+premium
           ta2DB[key.join('')]={productQuote:quote,markupLimit:terms.limit}
         } else price=await manualSalePrice(ns,...key,item,isProduct)
       }
+      if (prices && isProduct && key[0]===div3) {
+        // Store the order, not today's input price: the game updates MP at SALE.
+        const text=String(price)
+        let scale=0, extra=0
+        if (ta) {
+          const d=liveDivisions.get(div3), biz=hasOfficeDB[div3+key[1]]?.employeeProductionByJob?.Business
+          const terms=tobaccoSaleTerms(item,d,indDataDB[d.industry],biz)
+          scale=1
+          extra=terms ? terms.limit*Math.sqrt(terms.capacity*corporationConstants.secondsPerMarketCycle/item.stored) : NaN
+        } else if (text==='MP' || text.startsWith('MP+')) {
+          scale=1;extra=Number(text.slice(3))
+        } else if (text.startsWith('MP*')) scale=Number(text.slice(3))
+        else extra=Number(text)
+        if ([scale,extra].every(Number.isFinite)) prices.values[key[1]+key[2]]=[scale,extra]
+      }
       sales.push([...key,'MAX',price])
     }
     await corporationBatch(ns, isProduct ? 'setProductMarketTA2' : 'setMaterialMarketTA2', isProduct ? taProd : taMat)
     await corporationBatch(ns, isProduct ? 'sellProduct' : 'sellMaterial', sales)
   }
+  if (prices) cashPlan.prices=prices
 }
 
 async function sell(ns) {

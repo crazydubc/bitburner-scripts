@@ -62,7 +62,7 @@ export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,u
   let restrict=Infinity, beforeProject;
   const seatCost=(o,n)=>typeof costs.seats==='function'?costs.seats(o.size,n):costs.seats;
   function rpc(_,fn,...a) {
-    if(a[0]==='--cash-project'||a[0]==='--second-design'||a[0]==='--earning-line'){
+    if(a[0]==='--cash-project'||a[0]==='--second-design'||a[0]==='--earning-line'||a[0]==='--campaign'){
       beforeProject?.();beforeProject=undefined;
       let cb,reply;
       return homeHelper({args:[fn,...a],pid:1,atExit:f=>cb=f,getPortHandle:()=>({write:v=>reply=v}),
@@ -81,16 +81,16 @@ export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,u
       case 'discontinueProduct':l.products.delete(c);return;
       case 'makeProduct':{
         const p0=[...l.products.values()][0], cost=v+a[4];assert(corp.funds>=cost);corp.funds-=cost;
-        l.products.set(n,{...structuredClone(p0),name:n,developmentProgress:0,finished:false});return;
+        l.products.set(n,costs.startProduct?costs.startProduct(n,v,a[4]):{...structuredClone(p0),name:n,developmentProgress:0,finished:false});return;
       }
       case 'getProduct':return {...p,...p.cityData[c]};
       case 'getUpgradeLevel':return levels[k]??0;case 'getOfficeSizeUpgradeCost':return seatCost(o,n);
       case 'upgradeOfficeSize':{const price=seatCost(o,n);assert(corp.funds>=price);corp.funds-=price;o.size+=n;return;}
       case 'hireEmployee':return o.hireRandomEmployee(CorpEmployeeJob.Unassigned);
-      case 'getIndustryData':return l.specs;case 'getUpgradeLevelCost':return k==='Wilson Analytics'?(costs.wilson??costs.factory):costs.factory;
+      case 'getIndustryData':return l.specs;case 'getUpgradeLevelCost':return k==='Wilson Analytics'?(costs.wilson??costs.factory)*2**(levels[k]||0):costs.factory;
       case 'levelUpgrade':assert.equal(k,'Wilson Analytics');corp.funds-=rpc(_, 'getUpgradeLevelCost',k);levels[k]=(levels[k]||0)+1;return;
       case 'getHireAdVertCost':return costs.advert*1.06**(l.d.numAdVerts||0);
-      case 'hireAdVert':corp.funds-=rpc(_,'getHireAdVertCost',k);l.d.numAdVerts=(l.d.numAdVerts||0)+1;return;
+      case 'hireAdVert':corp.funds-=rpc(_,'getHireAdVertCost',k);if(costs.applyAd)costs.applyAd(l.d);else l.d.numAdVerts=(l.d.numAdVerts||0)+1;return;
       case 'getWarehouse':return {size:w.size,sizeUsed:w.sizeUsed,level:w.level};
       case 'getMaterial':return {...w.materials[n]};case 'getMaterialData':return MaterialInfo[k];
       case 'hasUnlock':return true;case 'hasResearched':return (ta && c==='Market-TA.II') || ownedResearch.has(c);
@@ -118,7 +118,8 @@ export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,u
   function apply() {for(const {d,offices} of Object.values(lines))for(const o of Object.values(offices)){
     Object.assign(o.employeeJobs,o.employeeNextJobs);o.calculateEmployeeProductivity(corp,d);
   }}
-  return {corp,lines,api,costs,levels,history,ns,route,snapshot,calls,prepare,cycle,apply,ownedResearch,reset,limitRam:n=>restrict=n,intervene:fn=>beforeProject=fn};
+  return {corp,lines,api,costs,levels,history,ns,route,snapshot,calls,prepare,cycle,apply,ownedResearch,reset,
+    act:(fn,...args)=>rpc(null,fn,...args),limitRam:n=>restrict=n,intervene:fn=>beforeProject=fn};
 }
 
 async function produce(code,ta) {
@@ -171,7 +172,7 @@ assert.equal(initial,1.425e12);assert.equal(await api.budget(ns),475e9);
 await f.prepare();assert.equal(api.plan().floor,initial,'Repeated state is not new earnings');
 f.costs.advert=1e9;await api.growCashDivision(ns);assert(!f.calls.some(([m])=>m==='hireAdVert'),'Wait for EXPORT to buy an advert');
 corp.nextState='EXPORT';await api.growCashDivision(ns);assert.deepEqual(f.calls.filter(([m])=>m==='hireAdVert'),[['hireAdVert','Tobacco']]);
-await api.manageProducts(ns);assert(lines.Tobacco.products.has('Prod v8'));assert(!f.calls.some(([m,d])=>['makeProduct','discontinueProduct'].includes(m)&&d==='Restaurant'));
+await api.manageProducts(ns);assert(!lines.Tobacco.products.has('Prod v8'),'One observation cannot justify retiring a public seller');assert(!f.calls.some(([m,d])=>['makeProduct','discontinueProduct'].includes(m)&&d==='Restaurant'));
 seedSell('Restaurant',10);lines.Restaurant.d.lastCycleRevenue=2e9;
 await f.cycle();assert.equal(api.plan().focus,'Tobacco');await f.cycle();assert.equal(api.plan().focus,'Tobacco');
 await f.cycle();assert.equal(api.plan().focus,'Restaurant','Three profitable cycles with actual product sales');

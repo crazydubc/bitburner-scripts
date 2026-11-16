@@ -183,7 +183,9 @@ assert.equal((await homeCheck([...args.slice(0,-1),99e9])).paid,0,'An intervenin
 const start=clock-1e6,oldRun=(node,d,when)=>({node,startTime:when,endTime:when+d,milestones:[{kind:'bn-finish-ready',sinceNodeMs:d}]});
 const runs=[oldRun(3,100000,start-8e6),oldRun(4,100,start-5e6),oldRun(3,300000,start-4e6),{node:3,endTime:start-1000,milestones:[]}];
 const timeArgs=['getCorporation','--cash-plan',3,start];
-assert.equal((await homeCheck(timeArgs,{runs})).reply.finishAt,start+200000);
+assert.equal((await homeCheck(timeArgs,{runs})).reply.finishAt,0,'A missed historical estimate cannot freeze growth for the rest of the node');
+const earlierStart=clock-50000;
+assert.equal((await homeCheck(['getCorporation','--cash-plan',3,earlierStart],{runs})).reply.finishAt,earlierStart+200000);
 assert.equal((await homeCheck(timeArgs,{runs:[]})).reply.finishAt,0);
 assert.equal((await homeCheck(timeArgs,{runs:[...runs,{runKey:'3:'+start,milestones:[{kind:'bn-finish-ready',sinceNodeMs:3500}]}]})).reply.finishAt,start+3500);
 assert.equal((await homeCheck(['getCorporation','--cash-plan'],{runs})).reads,0);

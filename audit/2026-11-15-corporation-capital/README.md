@@ -28,7 +28,7 @@ The opposite case was an established line with a 30-person headquarters, five 12
 
 **In the game:** `run git-pull.js --branch testing/bn1-go-audit`, then stop the old `corporation.js` and let autopilot relaunch it. The company, current design and sales remain in place. The corporation log shows Tobacco net, each product's actual units sold per second across all cities averaged over market cycles, and the last expansion or cash-holding decision. Manager and regular home helper still launch at 5.50 and 23.60 GB. A guarded expansion briefly needs 61.60 GB on home, the existing peak; if that is unavailable it defers.
 
-[Comparison and safeguards](checks/tobacco-capital.mjs) · [Earlier v2 policy](../2026-11-15-corporation-v2/README.md)
+[Comparison and safeguards](checks/tobacco-capital.mjs) · [Earlier v2 policy](../2026-11-15-corporation-v2/README.md) · [Public product replacement and saving for bribes](../2026-11-16-public-tobacco/README.md)
 
 ```sh
 node audit/2026-11-15-corporation-capital/checks/tobacco-capital.mjs ../bitburner-engine

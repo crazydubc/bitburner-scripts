@@ -17,7 +17,9 @@ function observedNodeFinish(runs, node, start) {
   const peers = runs.filter(r=>r?.node===node && r.endTime && r.startTime<start)
     .map(timing).filter(ms=>Number.isFinite(ms) && ms>0).slice(-3).sort((a,b)=>a-b);
   if (!peers.length) return 0;
-  return start+(peers[Math.floor((peers.length-1)/2)]+peers[Math.floor(peers.length/2)])/2;
+  const predicted=start+(peers[Math.floor((peers.length-1)/2)]+peers[Math.floor(peers.length/2)])/2;
+  // A missed historical estimate is not evidence that this node actually finished.
+  return predicted>Date.now() ? predicted : 0;
 }
 
 /** @param {NS} ns */
@@ -68,6 +70,25 @@ export async function main(ns) {
           generated_at: data.generated_at, stock_value_known: data.stock_value_known, reset_planning: data.reset_planning},
         route: read('/Temp/infiltration-target.txt'), finishAt};
       return;
+    }
+    if ((fn==='hireAdVert' || fn==='levelUpgrade') && args[0]==='--campaign') {
+      const [,div,quote,advert,ads,keep,lineup]=args, wilson=fn==='levelUpgrade';
+      response=false;
+      if (div!=='Tobacco' || ![quote,advert,keep].every(Number.isFinite) || quote<=0 || advert<=0 || keep<0 ||
+          !Number.isInteger(ads) || ads<1 || ads>8) return;
+      const methods=['getCorporation','getDivision','getHireAdVertCost',fn,...(wilson?['getUpgradeLevelCost']:[])];
+      const ram=methods.reduce((n,m)=>n+ns.getFunctionRamCost('corporation.'+m),ns.getFunctionRamCost('baseCost'));
+      if (ns.ramOverride(ram)<ram) return;
+      const c=ns.corporation.getCorporation();
+      if (!c.public || c.nextState!=='EXPORT' || !c.divisions.includes(div)) return;
+      const ds=c.divisions.map(d=>ns.corporation.getDivision(d)), line=ds.find(d=>d.name===div);
+      if (line?.industry!=='Tobacco' || JSON.stringify(line.products)!==lineup || ns.corporation.getHireAdVertCost(div)!==advert) return;
+      const bills=ds.reduce((n,d)=>d.thisCycleExpenses>=0?n+d.thisCycleExpenses:NaN,0);
+      if (wilson && ns.corporation.getUpgradeLevelCost('Wilson Analytics')!==quote) return;
+      const total=wilson ? quote+Array.from({length:ads},(_,i)=>advert*1.06**i).reduce((a,b)=>a+b,0) : advert;
+      if (!(c.funds-bills-keep>=total) || (!wilson && quote!==advert)) return;
+      ns.corporation[fn](wilson?'Wilson Analytics':div);
+      response=true;return;
     }
     if (fn === 'upgradeOfficeSize' && ['--second-design','--earning-line','--first-design'].includes(args[0])) {
       const [policy, division, quotedCost, kept, phase, expected] = args;
@@ -123,6 +144,7 @@ export async function main(ns) {
       if (!Number.isFinite(bills) || !(corp.funds - bills - kept >= investment * 2) || !line?.makesProducts ||
         !line.cities.includes(city) || line.products.includes(name) ||
         (retire ? line.products.length !== line.maxProducts || !line.products.includes(retire) : line.products.length >= line.maxProducts)) return;
+      if (retire && args[8]!==undefined && (!corp.public || phase!=='EXPORT' || JSON.stringify(line.products)!==args[8])) return;
       if (retire) ns.corporation.discontinueProduct(division, retire);
       ns.corporation[fn](division, city, name, investment, investment);
       response = true;
