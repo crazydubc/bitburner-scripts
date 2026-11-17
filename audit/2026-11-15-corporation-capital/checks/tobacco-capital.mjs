@@ -179,7 +179,7 @@ for(const v of [{publicCo:false},{industry:'Restaurant'},{price:5e9},{phase:'SAL
   {ram:41.6},{bills:22e9},{funds:76e9},{bills:NaN}]){
   const x=await homeCheck(args,v);assert.equal(x.reply,false);assert.equal(x.paid,0);
 }
-assert.equal((await homeCheck([...args.slice(0,-1),99e9])).paid,0,'An intervening receipt completed a near bribe');
+assert.equal((await homeCheck([...args.slice(0,-1),99e9])).paid,1,'An obsolete bribe target cannot block a quoted productive purchase');
 const start=clock-1e6,oldRun=(node,d,when)=>({node,startTime:when,endTime:when+d,milestones:[{kind:'bn-finish-ready',sinceNodeMs:d}]});
 const runs=[oldRun(3,100000,start-8e6),oldRun(4,100,start-5e6),oldRun(3,300000,start-4e6),{node:3,endTime:start-1000,milestones:[]}];
 const timeArgs=['getCorporation','--cash-plan',3,start];
@@ -203,7 +203,7 @@ async function satelliteCase(reason){
   f.intervene(()=>{checked=true;if(reason==='bill')l.d.thisCycleExpenses=f.corp.funds;});
   await f.api.growCashDivision(f.ns);
   const paid=f.api.plan().tobacco?.note?.includes('+3 seats:')===true;
-  if(reason==='history'||reason==='bribe'){assert(!checked && !paid);return;}
+  if(reason==='history'){assert(!checked && !paid);return;}
   if(reason==='bill'){assert(checked && !paid);return;}
   if(reason==='missing-history'){assert.equal(f.api.plan().finishAt,0);return;}
   assert(checked && paid,'First affordable satellite researcher is funded');
@@ -211,4 +211,4 @@ async function satelliteCase(reason){
   assert(Object.entries(l.offices).some(([c,o])=>c!==city && o.numEmployees===6 && o.employeeJobs['Research & Development']===1));
 }
 for(const why of ['profit','history','bribe','bill','missing-history'])await satelliteCase(why);
-console.log('Paid research staffing, imminent bribe/BN finish and live invoice cases passed.');
+console.log('Paid research staffing, active reputation target, imminent BN finish and live invoice cases passed.');

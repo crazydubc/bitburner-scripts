@@ -22,6 +22,7 @@ const constants={secondsPerMarketCycle:10,officeInitialCost:4e9,warehouseInitial
   bribeThreshold:100e12,bribeAmountPerReputation:1e9};
 const reset={currentNode:3,lastAugReset:Date.now()-360000,lastNodeReset:Date.now()-86400000};
 export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,unpaid=0,ta=true}={}) {
+  const runReset={...reset};
   const kinds=restaurantOnly ? ['Restaurant'] : restaurant ? ['Tobacco','Restaurant'] : ['Tobacco'];
   const corp={funds,expenses:100e6,revenue:900e6,public:true,valuation:120e12,dividendRate:.01,
     divisions:kinds, nextState:'PURCHASE',state:{nextName:'PURCHASE'},getProductionMultiplier:one,getSalesMult:one,
@@ -62,7 +63,7 @@ export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,u
   let restrict=Infinity, beforeProject;
   const seatCost=(o,n)=>typeof costs.seats==='function'?costs.seats(o.size,n):costs.seats;
   function rpc(_,fn,...a) {
-    if(a[0]==='--cash-project'||a[0]==='--second-design'||a[0]==='--earning-line'||a[0]==='--campaign'){
+    if(a[0]==='--cash-project'||a[0]==='--second-design'||a[0]==='--earning-line'||a[0]==='--campaign'||a[0]==='--line-capital'){
       beforeProject?.();beforeProject=undefined;
       let cb,reply;
       return homeHelper({args:[fn,...a],pid:1,atExit:f=>cb=f,getPortHandle:()=>({write:v=>reply=v}),
@@ -87,11 +88,14 @@ export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,u
       case 'getUpgradeLevel':return levels[k]??0;case 'getOfficeSizeUpgradeCost':return seatCost(o,n);
       case 'upgradeOfficeSize':{const price=seatCost(o,n);assert(corp.funds>=price);corp.funds-=price;o.size+=n;return;}
       case 'hireEmployee':return o.hireRandomEmployee(CorpEmployeeJob.Unassigned);
-      case 'getIndustryData':return l.specs;case 'getUpgradeLevelCost':return k==='Wilson Analytics'?(costs.wilson??costs.factory)*2**(levels[k]||0):costs.factory;
-      case 'levelUpgrade':assert.equal(k,'Wilson Analytics');corp.funds-=rpc(_, 'getUpgradeLevelCost',k);levels[k]=(levels[k]||0)+1;return;
+      case 'getIndustryData':return l.specs;case 'getUpgradeLevelCost':return costs.upgradePrice?costs.upgradePrice(k,levels[k]||0):
+        k==='Wilson Analytics'?(costs.wilson??costs.factory)*2**(levels[k]||0):costs.factory;
+      case 'levelUpgrade':assert(k==='Wilson Analytics'||costs.upgradePrice);corp.funds-=rpc(_, 'getUpgradeLevelCost',k);levels[k]=(levels[k]||0)+1;return;
       case 'getHireAdVertCost':return costs.advert*1.06**(l.d.numAdVerts||0);
       case 'hireAdVert':corp.funds-=rpc(_,'getHireAdVertCost',k);if(costs.applyAd)costs.applyAd(l.d);else l.d.numAdVerts=(l.d.numAdVerts||0)+1;return;
       case 'getWarehouse':return {size:w.size,sizeUsed:w.sizeUsed,level:w.level};
+      case 'getUpgradeWarehouseCost':return 1e9*1.07**(w.level+1);
+      case 'upgradeWarehouse':{const cost=rpc(_, 'getUpgradeWarehouseCost',k,c);assert(corp.funds>=cost);corp.funds-=cost;w.size*=1+1/w.level;w.level++;return;}
       case 'getMaterial':return {...w.materials[n]};case 'getMaterialData':return MaterialInfo[k];
       case 'hasUnlock':return true;case 'hasResearched':return (ta && c==='Market-TA.II') || ownedResearch.has(c);
       case 'sellProduct':return sale.sellProduct(p,c,String(v),String(a[4]),false);
@@ -102,14 +106,16 @@ export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,u
       default:assert.fail('Unexpected: '+fn+' '+a);
     }
   }
-  const api=Function('corpRun','log','getCorporationBribeReserve','kinds','info','reset',bare(code)+`
+  const loadManager=Function('corpRun','log','getCorporationBribeReserve','kinds','info','reset',bare(code)+`
     investOffer={round:5};researchedDB['Market Research - Demand']=researchedDB['Market Data - Competition']=true;
     for(const k of kinds){hasDivDB[k]=info(k);
       for(const c of cities)hasOfficeDB[k+c]=hasWarehouseDB[k+c]=true;}
     ${code===before?'return {manageOffice,sell};':`companyReset=bn3Reset=reset;
       return {connectCashSuppliers,manageOffice,manageProducts,growCashDivision,prepareCashOperations,buyCashInputs,sellCashOutput,
         budget:ns=>corpFunds(ns), plan:()=>cashPlan, projectBudget, use:usesCashPolicy};`}
-  `)(rpc,assert.fail,getCorporationBribeReserve,kinds,info,reset);
+  `);
+  const fresh=()=>loadManager(rpc,assert.fail,getCorporationBribeReserve,kinds,info,runReset);
+  let api=fresh();
   const ns={format:{number:String}};
   async function prepare() {await api.prepareCashOperations(ns,5);}
   async function cycle() {
@@ -118,7 +124,8 @@ export function fixtures(code,{restaurant=false,restaurantOnly=false,funds=5e9,u
   function apply() {for(const {d,offices} of Object.values(lines))for(const o of Object.values(offices)){
     Object.assign(o.employeeJobs,o.employeeNextJobs);o.calculateEmployeeProductivity(corp,d);
   }}
-  return {corp,lines,api,costs,levels,history,ns,route,snapshot,calls,prepare,cycle,apply,ownedResearch,reset,
+  return {corp,lines,get api(){return api},costs,levels,history,ns,route,snapshot,calls,prepare,cycle,apply,ownedResearch,reset:runReset,
+    restart:()=>{runReset.lastAugReset=Date.now();api=fresh();},
     act:(fn,...args)=>rpc(null,fn,...args),limitRam:n=>restrict=n,intervene:fn=>beforeProject=fn};
 }
 
@@ -168,7 +175,7 @@ const {corp,api,ns,lines}=f;const seedSell=(name,rate)=>{for(const p of lines[na
   for(const row of Object.values(p.cityData)){row.actualSellAmount=rate;row.productionAmount=Math.max(1,rate);}};
 seedSell('Tobacco',25); lines.Tobacco.d.awareness=lines.Tobacco.d.popularity=0;
 await f.prepare();const initial=api.plan().floor;
-assert.equal(initial,1.425e12);assert.equal(await api.budget(ns),475e9);
+assert.equal(initial,60e9);assert.equal(await api.budget(ns),1.84e12);
 await f.prepare();assert.equal(api.plan().floor,initial,'Repeated state is not new earnings');
 f.costs.advert=1e9;await api.growCashDivision(ns);assert(!f.calls.some(([m])=>m==='hireAdVert'),'Wait for EXPORT to buy an advert');
 corp.nextState='EXPORT';await api.growCashDivision(ns);assert.deepEqual(f.calls.filter(([m])=>m==='hireAdVert'),[['hireAdVert','Tobacco']]);
@@ -186,13 +193,13 @@ seedSell('Tobacco',25);await f.cycle();assert.equal(api.plan().boost,true);
 const now=Date.now();
 Object.assign(f.route,{kind:'faction-rep',faction:'Daedalus',targetRep:1840,updatedAt:now,lastAugReset:reset.lastAugReset,lastNodeReset:reset.lastNodeReset});
 Object.assign(f.snapshot,{current_node:3,last_aug_reset:reset.lastAugReset,generated_at:now,reset_planning:{version:1,reputation:{Daedalus:0}}});
-await f.cycle();assert.equal(api.plan().goal,1.84e12);assert(await api.budget(ns)<=0,'Protect the reachable exact rep purchase plus operating cash');
+await f.cycle();assert.equal(api.plan().goal,0);assert(await api.budget(ns)>0,'A public faction target cannot freeze the business');
 const count=f.calls.filter(([m])=>m==='hireAdVert').length;await api.growCashDivision(ns);
 assert.equal(f.calls.filter(([m])=>m==='hireAdVert').length,count);
 f.route.updatedAt-=90001;await f.cycle();assert.equal(api.plan().goal,0);assert(await api.budget(ns)>0);
 const base=api.plan().floor;
 for(let i=0;i<60;i++){corp.funds+=(corp.revenue-corp.expenses)*10*.99;await f.cycle();}
-assert.equal(api.plan().floor-base,237.6e9,'60 distinct completed operating cycles at $800m/s, 1% dividends, half retained');
+assert.equal(api.plan().floor,base,'The public operating reserve does not grow with a faction balance or every new sale');
 assert.equal(api.use(2),false);assert.equal(api.use(3),true);assert.equal(api.use(4),true);assert.equal(api.use(5),true);
 assert(!f.calls.some(([m])=>m==='expandIndustry'));
 

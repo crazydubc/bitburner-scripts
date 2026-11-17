@@ -87,8 +87,9 @@ for(const ta of [false,true]){
   assert(fixed.initialLineupStillSelling.includes('Prod v14'));
   const oldGoal=await run(previous,{ta,goal:300e9}),fixedGoal=await run(current,{ta,goal:300e9});
   console.log(JSON.stringify({goal:300,ta,oldGoal,fixedGoal}));
-  assert(fixedGoal.firstBribeMinutes>0 && fixedGoal.firstBribeMinutes<oldGoal.firstBribeMinutes);
-  assert(fixedGoal.spentB<=fixed.spentB && fixedGoal.bankB>oldGoal.bankB);
+  assert(fixedGoal.firstBribeMinutes>0 && fixedGoal.finalNetM>oldGoal.finalNetM,'Grow recurring income even when the first bribe takes longer');
+  assert.equal(fixedGoal.spentB,fixed.spentB,'A faction request must not reserve future earnings');
+  assert(fixedGoal.bankB>oldGoal.bankB);
 }
 const weak=await run(current,{weak:true});
 console.log(JSON.stringify({weakRetirements:weak.retired}));

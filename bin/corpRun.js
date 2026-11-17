@@ -60,22 +60,46 @@ export async function main(ns) {
     if ((fn === 'getInvestmentOffer' && args[0] === '--bn3-review') || (fn === 'getCorporation' && args[0] === '--cash-plan')) {
       // Both information reads fit the ordinary helper budget. Optional plans live on home.
       const read = path => { try { return JSON.parse(ns.read(path) || 'null'); } catch { return null; } };
-      const data = read('/Temp/affordable-augs.txt');
       const corporation = ns.corporation.getCorporation();
+      const data = corporation.public ? null : read('/Temp/affordable-augs.txt');
       let finishAt;
       if (corporation.public && Number.isInteger(args[1]) && Number.isFinite(args[2]) && args[2]>0)
         finishAt = observedNodeFinish(read('/data/bn-run-log.json')?.runs,args[1],args[2]);
       response = {offer: corporation.public ? {round:5, funds:0, shares:0} : ns.corporation.getInvestmentOffer(), corporation,
         snapshot: data && {current_node: data.current_node, last_aug_reset: data.last_aug_reset,
           generated_at: data.generated_at, stock_value_known: data.stock_value_known, reset_planning: data.reset_planning},
-        route: read('/Temp/infiltration-target.txt'), finishAt};
+        route: corporation.public ? null : read('/Temp/infiltration-target.txt'), finishAt};
       return;
+    }
+    if (fn==='levelUpgrade' && args[0]==='--line-capital') {
+      const [,div,kind,count,encoded,keep,lineup]=args;
+      response=false;
+      const names=kind==='employees'?['Nuoptimal Nootropic Injector Implants','Speech Processor Implants','Neural Accelerators','FocusWires']:
+        kind==='factory'?['Smart Factories']:[];
+      if (!names.length || div!=='Tobacco' || !Number.isInteger(count) || count<1 || count>32 ||
+          !(Number.isFinite(keep)&&keep>=0)) return;
+      const prices=JSON.parse(encoded);
+      if (!Array.isArray(prices) || prices.length!==names.length || !prices.every(x=>Number.isFinite(x)&&x>0)) return;
+      const methods=['getCorporation','getDivision','getUpgradeLevelCost',fn];
+      const ram=methods.reduce((n,m)=>n+ns.getFunctionRamCost('corporation.'+m),ns.getFunctionRamCost('baseCost'));
+      if (ns.ramOverride(ram)<ram) return;
+      const c=ns.corporation.getCorporation();
+      if (!c.public || c.nextState!=='EXPORT' || !c.divisions.includes(div)) return;
+      const ds=c.divisions.map(n=>ns.corporation.getDivision(n)), line=ds.find(d=>d.name===div);
+      if (line?.industry!=='Tobacco' || JSON.stringify(line.products)!==lineup ||
+          names.some((n,i)=>ns.corporation.getUpgradeLevelCost(n)!==prices[i])) return;
+      const cash=c.funds-ds.reduce((n,d)=>d.thisCycleExpenses>=0?n+d.thisCycleExpenses:NaN,0);
+      const cost=prices.reduce((a,b)=>a+b,0)*Math.expm1(count*Math.log1p(.06))/.06;
+      if (!(cash-keep>=cost*(1+1e-12))) return;
+      // All prices were checked in this game turn; these five upgrades share the 1.06 cost curve.
+      for (let i=0;i<count;i++) for (const n of names) ns.corporation[fn](n);
+      response=true;return;
     }
     if ((fn==='hireAdVert' || fn==='levelUpgrade') && args[0]==='--campaign') {
       const [,div,quote,advert,ads,keep,lineup]=args, wilson=fn==='levelUpgrade';
       response=false;
       if (div!=='Tobacco' || ![quote,advert,keep].every(Number.isFinite) || quote<=0 || advert<=0 || keep<0 ||
-          !Number.isInteger(ads) || ads<1 || ads>8) return;
+          !Number.isInteger(ads) || ads<1 || ads>32) return;
       const methods=['getCorporation','getDivision','getHireAdVertCost',fn,...(wilson?['getUpgradeLevelCost']:[])];
       const ram=methods.reduce((n,m)=>n+ns.getFunctionRamCost('corporation.'+m),ns.getFunctionRamCost('baseCost'));
       if (ns.ramOverride(ram)<ram) return;
@@ -85,9 +109,10 @@ export async function main(ns) {
       if (line?.industry!=='Tobacco' || JSON.stringify(line.products)!==lineup || ns.corporation.getHireAdVertCost(div)!==advert) return;
       const bills=ds.reduce((n,d)=>d.thisCycleExpenses>=0?n+d.thisCycleExpenses:NaN,0);
       if (wilson && ns.corporation.getUpgradeLevelCost('Wilson Analytics')!==quote) return;
-      const total=wilson ? quote+Array.from({length:ads},(_,i)=>advert*1.06**i).reduce((a,b)=>a+b,0) : advert;
+      const total=(wilson?quote:0)+Array.from({length:ads},(_,i)=>advert*1.06**i).reduce((a,b)=>a+b,0);
       if (!(c.funds-bills-keep>=total) || (!wilson && quote!==advert)) return;
-      ns.corporation[fn](wilson?'Wilson Analytics':div);
+      if (wilson) ns.corporation[fn]('Wilson Analytics');
+      else for (let i=0;i<ads;i++) ns.corporation[fn](div);
       response=true;return;
     }
     if (fn === 'upgradeOfficeSize' && ['--second-design','--earning-line','--first-design'].includes(args[0])) {
@@ -121,8 +146,6 @@ export async function main(ns) {
       const cost = ns.corporation.getOfficeSizeUpgradeCost(division,city,seats);
       const bills = all.reduce((n,d) => d.thisCycleExpenses >= 0 ? n + d.thisCycleExpenses : NaN,0);
       if (!(cost > 0 && cost === quotedCost && corp.funds - bills - kept >= cost)) return;
-      if (policy==='--earning-line' && (!(Number.isFinite(args[7]) && args[7]>=0) ||
-        (corp.funds-bills>=args[7] && corp.funds-bills-cost<args[7]))) return;
       ns.corporation[fn](division,city,seats);
       response = true;
       return;

@@ -122,13 +122,13 @@ assert(!(await held(before)).l.products.has('Prod v2'));
 const loose=await held(after);assert(loose.l.products.has('Prod v2'));
 assert.equal(loose.f.corp.funds,11e9);assert.equal(loose.l.products.get('Prod v2').designInvestment,2e9);
 assert(!(await held(after,{balance:8.9e9})).l.products.has('Prod v2'),'Do not use $5b of operating cash');
-assert(!(await held(after,{rep:20e9})).l.products.has('Prod v2'),'An earlier reachable bribe gets first claim');
-assert(!(await held(after,{rep:7e9})).l.products.has('Prod v2'),'Do not interrupt an already funded bribe');
+assert((await held(after,{rep:20e9})).l.products.has('Prod v2'),'A pending faction target does not freeze v2');
+assert((await held(after,{rep:7e9})).l.products.has('Prod v2'),'An affordable target is not reserved in advance');
 assert((await held(after,{rep:5e9})).l.products.has('Prod v2'),'A fully funded bribe permits spending the surplus');
 assert(!(await held(after,{limit:23.6})).l.products.has('Prod v2'),'Defer if a safe launch will not fit');
 const thin=await setup(after,{funds:15e9});thin.book({revenue:2e6,expenses:0});
 for(let i=0;i<3;i++){await thin.f.cycle();await thin.startIfMissing();}
-assert(!thin.l.products.has('Prod v2'),'Too little proven profit to release retained cash for the design');
+assert(thin.l.products.has('Prod v2') && thin.f.corp.funds>=5e9,'An affordable second seller may start at low income without using operating cash');
 const debt=await setup(after,{funds:15e9});debt.l.d.thisCycleExpenses=8e9;
 await debt.f.cycle();await debt.f.cycle();await debt.startIfMissing();
 assert(!debt.l.products.has('Prod v2'),'Honor delivered but unpaid materials');
@@ -174,7 +174,7 @@ for(const kind of ['weak-sales','loss','unaffordable','short-rep','public-change
       if(kind==='low-ram') f.limitRam(23.6);
     });
   }
-  await f.api.growCashDivision(f.ns);assert.equal(l.offices[city].size,oldSize,kind);
+  await f.api.growCashDivision(f.ns);assert.equal(l.offices[city].size,kind==='short-rep'?oldSize+3:oldSize,kind);
   if(['public-change','phase','new-bill','bribe','finished','stale-progress','repriced','low-ram'].includes(kind))assert(intervened,kind);
 }
-console.log('Cash-funded launch, existing v2, design city, near-finish, sales, bills, earlier rep, repricing and RAM deferrals passed.');
+console.log('Cash-funded launch, existing v2, design city, near-finish, sales, bills, active rep target, repricing and RAM deferrals passed.');

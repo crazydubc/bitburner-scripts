@@ -1,5 +1,7 @@
 # Why a 106-person Tobacco office kept releasing similar products
 
+The [public income follow-up](../2026-11-17-public-income/README.md) supersedes the faction-saving rule below. A future bribe or augmentation install no longer ends the investment window.
+
 In the reported BN3.3 save, the company was public and earning $8.45m/s. Tobacco was profitable ($3.952m/s), and both finished products in Sector-12 were selling the full 19.261 units/s. At the displayed prices, v2 grossed about $905k/s in that city and v13 about $777k/s. Keeping v2 made sense; the version number says nothing about a product's earnings. The $0 offer is normal after the four private rounds. The screenshot shows the player's balance, not the corporation's treasury.
 
 The previous manager could retire a seller as soon as the latest design finished. It compared headquarters price or quality, without charging the new design for the income lost while its slot was empty. It could also leave a productive division with no researcher when the satellite offices were small. Finally, it rejected any advertising campaign with a payback over ten minutes, even when the next bribe or the end of the node was hours away.
