@@ -1,0 +1,245 @@
+{
+  "engine": "1da7316ffd9d281b45a86c4c54ec532276557892",
+  "node": "v24.22.1",
+  "suites": [
+    {
+      "suite": "api-errors",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.13
+    },
+    {
+      "suite": "augmentation-reset",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.14
+    },
+    {
+      "suite": "batch-correctness",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.3
+    },
+    {
+      "suite": "batch-upgrade-compatibility",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.19
+    },
+    {
+      "suite": "bn1-cycle",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.25
+    },
+    {
+      "suite": "bn1-guide",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.14
+    },
+    {
+      "suite": "bn1-ui",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 33.11
+    },
+    {
+      "suite": "corporation-lifecycle",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.14
+    },
+    {
+      "suite": "corporation-port",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.19
+    },
+    {
+      "suite": "corporation-products",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.24
+    },
+    {
+      "suite": "corporation-sale-prices",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.29
+    },
+    {
+      "suite": "darknet-lifecycle",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.14
+    },
+    {
+      "suite": "dispatch-pressure",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 1.41
+    },
+    {
+      "suite": "go-adaptation",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.23
+    },
+    {
+      "suite": "go-goals",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.16
+    },
+    {
+      "suite": "go-lifecycle",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.14
+    },
+    {
+      "suite": "go-tactics-checks",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 3.69
+    },
+    {
+      "suite": "hash-spending",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.11
+    },
+    {
+      "suite": "infiltration",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.16
+    },
+    {
+      "suite": "passive-factions",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.1
+    },
+    {
+      "suite": "performance-diagnostic",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.16
+    },
+    {
+      "suite": "progression-throughput",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.28
+    },
+    {
+      "suite": "progression",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.12
+    },
+    {
+      "suite": "purchase-ram",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.22
+    },
+    {
+      "suite": "remaining-paths",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.15
+    },
+    {
+      "suite": "reset-purchase-reserves",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.15
+    },
+    {
+      "suite": "resource-purchases",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.16
+    },
+    {
+      "suite": "rpc-reserve",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.18
+    },
+    {
+      "suite": "scan-ui",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 2.3
+    },
+    {
+      "suite": "share-allocation",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.17
+    },
+    {
+      "suite": "share-handoff",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.28
+    },
+    {
+      "suite": "soa-progression",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.18
+    },
+    {
+      "suite": "speedrun-improvements",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.12
+    },
+    {
+      "suite": "stock-diagnostic",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.17
+    },
+    {
+      "suite": "stock-liquidation",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.09
+    },
+    {
+      "suite": "stock-valuation",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.22
+    },
+    {
+      "suite": "stockmaster-recovery",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.42
+    },
+    {
+      "suite": "terminal-ui",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.18
+    },
+    {
+      "suite": "full-audit",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.19
+    }
+  ],
+  "targeted_followup": [
+    "full-audit: passed after adding CashRoot preparation and no-SF5 gang initialization cases",
+    "resource-purchases: passed after adding reserved-cash and completed-memory exit cases",
+    "ram-impact: autopilot and purchaseSleeves unchanged after final launch/exit adjustments"
+  ]
+}

@@ -1,7 +1,8 @@
 import {
   log, disableLogs, getConfiguration, getFilePath, getActiveSourceFiles,
-  formatNumberShort, formatDuration, findPids, getPlayerInfo, getReset, bbRun, singRun
+  formatNumberShort, formatDuration, findPids, getPlayerInfo, getReset, bbRun, singRun, runScriptLocal
 } from './utils.js'
+import { hasBladeburnerAccess } from './progression.js'
 
 const cityNames = ["Sector-12", "Aevum", "Volhaven", "Chongqing", "New Tokyo", "Ishima"];
 const antiChaosOperation = "Stealth Retirement Operation"; // Note: Faster and more effective than Diplomacy at reducing city chaos
@@ -43,7 +44,7 @@ const argsSchema = [
   ['ignore-busy-status', false], // If set to true, we will attempt to do bladeburner tasks even if we are currently busy and don't have The Blade's Simulacrum
   ['allow-raiding-highest-pop-city', false], // Set to true, we will allow Raid to be used even in our highest-population city (disabled by default)
   ['reserved-action-count', 200], // Some operation types are "reserved" for chaos reduction / population estimate increase. Start by reserving this many, reduced automatically as we approach maxRankNeeded
-  ['disable-spending-hashes', false], // Set to true to not spawn spend-hacknet-hashes.js to spend hashes on bladeburner
+  ['disable-spending-hashes', false], // Set to true to not spawn spend-hashes.js to spend hashes on bladeburner
 ];
 export function autocomplete(data, _) {
   data.flags(argsSchema);
@@ -60,10 +61,8 @@ export async function main(ns) {
   resetInfo = await getReset(ns);
   // Ensure we have access to bladeburner
   ownedSourceFiles = await getActiveSourceFiles(ns);
-  //if (!(6 in ownedSourceFiles) && resetInfo.currentNode != 7) // NOTE: Despite the SF6 description, it seems you don't need SF6
-  //    return log(ns, "ERROR: You have not yet unlocked bladeburner outside of BNs 6 & 7 (need SF6)", true, 'error');
-  if (!(7 in ownedSourceFiles))
-    return log(ns, "ERROR: You have not yet unlocked the bladeburner API (need SF7 or to be in BN7)", true, 'error');
+  if (!hasBladeburnerAccess(ownedSourceFiles))
+    return log(ns, "ERROR: Bladeburner requires BN6/BN7 or SF6/SF7.", true, 'error');
   if (resetInfo.currentNode == 8)
     return log(ns, "ERROR: Bladeburner is completely disabled in Bitnode 8 :`(\nHappy stonking", true, 'error');
   // Ensure we've joined bladeburners before proceeding further
@@ -426,16 +425,16 @@ async function canDoBladeburnerWork(ns) {
  * Ensure we're in the Bladeburner division */
 async function beingInBladeburner(ns) {
   // Ensure we're in the Bladeburner division. If not, wait until we've joined it.
-  while (!(await bbRun(ns, 'inBladeburner'))) {
+  while (await bbRun(ns, 'inBladeburner') !== true) {
     try {
       if (player.skills.strength < 100 || player.skills.defense < 100 || player.skills.dexterity < 100 || player.skills.agility < 100)
         log(ns, `Waiting for physical stats >100 to join bladeburner ` +
           `(Currently Str: ${player.skills.strength}, Def: ${player.skills.defense}, Dex: ${player.skills.dexterity}, Agi: ${player.skills.agility})`);
-      else if (await bbRun(ns, 'joinBladeburnerDivision')) {
+      else if (await bbRun(ns, 'joinBladeburnerDivision') === true) {
         let message = `SUCCESS: Joined Bladeburner (At ${formatDuration(getTimeInBitnode())} into BitNode)`;
         if (9 in ownedSourceFiles && options['disable-spending-hashes'])
           message += ' --disable-spending-hashes is set, but consider running the following command to give it a boost:\n' +
-            'run spend-hacknet-hashes.js --spend-on Exchange_for_Bladeburner_Rank --spend-on Exchange_for_Bladeburner_SP --liquidate';
+            'run spend-hashes.js --spend-on Exchange_for_Bladeburner_Rank --spend-on Exchange_for_Bladeburner_SP --liquidate';
         log(ns, message, true, 'success');
         break;
       } else
@@ -453,10 +452,14 @@ async function beingInBladeburner(ns) {
   if (!(9 in ownedSourceFiles)) return; // Hacknet not unlocked
   if (options['disable-spending-hashes'])
     return log(ns, `INFO: Not spending hashes on bladeburner (--disable-spending-hashes flag is set)`);
-  const fPath = getFilePath('spend-hacknet-hashes.js');
+  const fPath = getFilePath('spend-hashes.js');
   const args = ['--spend-on', 'Exchange_for_Bladeburner_Rank', '--spend-on', 'Exchange_for_Bladeburner_SP', '--liquidate'];
-  if (ns.run(fPath, { preventDuplicates: true }, ...args))
-    log(ns, `INFO: Launched '${fPath}' to gain Bladeburner Rank and Skill Points more quickly (Can be disabled with --disable-spending-hashes)`)
-  else
-    log(ns, `WARNING: Failed to launch '${fPath}' (already running?)`)
+  const existing = ns.ps('home').some(process => process.filename === fPath && JSON.stringify(process.args) === JSON.stringify(args));
+  if (existing) return;
+  try {
+    if (await runScriptLocal(ns, fPath, true, args))
+      log(ns, `INFO: Launched '${fPath}' to gain Bladeburner Rank and Skill Points more quickly (Can be disabled with --disable-spending-hashes)`);
+  } catch (error) {
+    log(ns, `WARNING: Could not launch '${fPath}'; continuing Bladeburner without hash support: ${String(error)}`);
+  }
 }

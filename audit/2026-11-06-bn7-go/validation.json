@@ -1,0 +1,79 @@
+{
+  "date": "2026-11-06",
+  "baseline": "dd57f3f4414003ef6ab5e42692353f628cf978b0",
+  "engine": "1da7316ffd9d281b45a86c4c54ec532276557892",
+  "checks": [
+    {
+      "name": "bn7-mechanics",
+      "status": "passed"
+    },
+    {
+      "name": "go-goals",
+      "status": "passed"
+    },
+    {
+      "name": "go-adaptation",
+      "status": "passed"
+    },
+    {
+      "name": "go-lifecycle",
+      "status": "passed"
+    },
+    {
+      "name": "api-errors",
+      "status": "passed"
+    },
+    {
+      "name": "progression",
+      "status": "passed"
+    },
+    {
+      "name": "share-allocation",
+      "status": "passed"
+    }
+  ],
+  "regression": {
+    "beforeOpponent": "The Black Hand",
+    "afterOpponent": "Tetrads",
+    "boardSize": 5
+  },
+  "ram": [
+    {
+      "file": "autopilot.js",
+      "before": 4.2,
+      "after": 4.2,
+      "withoutOverride": 5.05,
+      "baselineWithoutOverride": 5.05
+    },
+    {
+      "file": "kernel.js",
+      "before": 5.849999999999999,
+      "after": 5.849999999999999
+    },
+    {
+      "file": "go.js",
+      "before": 3.5,
+      "after": 3.5
+    },
+    {
+      "file": "sleeve.js",
+      "before": 3.3500000000000005,
+      "after": 3.3500000000000005
+    },
+    {
+      "file": "bladeburner.js",
+      "before": 3.3,
+      "after": 3.3
+    },
+    {
+      "file": "bin/go-context.js",
+      "before": 6.6,
+      "after": 6.6
+    }
+  ],
+  "liveGameTested": false,
+  "limits": [
+    "This fixes opponent selection, not a measured 15-hour completion delay.",
+    "Intelligence invitation preparation may still suppress Bladeburner startup; its live state is unknown and this patch does not change that policy."
+  ]
+}

@@ -1,6 +1,6 @@
 import {
   log, getConfiguration, findPids, getActiveSourceFiles, getBNMults, gangRun,
-  formatMoney, formatNumberShort, formatDuration, getReset, getPlayerInfo, singRun
+  formatMoney, formatNumberShort, formatDuration, getReset, getPlayerInfo, singRun, getReserve, purchase
 } from './utils.js'
 
 // Global config
@@ -69,12 +69,15 @@ export function autocomplete(data, _) {
 /** @param {NS} ns **/
 export async function main(ns) {
   const runOptions = getConfiguration(ns, argsSchema);
-  if (!runOptions || await findPids(ns, 'gangs.js').length > 1) return; // Prevent multiple instances of this script from being started, even with different args.
+  if (!runOptions || (await findPids(ns, 'gangs.js')).length > 1) return; // Prevent multiple instances of this script from being started, even with different args.
   options = runOptions; // We don't set the global "options" until we're sure this is the only running instance
   ownedSourceFiles = await getActiveSourceFiles(ns);
   const sf2Level = ownedSourceFiles[2] || 0;
   if (sf2Level == 0)
     return log(ns, "ERROR: You have no yet unlocked gangs. Script should not be run...", true);
+  resetInfo = await getReset(ns);
+  if (resetInfo.currentNode === 8)
+    return log(ns, 'Gangs are disabled in BN8; leaving RAM available for other automation.');
 
   await initialize(ns);
   log(ns, "Starting main loop...");
@@ -172,7 +175,11 @@ async function initialize(ns) {
   // Initialize information about gang members and crimes
   allTaskNames = ns.gang.getTaskNames();
   allTaskStats = await getDict(ns, allTaskNames, 'getTaskStats');
-  multGangSoftcap = (await getBNMults(ns)).GangSoftcap;
+  // Gangs are available before SF5 on alternate routes; do not require the multiplier API there.
+  multGangSoftcap = 5 in ownedSourceFiles ? (await getBNMults(ns)).GangSoftcap :
+    [1, 1, 0.9, 1, 1, 0.7, 0.7, 0, 0.8, 0.9, 1, 0.8, 0.3, 0.7, 1][bitNode - 1];
+  if (!Number.isFinite(multGangSoftcap) || multGangSoftcap <= 0)
+    throw new Error(`No usable gang multiplier for BN${bitNode}`);
   myGangMembers = await gangRun(ns, 'getMemberNames');
   const dictMembers = await getDict(ns, myGangMembers, 'getMemberInformation');
   for (const member of Object.values(dictMembers)) // Initialize the current activity of each member
@@ -441,7 +448,7 @@ async function tryUpgradeMembers(ns, dictMembers) {
   equipments.forEach(e => e.cost = Number(dictEquipmentCosts[e.name]) || Number.POSITIVE_INFINITY);
 
   const playerData = await getPlayerInfo(ns);
-  const reserve = options['reserve'] != null ? Number(options['reserve']) : Number(ns.read("reserve.txt") || 0);
+  const reserve = options['reserve'] != null ? Number(options['reserve']) : await getReserve(ns);
   const spendableMoney = Math.max(0, playerData.money - Math.max(0, reserve || 0));
   const maxBudget = 0.99;
   const clampBudget = (value, fallback) => Math.min(maxBudget, Math.max(0, Number(value ?? fallback) || 0));
@@ -511,7 +518,8 @@ async function doUpgradePurchases(ns, purchaseOrder) {
   const getOrderSummary = (items) => items.map(o => `${o.member} ${o.type}: "${o.equipmentName}"`).join(", ");
   const succeeded = [], failed = [];
   for (const order of purchaseOrder) {
-    if (await gangRun(ns, 'purchaseEquipment', order.member, order.equipmentName))
+    if ((await purchase(ns, 'gang', 'purchaseEquipment', [order.member, order.equipmentName],
+      {budget: order.cost, ...(options.reserve == null ? {} : {reserve: options.reserve})})).result === true)
       succeeded.push(order)
     else
       failed.push(order);

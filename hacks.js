@@ -1,4 +1,4 @@
-/* I use this script for testing purposes only. 
+/* I use this script for testing purposes only.
 I am not responsible for any use of this.*/
 export async function main(ns) {
 

@@ -1,11 +1,45 @@
+export function prepareCorporationResultForPort(fn, result) {
+  if (fn !== 'getDivision' || result === null || typeof result !== 'object' || Array.isArray(result))
+    return result;
+  // Ports clone enumerable values, which invokes the deprecated .type getter.
+  // Filter keys before reading values; spread/Object.entries would invoke it too.
+  const division = {};
+  for (const key of Object.keys(result))
+    if (key !== 'type') division[key] = result[key];
+  return division;
+}
+
+function observedNodeFinish(runs, node, start) {
+  if (!Array.isArray(runs)) return 0;
+  const timing = r => Array.isArray(r?.milestones) ? r.milestones.find(m=>m?.kind==='bn-finish-ready')?.sinceNodeMs : null;
+  const elapsed = timing(runs.find(r=>r?.runKey===node+':'+start));
+  if (Number.isFinite(elapsed) && elapsed>0) return start+elapsed;
+  const peers = runs.filter(r=>r?.node===node && r.endTime && r.startTime<start)
+    .map(timing).filter(ms=>Number.isFinite(ms) && ms>0).slice(-3).sort((a,b)=>a-b);
+  if (!peers.length) return 0;
+  const predicted=start+(peers[Math.floor((peers.length-1)/2)]+peers[Math.floor(peers.length/2)])/2;
+  // A missed historical estimate is not evidence that this node actually finished.
+  return predicted>Date.now() ? predicted : 0;
+}
+
 /** @param {NS} ns */
 export async function main(ns) {
   ns.ramOverride(23.6);
   const port = ns.getPortHandle(ns.pid);
   const [fn, ...args] = ns.args;
-  let response;
+  const exitFallback = `ERROR:corporation.${String(fn)} exited before returning a result`;
+  let response = exitFallback;
+  let restoreBuys;
 
   ns.atExit(() => {
+    // The engine can run this hook before a killed helper's await/catch resumes.
+    // A verified cleanup makes an interrupted booster order safe to skip, never to replay.
+    if (restoreBuys) {
+      try {
+        restoreBuys();
+        if (response === exitFallback) response = false;
+      } catch (error) { response = `ERROR:Could not restore material buy rates: ${String(error)}`; }
+    }
     try {
       port.write(response);
     } catch (error) {
@@ -14,12 +48,184 @@ export async function main(ns) {
   });
 
   try {
+    const once = args[0] === '--once';
+    const batch = once || args[0] === '--batch';
+    if (once && fn !== 'buyMaterial') throw new Error('One-phase orders require buyMaterial');
+    if (fn === 'hasCorporation' && args[0] === '--bribe-phase') {
+      if (!ns.corporation.hasCorporation()) { response = false; return; }
+      const corp = ns.corporation.getCorporation();
+      response = {round: corp.public ? 5 : ns.corporation.getInvestmentOffer().round, investorShares: corp.investorShares};
+      return;
+    }
+    if ((fn === 'getInvestmentOffer' && args[0] === '--bn3-review') || (fn === 'getCorporation' && args[0] === '--cash-plan')) {
+      // Both information reads fit the ordinary helper budget. Optional plans live on home.
+      const read = path => { try { return JSON.parse(ns.read(path) || 'null'); } catch { return null; } };
+      const corporation = ns.corporation.getCorporation();
+      const data = corporation.public ? null : read('/Temp/affordable-augs.txt');
+      let finishAt;
+      if (corporation.public && Number.isInteger(args[1]) && Number.isFinite(args[2]) && args[2]>0)
+        finishAt = observedNodeFinish(read('/data/bn-run-log.json')?.runs,args[1],args[2]);
+      response = {offer: corporation.public ? {round:5, funds:0, shares:0} : ns.corporation.getInvestmentOffer(), corporation,
+        snapshot: data && {current_node: data.current_node, last_aug_reset: data.last_aug_reset,
+          generated_at: data.generated_at, stock_value_known: data.stock_value_known, reset_planning: data.reset_planning},
+        route: corporation.public ? null : read('/Temp/infiltration-target.txt'), finishAt};
+      return;
+    }
+    if (fn==='levelUpgrade' && args[0]==='--line-capital') {
+      const [,div,kind,count,encoded,keep,lineup]=args;
+      response=false;
+      const names=kind==='employees'?['Nuoptimal Nootropic Injector Implants','Speech Processor Implants','Neural Accelerators','FocusWires']:
+        kind==='factory'?['Smart Factories']:[];
+      if (!names.length || div!=='Tobacco' || !Number.isInteger(count) || count<1 || count>32 ||
+          !(Number.isFinite(keep)&&keep>=0)) return;
+      const prices=JSON.parse(encoded);
+      if (!Array.isArray(prices) || prices.length!==names.length || !prices.every(x=>Number.isFinite(x)&&x>0)) return;
+      const methods=['getCorporation','getDivision','getUpgradeLevelCost',fn];
+      const ram=methods.reduce((n,m)=>n+ns.getFunctionRamCost('corporation.'+m),ns.getFunctionRamCost('baseCost'));
+      if (ns.ramOverride(ram)<ram) return;
+      const c=ns.corporation.getCorporation();
+      if (!c.public || c.nextState!=='EXPORT' || !c.divisions.includes(div)) return;
+      const ds=c.divisions.map(n=>ns.corporation.getDivision(n)), line=ds.find(d=>d.name===div);
+      if (line?.industry!=='Tobacco' || JSON.stringify(line.products)!==lineup ||
+          names.some((n,i)=>ns.corporation.getUpgradeLevelCost(n)!==prices[i])) return;
+      const cash=c.funds-ds.reduce((n,d)=>d.thisCycleExpenses>=0?n+d.thisCycleExpenses:NaN,0);
+      const cost=prices.reduce((a,b)=>a+b,0)*Math.expm1(count*Math.log1p(.06))/.06;
+      if (!(cash-keep>=cost*(1+1e-12))) return;
+      // All prices were checked in this game turn; these five upgrades share the 1.06 cost curve.
+      for (let i=0;i<count;i++) for (const n of names) ns.corporation[fn](n);
+      response=true;return;
+    }
+    if ((fn==='hireAdVert' || fn==='levelUpgrade') && args[0]==='--campaign') {
+      const [,div,quote,advert,ads,keep,lineup]=args, wilson=fn==='levelUpgrade';
+      response=false;
+      if (div!=='Tobacco' || ![quote,advert,keep].every(Number.isFinite) || quote<=0 || advert<=0 || keep<0 ||
+          !Number.isInteger(ads) || ads<1 || ads>32) return;
+      const methods=['getCorporation','getDivision','getHireAdVertCost',fn,...(wilson?['getUpgradeLevelCost']:[])];
+      const ram=methods.reduce((n,m)=>n+ns.getFunctionRamCost('corporation.'+m),ns.getFunctionRamCost('baseCost'));
+      if (ns.ramOverride(ram)<ram) return;
+      const c=ns.corporation.getCorporation();
+      if (!c.public || c.nextState!=='EXPORT' || !c.divisions.includes(div)) return;
+      const ds=c.divisions.map(d=>ns.corporation.getDivision(d)), line=ds.find(d=>d.name===div);
+      if (line?.industry!=='Tobacco' || JSON.stringify(line.products)!==lineup || ns.corporation.getHireAdVertCost(div)!==advert) return;
+      const bills=ds.reduce((n,d)=>d.thisCycleExpenses>=0?n+d.thisCycleExpenses:NaN,0);
+      if (wilson && ns.corporation.getUpgradeLevelCost('Wilson Analytics')!==quote) return;
+      const total=(wilson?quote:0)+Array.from({length:ads},(_,i)=>advert*1.06**i).reduce((a,b)=>a+b,0);
+      if (!(c.funds-bills-keep>=total) || (!wilson && quote!==advert)) return;
+      if (wilson) ns.corporation[fn]('Wilson Analytics');
+      else for (let i=0;i<ads;i++) ns.corporation[fn](div);
+      response=true;return;
+    }
+    if (fn === 'upgradeOfficeSize' && ['--second-design','--earning-line','--first-design'].includes(args[0])) {
+      const [policy, division, quotedCost, kept, phase, expected] = args;
+      const city = policy === '--earning-line' ? args[6] : 'Sector-12';
+      response = false;
+      if (!(Number.isFinite(quotedCost) && quotedCost > 0 && Number.isFinite(kept) && kept >= 0)) return;
+      const methods = ['getCorporation','getDivision','getProduct','getOfficeSizeUpgradeCost',fn];
+      const ram = methods.reduce((n,m) => n + ns.getFunctionRamCost(`corporation.${m}`), ns.getFunctionRamCost('baseCost'));
+      if (ns.ramOverride(ram) < ram) return;
+      const corp = ns.corporation.getCorporation();
+      const first = policy === '--first-design', seats = first ? args[6] : 3;
+      if (!Number.isSafeInteger(seats) || seats<=0 || (first ? corp.public!==false : corp.public!==true) ||
+          corp.nextState!==phase || !corp.divisions.includes(division)) return;
+      const all = corp.divisions.map(d => ns.corporation.getDivision(d));
+      const line = all.find(d => d.name === division);
+      if (!line?.cities.includes(city)) return;
+      if (first) {
+        if (!Number.isSafeInteger(expected) || corp.investorShares!==expected || line.industry!=='Tobacco') return;
+        for (const n of line.products) {
+          if (n!=='Prod v1') return;
+          const p=ns.corporation.getProduct(division,city,n).developmentProgress;
+          if (!(p>=0 && p<100 && Number.isFinite(p))) return;
+        }
+      } else if (policy === '--second-design') {
+        if (line.products.length !== 2 || !line.products.includes('Prod v1') || !line.products.includes('Prod v2')) return;
+        const progress = ns.corporation.getProduct(division,city,'Prod v2').developmentProgress;
+        if (!(progress >= 0 && progress < 100 && progress <= expected)) return;
+      } else if (line.industry !== 'Tobacco' || JSON.stringify(line.products) !== expected ||
+        line.products.filter(n => ns.corporation.getProduct(division,city,n).developmentProgress === 100).length < 2) return;
+      const cost = ns.corporation.getOfficeSizeUpgradeCost(division,city,seats);
+      const bills = all.reduce((n,d) => d.thisCycleExpenses >= 0 ? n + d.thisCycleExpenses : NaN,0);
+      if (!(cost > 0 && cost === quotedCost && corp.funds - bills - kept >= cost)) return;
+      ns.corporation[fn](division,city,seats);
+      response = true;
+      return;
+    }
+    if (fn === 'makeProduct' && args[0] === '--cash-project') {
+      const [, division, city, name, investment, retire, kept, phase] = args;
+      response = false;
+      if (![division,city,name].every(v => typeof v === 'string' && v.trim() === v && v.length) ||
+        /[<>]/.test(name) || typeof retire !== 'string' || retire === name ||
+        !(Number.isFinite(investment) && investment > 0 && Number.isFinite(kept) && kept >= 0)) return;
+      const methods = ['getCorporation', 'getDivision', fn, ...(retire ? ['discontinueProduct'] : [])];
+      const ram = methods.reduce((n, method) => n + ns.getFunctionRamCost(`corporation.${method}`), ns.getFunctionRamCost('baseCost'));
+      if (ns.ramOverride(ram) < ram) return; // Keep producing; try the project next cycle.
+      const corp = ns.corporation.getCorporation();
+      if (corp.nextState !== phase || !corp.divisions.includes(division)) return;
+      const all = corp.divisions.map(d => ns.corporation.getDivision(d));
+      const line = all.find(d => d.name === division);
+      const bills = all.reduce((n,d) => d.thisCycleExpenses >= 0 ? n + d.thisCycleExpenses : NaN,0);
+      if (!Number.isFinite(bills) || !(corp.funds - bills - kept >= investment * 2) || !line?.makesProducts ||
+        !line.cities.includes(city) || line.products.includes(name) ||
+        (retire ? line.products.length !== line.maxProducts || !line.products.includes(retire) : line.products.length >= line.maxProducts)) return;
+      if (retire && args[8]!==undefined && (!corp.public || phase!=='EXPORT' || JSON.stringify(line.products)!==args[8])) return;
+      if (retire) ns.corporation.discontinueProduct(division, retire);
+      ns.corporation[fn](division, city, name, investment, investment);
+      response = true;
+      return;
+    }
+    if (fn === 'acceptInvestmentOffer' && args[0] === '--if-current') {
+      const [, investorShares, valuation, balance, phase] = args;
+      // The manager can be offloaded or waiting on RAM. Do not sell a different tranche or
+      // take a lower offer or ignore a new bill. No await between check and sale.
+      const needed = ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost('corporation.getCorporation') +
+        ns.getFunctionRamCost('corporation.acceptInvestmentOffer');
+      response = false;
+      if (ns.ramOverride(needed) < needed) { response = 'deferred'; return; }
+      if (!Number.isSafeInteger(investorShares) || investorShares < 0 || !(Number.isFinite(valuation) && valuation > 0) || !Number.isFinite(balance)) return;
+      const corp = ns.corporation.getCorporation();
+      // In a private company each accepted tranche increases investorShares; within that
+      // tranche the offer is directly proportional to valuation. One info API suffices.
+      if (!corp.public && corp.investorShares === investorShares && corp.valuation >= valuation && corp.funds >= balance && corp.nextState === phase)
+        response = ns.corporation.acceptInvestmentOffer();
+      return;
+    }
+    const required = Math.max(23.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`corporation.${fn}`) +
+      (once ? ns.getFunctionRamCost('corporation.nextUpdate') : 0));
+    if (ns.ramOverride(required) < required) throw new Error(`Insufficient RAM for corporation.${fn}: ${required} GB required`);
     const f = ns.corporation?.[fn];
     if (typeof f !== "function") throw new Error(`Invalid corporation function: ${String(fn)}`);
 
-    response = await f(...args);
-  } catch {
-    // Preserve the existing corpRun contract: corporation API errors return undefined.
-    response = undefined;
+    if (batch) {
+      const calls = JSON.parse(args[1]);
+      if (!Array.isArray(calls) || !calls.every(a => Array.isArray(a) && a.every(v =>
+        typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)))))
+        throw new Error('Invalid corporation batch');
+      if (once) {
+        if (!calls.every(a => (a.length === 4 || a.length === 5) && typeof a[3] === 'number' && a[3] >= 0 &&
+          (a.length === 4 || (typeof a[4] === 'number' && a[4] >= 0 && a[4] <= a[3]))))
+          throw new Error('Invalid material purchase orders');
+        let applied = 0;
+        restoreBuys = () => {
+          let failure;
+          for (let i = 0; i < applied; i++) {
+            const [div, city, material, , inputRate = 0] = calls[i];
+            try { f(div, city, material, inputRate); } catch (error) { failure = error; }
+          }
+          if (failure !== undefined) throw failure;
+        };
+        // buyMaterial is synchronous in Netscript. Arm the cleanup before waiting for the phase.
+        for (const [div, city, material, rate] of calls) { f(div, city, material, rate); applied++; }
+        const state = await ns.corporation.nextUpdate();
+        restoreBuys();
+        restoreBuys = undefined;
+        response = state === 'PURCHASE';
+      } else {
+        const results = [];
+        for (const a of calls) results.push(prepareCorporationResultForPort(fn, await f(...a)));
+        response = results;
+      }
+    } else response = prepareCorporationResultForPort(fn, await f(...args));
+  } catch (error) {
+    response = `ERROR:${String(error?.stack ?? error)}`;
   }
 }

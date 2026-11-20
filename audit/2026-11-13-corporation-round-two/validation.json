@@ -1,0 +1,71 @@
+{
+  "baseline": "3e9e522cf53d299fc02fe1de71afe604fe364c78",
+  "scope": "All corporation and warehouse suites; known unrelated full-suite failures remain documented in the preceding valuation audit.",
+  "engine": "1da7316ffd9d281b45a86c4c54ec532276557892",
+  "node": "v24.22.1",
+  "suites": [
+    {
+      "suite": "corporation-lifecycle",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.16,
+      "output": "Corporation eligibility, reserve-aware startup, public resumption, guarded payouts and unchanged bootstrap checks passed\n"
+    },
+    {
+      "suite": "corporation-port",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.25,
+      "output": "Official division getter/port reproduced the warning; supported fields, no getter access, future alias removal, result types and API/serialization errors passed.\n(node:12) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+    },
+    {
+      "suite": "corporation-products",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.27,
+      "output": "{\"designGainFromDoublingInvestment\":0.0052816337021417414,\"effectiveRatingExample\":{\"olderDesign100\":30,\"newerDesign144\":24}}\nOfficial product formulas, stale-research reproduction, funded replacements, version progression, first slots, reserves, development and pricing checks passed.\n(node:11) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+    },
+    {
+      "suite": "corporation-sale-prices",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.25,
+      "output": "Reproduced INFINITY through the old BN10 round-two manager / home helper / game parser; scoped fallback, recovery, normal quote parity, exports, TA.II, pre-unlock prices and RPC error propagation passed.\n(node:13) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+    },
+    {
+      "suite": "tobacco-warehouse",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.36,
+      "output": "Tobacco warehouse: working space, recovery of 2239.995/2240, imports, production, product sales and bounded booster orders passed.\n(node:48) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+    },
+    {
+      "suite": "corporation-cash",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.44,
+      "output": "{\"oldBalanceAfterStart\":-187294351491.84796,\"fixedBoosterAndInputBills\":15000000000,\"cashBeforeStart\":20000000000,\"healthyCashAfterStart\":5000000000,\"scope\":\"3 divisions / 18 warehouses, official purchase processing\"}\nShared cash budget, unpaid bills, inputs, interrupted/late/repeated orders, restart, health reserve and independent Tobacco routing passed.\n(node:56) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+    },
+    {
+      "suite": "corporation-research",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.26,
+      "output": "{\"check\":\"round-three research regression\",\"oldResearchAfterHour\":1340,\"repairedResearchAfterHour\":7198.097558002721,\"nextDesignRatingRatio\":1.5482206651776291,\"note\":\"Fixed-stat engine fixture, not live-save timing or profit predictions\"}\nRound-three R&D restored; home design, round-two sales, upgrades, missing warehouses, debt and investment transitions passed.\n(node:58) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+    },
+    {
+      "suite": "corporation-round-two",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.21,
+      "output": "{\"spendingOffer\":4706727900000,\"reviewedOffer\":9403241400000,\"reviewCycles\":12,\"keptProducts\":[\"Prod v1\"],\"scope\":\"Controlled income, spending and retained inventory; actual manager and engine valuation, not a live save\"}\nRound-two pause, negative displayed profit, first-product retention, construction, bounded retries, fresh quotes and transition guards passed.\n(node:69) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+    },
+    {
+      "suite": "corporation-valuation",
+      "status": "passed",
+      "exit": 0,
+      "seconds": 0.18,
+      "output": "{\"operatingIncomePerSecond\":12000000000,\"repeatedSpendingOffer\":56001500000,\"afterReviewOffer\":2515845651500000,\"reviewCycles\":12,\"productionPushReviewChecks\":22,\"scope\":\"Fixed-income official accounting fixture; not the live save\"}\nValuation recovery, bounded reviews, funded weakest-product replacement, fresh offers, care and round transitions passed.\n(node:84) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+    }
+  ]
+}

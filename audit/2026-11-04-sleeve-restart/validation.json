@@ -1,0 +1,46 @@
+{
+  "date": "2026-11-04",
+  "baseline": "8c49ba6e38031b93e69edd29f573199588dd991f",
+  "engine": "1da7316ffd9d281b45a86c4c54ec532276557892",
+  "checks": [
+    {
+      "name": "sleeve-restart",
+      "status": "passed",
+      "exitCode": 0
+    },
+    {
+      "name": "pre-fix-reproduction",
+      "status": "expected failure",
+      "exitCode": 1,
+      "detail": "Two real API faction occupancy conflicts during the first swapped-route restart"
+    },
+    {
+      "name": "full-audit-integration",
+      "status": "passed",
+      "exitCode": 0
+    },
+    {
+      "name": "api-errors",
+      "status": "passed",
+      "exitCode": 0
+    },
+    {
+      "name": "progression",
+      "status": "passed",
+      "exitCode": 0
+    },
+    {
+      "name": "resource-purchases",
+      "status": "passed",
+      "exitCode": 0
+    },
+    {
+      "name": "official-ram",
+      "status": "passed",
+      "exitCode": 0,
+      "beforeGB": 3.35,
+      "afterGB": 3.35
+    }
+  ],
+  "liveGameTested": false
+}

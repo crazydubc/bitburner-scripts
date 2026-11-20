@@ -1,110 +1,36 @@
-import { getServerAvailRam, getFilePath, getConfiguration, log, getErrorInfo } from '../utils.js'
-
+import { getFilePath, getConfiguration, log } from '../utils.js';
 const argsSchema = [
-  ['spawn-delay', 50], // Delay to allow time for `installBackdoor` to start running before a we connect back to 'home' and optionally start backdooring the next server
-  ['reserved-home-ram', 22], // Don't spawn additional backdoor scripts if home free ram dips below this amount (each parallel backdoor consumes 3.6 GB)
+  ['spawn-delay', 50], // Yield between launches; the child owns connection and backdoor startup.
+  ['reserved-home-ram', 22], // Leave this much home RAM free after each child launch.
 ];
+export function autocomplete(data) { data.flags(argsSchema); return []; }
 
-export function autocomplete(data, args) {
-  data.flags(argsSchema);
-  return [];
-}
-
-/** Scan all servers, backdoor anything that can be backdoored, and leave a file to indicate it's been done
- * Requires: SF-4.1 **/
-/** @param {NS} ns **/
 export async function main(ns) {
-  let notAtHome = false;
-  try {
-    const options = getConfiguration(ns, argsSchema);
-
-    // Prevent multiple instances of this script from being started
-    //if (await instanceCount(ns, "home", false, false) > 1)
-    //  return log(ns, 'Another instance is already running. Shutting down...');
-
-    const spawnDelay = options['spawn-delay'];
-
-    const servers = ["home"];
-    const routes = { home: ["home"] };
-    const myHackingLevel = ns.getHackingLevel();
-    // Scan all servers and keep track of the path to get to them
-    ns.disableLog("scan");
-    for (let i = 0, j; i < servers.length; i++)
-      for (j of ns.scan(servers[i]))
-        if (!servers.includes(j) && !j.includes("hacknet-") && !j.includes("daemon")) servers.push(j), routes[j] = routes[servers[i]].slice(), routes[j].push(j);
-
-    // Get the required hacking level of each server
-    const dictRequiredHackingLevels = Object.fromEntries(servers.map(server => [server, ns.getServerRequiredHackingLevel(server)]));
-    // Get the root status for each server
-    const dictRootAccess = Object.fromEntries(servers.map(server => [server, ns.hasRootAccess(server)]));
-
-    // Filter out servers that cannot or should not be hacked / backdoored
-    let hackableServers = servers.filter(s => s != "home" && !s.includes("hacknet-") && !s.includes("daemon")) /*or whatever you name your purchased servers*/
-    ns.print(`${hackableServers.length} not-owned servers on the network.`);
-    ns.print(`${hackableServers.filter(s => dictRootAccess[s]).length} servers are currently rooted.`);
-    ns.print(`${hackableServers.filter(s => myHackingLevel > dictRequiredHackingLevels[s]).length} servers are within our hack level (${myHackingLevel}).`);
-    ns.print(`${hackableServers.filter(s => myHackingLevel > dictRequiredHackingLevels[s] && dictRootAccess[s]).length} rooted servers are within our hack level (${myHackingLevel})`);
-
-    // Get the set of servers that do not yet have a backdoor installed
-    let toBackdoor = hackableServers.filter(server => !ns.getServer(server).backdoorInstalled);
-    let count = toBackdoor.length;
-    // Early exit condition if there are no servers left to backdoor
-    ns.print(`${count} servers have yet to be backdoored.`);
-    if (count == 0) return;
-
-    // Early exit condition if there are no servers we can currently backdoor
-    ns.print(`${toBackdoor.filter(s => dictRootAccess[s]).length} of ${count} servers to backdoor are currently rooted.`);
-    toBackdoor = toBackdoor.filter(s => myHackingLevel > dictRequiredHackingLevels[s]);
-    ns.print(`${toBackdoor.length} of ${count} servers to backdoor are within our hack level (${myHackingLevel}).`);
-    toBackdoor = toBackdoor.filter(s => dictRootAccess[s]);
-    ns.print(`${toBackdoor.length} of ${count} servers to be backdoored are rooted and within our hack level (${myHackingLevel})`);
-    if (toBackdoor.length == 0) return;
-
-    // Sort servers by lowest required hacking level (fastest to backdoor)
-    toBackdoor.sort((a, b) => dictRequiredHackingLevels[a] - dictRequiredHackingLevels[b])
-    ns.print(`Servers will be backdoored in the following order:\n` + toBackdoor.join(', '));
-
-    // Collect information about any servers still being backdoored (from a prior run), so we can skip them
-    let scriptPath = getFilePath('/Tasks/backdoor-all-servers.js.backdoor-one.js');
-    let serversBeingBackdoored = ns.ps().filter(script => script.filename == scriptPath).map(script => script.scriptPath);
-
-    for (const server of toBackdoor) {
-      if (serversBeingBackdoored.includes(server)) {
-        log(ns, `INFO: Server already beeing backdoored: ${server}`);
-        continue;
-      }
-
-      // If we're running low on home ram, don't spawn any more backdoor scripts
-      const homeFreeRam = await getServerAvailRam(ns, "home");
-      if (homeFreeRam < options['reserved-home-ram'])
-        return log(ns, `WARNING: Home is low on RAM, will skip backdooring remaining servers.`);
-
-      ns.print(`Hopping to ${server}`);
-      notAtHome = true; // Set a flag to get us back home if we encounter an error
-      const success = routes[server].reduce((success, hop) => success && ns.singularity.connect(hop), true);
-      if (!success)
-        log(ns, `ERROR: Failed to hop to server ${server}. Backdoor probably won't work...`, true, 'error');
-      if (server === "w0r1d_d43m0n") {
-        ns.alert("Ready to hack w0r1d_d43m0n!");
-        log(ns, "INFO: Sleeping forever to avoid multiple instances navigating to w0r1d_d43m0n.");
-        while (true) await ns.sleep(10000); // Sleep forever so the script isn't run multiple times to create multiple overlapping alerts
-      }
-      ns.print(`Installing backdoor on "${server}"...`);
-      // Kick off a separate script that will run backdoor before we connect to home.
-      var pid = ns.run(scriptPath, { temporary: true }, server);
-      if (pid === 0)
-        return log(ns, `WARN: Couldn't initiate a new backdoor of "${server}" (insufficient RAM?). Will try again later.`, false, 'warning');
-      await ns.sleep(spawnDelay); // Wait some time for the external backdoor script to initiate its backdoor of the current connected server
-      const backAtHome = ns.singularity.connect("home");
-      if (backAtHome)
-        notAtHome = false;
+  const options = getConfiguration(ns, argsSchema);
+  if (!options) return;
+  const script = getFilePath('Tasks/backdoor-all-servers.js.backdoor-one.js');
+  const normalize = name => name.replace(/^\/+/, '');
+  const ram = ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost('singularity.connect') +
+    ns.getFunctionRamCost('singularity.installBackdoor') + ns.getFunctionRamCost('getServer');
+  const routes = new Map([['home', ['home']]]);
+  for (const [host, route] of routes) {
+    for (const neighbor of ns.scan(host)) if (!routes.has(neighbor)) routes.set(neighbor, [...route, neighbor]);
+  }
+  const hacking = ns.getHackingLevel();
+  const candidates = [...routes.keys()].map(host => ns.getServer(host))
+    .filter(server => server.hostname !== 'home' && server.hostname !== 'w0r1d_d43m0n' &&
+      !server.purchasedByPlayer && !server.hostname.startsWith('hacknet-') && server.hasAdminRights &&
+      !server.backdoorInstalled && server.requiredHackingSkill <= hacking)
+    .sort((left, right) => left.requiredHackingSkill - right.requiredHackingSkill);
+  for (const server of candidates) {
+    if (ns.ps('home').some(process => normalize(process.filename) === normalize(script) && process.args[0] === server.hostname)) continue;
+    if (ns.getServerMaxRam('home') - ns.getServerUsedRam('home') < ram + options['reserved-home-ram']) {
+      log(ns, `Backdoors deferred: need ${ram} GB for a child plus ${options['reserved-home-ram']} GB home reserve.`);
+      return;
     }
+    const pid = ns.exec(script, 'home', {threads: 1, temporary: true, ramOverride: ram, preventDuplicates: true},
+      server.hostname, JSON.stringify(routes.get(server.hostname)));
+    if (!pid) { log(ns, `Backdoor launch failed for ${server.hostname}; check the child file and home RAM.`); return; }
+    await ns.sleep(Math.max(0, options['spawn-delay']));
   }
-  catch (err) {
-    log(ns, `ERROR: ${ns.getScriptName()} Caught an unexpected error:\n${getErrorInfo(err)}`, false, 'error');
-  } finally {
-    // Try to clean-up by re-connecting to home before we shut down
-    if (notAtHome)
-      ns.singularity.connect("home");
-  }
-};
+}

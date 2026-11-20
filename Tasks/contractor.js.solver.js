@@ -1,96 +1,65 @@
-const fUnsolvedContracts = '/Temp/unsolved-contracts.txt'; // A global, persistent array of contracts we couldn't solve, so we don't repeatedly log about them.
+const QUARANTINE_FILE = '/data/contract-quarantine.json';
 
-let heartbeat = null;
+// Include solver source and input, so a changed algorithm/data or explicit retry releases quarantine.
+export function fingerprint(text) {
+  let hash = 2166136261, second = 5381;
+  for (let i = 0; i < text.length; i++) {
+    hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+    second = Math.imul(second, 33) ^ text.charCodeAt(i);
+  }
+  return `${hash >>> 0}:${second >>> 0}:${text.length}`;
+}
+export function contractKey(contract, solverVersion) {
+  return JSON.stringify([contract.hostname, contract.contract, contract.type, fingerprint(JSON.stringify(contract.data)), solverVersion]);
+}
 
-import { log } from '../utils.js'
-
-//Silly human, you can't import a typescript module into a javascript (wouldn't that be slick though?)
-//import { codingContractTypesMetadata } from 'https://raw.githubusercontent.com/danielyxie/bitburner/master/src/data/codingcontracttypes.ts'
-
-// This contract solver has the bare-minimum footprint of 1.6 GB (base) + 10 GB (ns.codingcontract.attempt)
-// It does this by requiring all contract information being gathered in advance and passed in as a JSON blob argument.
-// Solvers are mostly taken from source code at https://raw.githubusercontent.com/danielyxie/bitburner/master/src/data/codingcontracttypes.ts
-/** @param {NS} ns **/
+/** Persistent home quarantine reserves the last try and records an attempt before submitting it. */
 export async function main(ns) {
-  if (ns.args.length < 1)
-    ns.tprint('Contractor solver was incorrectly invoked without arguments.');
-
-  // Hack: Use global memory to avoid multiple instances running concurrently (without paying for ns.ps)
-  if (heartbeat != null) // If this variable is set, another instance is likely running!
-    if (performance.now() - heartbeat <= 1000 * 60) // If last start was more 1 minute ago, assume it blew up and isn't actually still running
-      return ns.print("WARNING: Another contractor appears to already be running. Ignoring request.");
-  heartbeat = performance.now();
-
-  try {
-    let contractsDb = JSON.parse(ns.args[0]);
-    const fContents = ns.read(fUnsolvedContracts);
-    const notified = fContents ? JSON.parse(fContents) : [];
-
-    // Don't spam toast notifications and console messages if there are more than 20 contracts to solve:
-    const quietSolve = contractsDb.length > 20;
-    let failureCount = 0;
-    /*if (quietSolve) {
-      const message = `Welcome back. There are ${contractsDb.length} contracts to solve, so we won't generate a notification for each.`
-      ns.toast(message, 'success');
-      ns.tprint(message);
-    }*/
-
-    for (const contractInfo of contractsDb) {
-      heartbeat = performance.now();
-      //log(ns, JSON.stringify(contractInfo), true);
-      const answer = findAnswer(contractInfo)
-      let notice = null;
-      if (answer != null) {
-        let solvingResult = false;
-        try {
-          solvingResult = ns.codingcontract.attempt(answer, contractInfo.contract, contractInfo.hostname, { returnReward: true })
-          if (solvingResult) {
-            if (!quietSolve) {
-              const message = `Solved ${contractInfo.contract} on ${contractInfo.hostname} (${contractInfo.type}). Reward: ${solvingResult}`;
-              //ns.toast(message, 'success');
-              ns.print(message);
-            }
-          } else {
-            notice = `ERROR: Wrong answer for contract type "${contractInfo.type}" (${contractInfo.contract} on ${contractInfo.hostname}):` +
-              `\nIncorrect Answer Given: ${JSON.stringify(answer)}`;
-          }
-        } catch (err) {
-          failureCount++;
-          let errorMessage = typeof err === 'string' ? err : err.message || JSON.stringify(err);
-          if (err?.stack) errorMessage += '\n' + err.stack;
-          notice = `ERROR: Attempt to solve contract raised an error. (Answer Given: ${JSON.stringify(answer)})\n"${errorMessage}"`;
-          // Suppress errors about missing contracts. This can happen if this script gets while another instance is already running.
-          if (errorMessage.indexOf("Cannot find contract") == -1) {
-            ns.print(notice); // Still log it to the terminal in case we're debugging a fake contract.
-            notice = null;
-          }
-        }
+  if (ns.getHostname() !== 'home') throw new Error('Run the contract solver on home so quarantine is authoritative');
+  if (ns.ps('home').some(process => process.filename.replace(/^\/+/, '') === ns.getScriptName().replace(/^\/+/, '') && process.pid < ns.pid)) return;
+  if (typeof ns.args[0] !== 'string') throw new Error('Contract solver requires the scanner data');
+  const contracts = JSON.parse(ns.args[0]);
+  const retry = ns.args.includes('--retry-failed'), lastAttempt = ns.args.includes('--allow-last-attempt');
+  const raw = ns.read(QUARANTINE_FILE);
+  const quarantine = raw ? JSON.parse(raw) : {};
+  if (!quarantine || typeof quarantine !== 'object' || Array.isArray(quarantine)) throw new Error('Invalid contract quarantine');
+  const code = ns.read(ns.getScriptName());
+  if (!code) throw new Error('Could not read solver version; refusing an untracked contract attempt');
+  const version = fingerprint(code);
+  let solved = 0, failed = 0, skipped = 0;
+  for (const contract of contracts) {
+    const key = contractKey(contract, version);
+    if (quarantine[key] && !retry) {skipped++; continue;}
+    let answer;
+    try { answer = findAnswer(structuredClone(contract)); }
+    catch (error) {
+      quarantine[key] = {...contract, version, reason: 'solver-error', error: String(error)};
+      await ns.write(QUARANTINE_FILE, JSON.stringify(quarantine, (_key, value) => typeof value === 'bigint' ? value.toString() : value), 'w');
+      failed++; continue;
+    }
+    if (answer === null || answer === undefined) {skipped++; continue;}
+    // Re-read just before submitting: another process or the player may already have used an attempt.
+    let tries;
+    try { tries = ns.codingcontract.getNumTriesRemaining(contract.contract, contract.hostname); }
+    catch { skipped++; continue; } // Contract disappeared after scanning.
+    if (!Number.isInteger(tries) || tries <= 0 || (tries === 1 && !lastAttempt)) {skipped++; continue;}
+    const entry = {...contract, version, answer, triesBefore: tries, time: Date.now(), reason: 'attempting'};
+    quarantine[key] = entry;
+    await ns.write(QUARANTINE_FILE, JSON.stringify(quarantine, (_key, value) => typeof value === 'bigint' ? value.toString() : value), 'w');
+    try {
+      const reward = ns.codingcontract.attempt(answer, contract.contract, contract.hostname, {returnReward: true});
+      if (typeof reward === 'string' && reward.length > 0) {
+        delete quarantine[key]; solved++;
+        ns.print(`Solved ${contract.contract} on ${contract.hostname}: ${reward}`);
       } else {
-        notice = `WARNING: No solver available for contract type "${contractInfo.type}"`;
+        entry.reason = 'wrong-answer'; failed++;
+        ns.tprint(`Contract quarantined: ${contract.type} on ${contract.hostname}/${contract.contract}. Details: ${QUARANTINE_FILE}`);
       }
-      if (notice) {
-        if (!notified.includes(contractInfo.contract) && !quietSolve) {
-          ns.tprint(notice + `\nContract Info: ${JSON.stringify(contractInfo)}`)
-          ns.toast(notice, 'warning');
-          notified.push(contractInfo.contract)
-        }
-        // Always print errors to scripts own tail window
-        ns.print(notice + `\nContract Info: ${JSON.stringify(contractInfo)}`);
-      }
-      await ns.sleep(10)
-    }
-    // Keep tabs of failed contracts
-    if (notified.length > 0)
-      ns.write(fUnsolvedContracts, JSON.stringify(notified), "w");
-    // Let the user know when we're done solving a large number of contracts.
-    if (quietSolve) {
-      const message = `Done solving ${contractsDb.length}. ${contractsDb.length - failureCount} succeeded, and ${failureCount} failed. See tail logs for errors.`
-      ns.tprint(message);
-    }
+    } catch (error) { entry.reason = 'attempt-error'; entry.error = String(error); failed++; }
+    await ns.write(QUARANTINE_FILE, JSON.stringify(quarantine, (_key, value) => typeof value === 'bigint' ? value.toString() : value), 'w');
+    await ns.sleep(10);
   }
-  finally {
-    heartbeat = null; // Signal that we're no longer running in case another contractor wants to start running.
-  }
+  ns.print(`Contracts: ${solved} solved, ${failed} quarantined, ${skipped} skipped (including reserved final tries).`);
 }
 
 function findAnswer(contract) {

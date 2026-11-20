@@ -14,6 +14,8 @@ export async function main(ns) {
   });
 
   try {
+    const required = Math.max(6.6, ns.getFunctionRamCost('baseCost') + ns.getFunctionRamCost(`hacknet.${fn}`));
+    if (ns.ramOverride(required) < required) throw new Error(`Insufficient RAM for hacknet.${fn}: ${required} GB required`);
     const f = ns.hacknet?.[fn];
     if (typeof f !== "function") throw new Error(`Invalid hacknet function: ${String(fn)}`);
 

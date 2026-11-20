@@ -1,0 +1,47 @@
+{
+  "date": "2026-11-04",
+  "baseline": "65a701851597e5d61922786dc97412bf4247d4d6",
+  "engine": "1da7316ffd9d281b45a86c4c54ec532276557892",
+  "defaultSync": true,
+  "checks": [
+    {
+      "name": "default-sync-and-removal",
+      "command": "node audit/2026-11-04-git-pull-prune/checks/git-pull-prune.mjs ../bitburner-engine",
+      "exitCode": 0,
+      "output": "Git-pull cleanup checks passed: default sync without a flag, tracking, 38-file legacy catalog, no-write preview, verified backups, edit/running-file protection, pinned full trees, fallback/partial/failure refusal, and deployment scoping."
+    },
+    {
+      "name": "full-audit-integration",
+      "command": "node audit/2026-11-04-full-audit/checks/full-audit.mjs ../bitburner-engine",
+      "exitCode": 0,
+      "output": "Full audit checks passed: real sleeve decisions and crime formula, subsystem policies, NF planning/purchases, and production downloads."
+    },
+    {
+      "name": "sharing-and-downloader-dependencies",
+      "command": "node audit/2026-10-17-speedrun/checks/share-allocation.mjs",
+      "exitCode": 0,
+      "output": "BN-aware sharing, eligibility, buffers, continuous workers, bounded context grace, handoff/refill, and BN1/BN4 two-batch continuity through slow calculators passed."
+    },
+    {
+      "name": "official-updater-ram",
+      "command": "AUDIT_RAM_TARGETS=git-pull.js node --expose-internals audit/2026-10-17-speedrun/checks/ram-impact.mjs ../bitburner-engine 65a7018",
+      "exitCode": 0,
+      "output": "{\"file\":\"git-pull.js\",\"before\":1.8,\"after\":2.45}"
+    },
+    {
+      "name": "diff-whitespace",
+      "command": "git diff --check",
+      "exitCode": 0,
+      "output": ""
+    }
+  ],
+  "ram": {
+    "file": "git-pull.js",
+    "beforeGB": 1.8,
+    "afterGB": 2.45
+  },
+  "limitations": [
+    "No live game save was modified or tested.",
+    "Cleanup only removes recognized, unchanged retired scripts on the running host in the chosen deployment folder."
+  ]
+}
