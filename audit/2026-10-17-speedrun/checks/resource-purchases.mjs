@@ -171,7 +171,9 @@ for (const memoryResult of [{success: false}, 'ERROR: memory unavailable']) {
 
 assert.equal((await sleeveBuyer({reserve: 200})).attempts, 0, 'Reserve must protect sleeve startup cash');
 assert.equal((await sleeveBuyer({alreadyBought: true, reserve: 50})).memoryAttempts, 0, 'Memory search must subtract reserve');
-assert.equal((await sleeveBuyer({alreadyBought: true, memory: 100})).memoryAttempts, 0, 'Completed permanent upgrades exit without polling');
+const completeSleeves=await sleeveBuyer({alreadyBought: true, memory: 100});
+assert.equal(completeSleeves.memoryAttempts, 0, 'Completed permanent upgrades exit without polling');
+assert(!completeSleeves.messages.some(s=>s.includes('Upgrading sleeve memory')), 'No upgrade announcement when memory is already complete');
 
 // B10: use the real batch function and its cached inventory; reconcile partial failures.
 async function sleeveBatch(augs, settings = {}) {

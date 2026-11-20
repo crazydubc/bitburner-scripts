@@ -18,16 +18,23 @@ export async function main(ns) {
       state = {currentNode: reset.currentNode, lastNodeReset: reset.lastNodeReset, status: 'prepare'};
     if (ns.args[0] === 'update') {
       const patch = JSON.parse(ns.args[1]);
-      const keys = final ? ['status', 'minRate', 'minReturn', 'report'] : sleeves ? ['status', 'target'] : ['status', 'reason', 'startedAt', 'baselineAt', 'baselineIntel', 'completedAt', 'primed'];
+      const keys = final ? ['status', 'minRate', 'minReturn', 'report', 'progress'] : sleeves ? ['status', 'target'] : ['status', 'reason', 'startedAt', 'baselineAt', 'baselineIntel', 'completedAt', 'primed'];
       if (!patch || typeof patch !== 'object' || Object.keys(patch).some(key => !keys.includes(key)))
         throw new Error('Invalid intelligence-farm state update');
       if (final) {
         if (![patch.minRate, patch.minReturn].every(n => Number.isFinite(n) && n > 0)) throw new Error('Invalid final-study thresholds');
-        if (patch.status === 'complete') {
+        if (Object.hasOwn(patch, 'progress')) {
+          const p = patch.progress;
+          if (Object.hasOwn(patch, 'status') || Object.hasOwn(patch, 'report') || state.status !== 'farming' ||
+              state.minRate !== patch.minRate || state.minReturn !== patch.minReturn ||
+              !p || typeof p.message !== 'string' || !p.message.length || p.message.length > 1200 ||
+              !Number.isFinite(p.updatedAt) || p.updatedAt <= 0 || p.augReset !== reset.lastAugReset)
+            throw new Error('Invalid final-study progress update');
+        } else if (patch.status === 'complete') {
           if (state.status !== 'farming' || state.minRate !== patch.minRate || state.minReturn !== patch.minReturn ||
               !finalStudyProof(patch.report, state.minRate, state.minReturn, reset.lastAugReset)) throw new Error('Unconfirmed final study result');
         } else if (patch.status !== 'farming') throw new Error('Invalid final study request');
-        if (patch.status === 'farming') delete state.report;
+        if (patch.status === 'farming') { delete state.report; delete state.progress; }
       }
       state = {...state, ...patch};
       if (!['prepare', 'farming', 'complete'].includes(state.status)) throw new Error('Invalid farm phase');

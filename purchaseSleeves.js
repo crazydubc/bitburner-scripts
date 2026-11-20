@@ -33,7 +33,7 @@ export async function main(ns) {
     await ns.sleep(5000);
   }
 
-  log(ns, `Upgrading sleeve memory...`, true, "info");
+  let upgradingMemory = false;
 
   while (true) {
     let player = await getPlayerInfo(ns);
@@ -46,6 +46,10 @@ export async function main(ns) {
 
       if (sleeve.memory < 100) {
         memoryComplete = false;
+        if (!upgradingMemory) {
+          log(ns, `Upgrading sleeve memory...`, true, "info");
+          upgradingMemory = true;
+        }
 
         const amt = await maxAffordableMemoryUpgrades(ns, i, sleeve.memory, Math.max(0, player.money - await getReserve(ns)));
         if (amt > 0) {

@@ -129,6 +129,8 @@ export async function main(ns) {
   let playerInGang = false;
   let shouldIntelFarm = false, readyToFarmIntel = false, farmState;
   let waitingForFinalStudy = false, nextFinalStudyRead = 0, nextFinalStudyNotice = 0;
+  let lastFinalStudyDetail = '';
+  let sleevePurchasesComplete = false;
   let lastIntelPreparationCheck = -Infinity;
   async function refreshIntelFarmReadiness(ns, force = false) {
     // Readiness is live, but expensive invite/state reads need only run once per planning interval.
@@ -237,7 +239,7 @@ export async function main(ns) {
     },
     {
       name: "purchaseSleeves.js",
-      shouldRun: () => resetInfo.currentNode == 10 && player.factions.includes('The Covenant') && reqRam(64),
+      shouldRun: () => resetInfo.currentNode == 10 && !sleevePurchasesComplete && player.factions.includes('The Covenant') && reqRam(64),
       args: () => []
     },
     { name: "stats.js", shouldRun: () => reqRam(1000), args: () => [] }, // Adds stats not usually in the HUD (nice to have)
@@ -532,7 +534,7 @@ export async function main(ns) {
     if (shouldIntelFarm) return false;
     if (waitingForFinalStudy && Date.now() < nextFinalStudyRead) return 'sleeve-study';
     // Check if there is some reason not to automatically destroy this BN
-    if (resetInfo.currentNode == 10) { // Suggest the user doesn't reset until they buy all sleeves and max memory
+    if (resetInfo.currentNode == 10 && !sleevePurchasesComplete) {
       if (!resetInfo.ownedSF || typeof resetInfo.ownedSF !== 'object') return false; // Unknown run number is not permission to exit.
       let sleeveCost = await sleeveRun(ns, 'getSleeveCost');
       if (sleeveCost !== Number.POSITIVE_INFINITY)
@@ -545,6 +547,9 @@ export async function main(ns) {
         const sleeve = await sleeveRun(ns, 'getSleeve', i);
         if (!Number.isFinite(sleeve?.memory) || sleeve.memory < 100) return false;
       }
+      // These purchases are permanent. Recheck on manager restart; do not relaunch
+      // the finished buyer every scheduling pass while recovery/study is still running.
+      sleevePurchasesComplete = true;
     }
     const bladeburnerComplete = await hasCompletedBladeburner(ns, unlockedSFs);
     if (!bladeburnerComplete && !Number.isFinite(wdHack)) {
@@ -572,7 +577,7 @@ export async function main(ns) {
     if (Date.now() < nextFinalStudyRead) return true;
     nextFinalStudyRead = Date.now() + 15000;
     const minRate = options['bn10-sleeve-int-per-hour'], minReturn = options['bn10-sleeve-return-percent'];
-    let detail = 'Waiting for sleeve.js to finish augment preparation and measure full-fleet study.';
+    let detail = 'Waiting for a fresh sleeve.js study update. Check its log if this persists.';
     try {
       const state = await intelFarmState(ns, undefined, 'bn10-final');
       if (state.status === 'complete' && state.currentNode === 10 && state.lastNodeReset === resetInfo.lastNodeReset &&
@@ -583,10 +588,14 @@ export async function main(ns) {
       }
       if (state.status !== 'farming' || state.minRate !== minRate || state.minReturn !== minReturn)
         await intelFarmState(ns, {status: 'farming', minRate, minReturn}, 'bn10-final');
+      else if (state.progress?.augReset === resetInfo.lastAugReset &&
+          Date.now() >= state.progress.updatedAt && Date.now() - state.progress.updatedAt <= 90000 &&
+          typeof state.progress.message === 'string') detail = state.progress.message;
     } catch (err) { detail = `Study state unavailable; retrying: ${String(err?.message ?? err)}`; }
-    if (Date.now() >= nextFinalStudyNotice) {
+    if (Date.now() >= nextFinalStudyNotice || detail !== lastFinalStudyDetail) {
       log(ns, `BN10.3 exit held. ${detail}`, true);
       nextFinalStudyNotice = Date.now() + 5 * 60000;
+      lastFinalStudyDetail = detail;
     }
     return true;
   }

@@ -12,11 +12,12 @@ const bare=s=>s.replace(/^import[\s\S]*?from ['"][^'"]+['"];?\s*/gm,'').replace(
 const official=readFileSync(resolve(engine,'src/PersonObjects/formulas/skill.ts'),'utf8');
 const {calculateExp,calculateSkill}=Function('clampNumber',bare(stripTypeScriptTypes(official,{mode:'transform'}))+';return {calculateExp,calculateSkill}')((n,lo)=>Math.max(n,lo));
 const auto=src('autopilot.js'),finishCode=auto.slice(auto.indexOf('  async function checkIfBnIsComplete(ns)'),auto.indexOf('  function getHardCodedBNMultis'));
+const shouldBuy=auto.match(/name: "purchaseSleeves\.js",\s+shouldRun: ([^\n]+),\n/)[1];
 const noop=()=>{},Stop=Symbol(),day=86400000;
 function game(node=10,sf10=2) {
   const reset={currentNode:node,lastNodeReset:10000,lastAugReset:50000,ownedSF:new Map([[4,3],[5,1],[10,sf10]]),bitNodeOptions:{sourceFileOverrides:new Map()}};
   const files=new Map(), log=[],calls=[],tasks=Array(8).fill(null),implants=Array.from({length:8},()=>[]),shop=[];
-  const g={now:day,cash:1e12,reserve:8e9,wd:false,bb:false,cost:Infinity,exits:0,count:8,ramError:false,augError:false,travelFail:-1};
+  const g={now:day,cash:1e12,reserve:8e9,wd:false,bb:false,cost:Infinity,exits:0,count:8,ramError:false,augError:false,travelFail:-1,queries:0,options:{}};
   const sl=Array.from({length:8},(_,i)=>({memory:100,sync:100,shock:0,hp:{current:100,max:100},city:'Sector-12',
     skills:{hacking:10,strength:10,defense:10,dexterity:10,agility:10,charisma:10,intelligence:i===0?70:150},exp:{intelligence:calculateExp(i===0?70:150)},mults:{crime_success:1}}));
   const Clock=class extends Date{static now(){return g.now;}};
@@ -26,6 +27,7 @@ function game(node=10,sf10=2) {
     let end,output;await stateMain({pid:9,args,getResetInfo:()=>reset,getHostname:()=>'home',read:f=>files.get(f)??'',write:async(f,v)=>files.set(f,v),atExit:f=>end=f,getPortHandle:()=>({write:v=>output=v})});end();return output;
   },f=>f);
   const api=async(_,m,i,...a)=>{
+    if(m==='getSleeveCost'||m==='getSleeve')g.queries++;
     if(m==='getSleeveCost')return g.cost;if(m==='getNumSleeves')return g.count;
     if(m==='getSleeve')return structuredClone(sl[i]);if(m==='getTask')return structuredClone(tasks[i]);
     if(m==='getSleeveAugmentations')return g.augError?'ERROR':implants[i].slice();
@@ -40,9 +42,9 @@ function game(node=10,sf10=2) {
     heart:{break:()=>-54000},read:()=>'',tprint:s=>log.push(s),sleep:async()=>{throw Stop;}};
   const common={...policy,...rep,Date:Clock,intelFarmState:state,log:(_,s)=>log.push(s),sleeveRun:api};
   const gate=()=>{const b={...common,shouldIntelFarm:false,waitingForFinalStudy:false,resetInfo:reset,options:settings,player,unlockedSFs:{4:3},hasCompletedBladeburner:async()=>g.bb,
-    nextRecommendedBn:6,destroyWD:async()=>{g.exits++},noteMilestones:async()=>{}};
-    return Function(...Object.keys(b),'let wdHack=null,nextFinalStudyRead=0,nextFinalStudyNotice=0;'+finishCode+';return checkIfBnIsComplete')(...Object.values(b));};
-  const manager=()=>{const b={...common,getConfiguration:(_,schema)=>({...Object.fromEntries(schema),'disable-follow-player':true}),disableLogs:noop,findPids:async()=>[1],
+    nextRecommendedBn:6,destroyWD:async()=>{g.exits++},noteMilestones:async()=>{},reqRam:()=>true};
+    return Function(...Object.keys(b),"let wdHack=null,nextFinalStudyRead=0,nextFinalStudyNotice=0,sleevePurchasesComplete=false,lastFinalStudyDetail='';"+finishCode+';return Object.assign(checkIfBnIsComplete,{shouldBuy:'+shouldBuy+'})')(...Object.values(b));};
+  const manager=()=>{const b={...common,getConfiguration:(_,schema)=>({...Object.fromEntries(schema),'disable-follow-player':true,...g.options}),disableLogs:noop,findPids:async()=>[1],
     getOwnedAugs:async()=>[],getReserve:async()=>g.reserve,getPlayerInfo:async()=>({...player,money:g.cash}),getReset:async()=>reset,getActiveSourceFiles:async()=>Object.fromEntries(reset.ownedSF),
     formatMoney:String,formatDuration:String,singRun:async(_,m)=>{if(m==='getCurrentWork')return null;if(m==='getCrimeStats')return {difficulty:1,strength_success_weight:1};throw Error(m);},
     purchase:async(_,namespace,method,args,p)=>executePurchase({getHostname:()=>'home',read:()=>String(g.reserve),getServerMoneyAvailable:()=>g.cash,sleeve:{
@@ -64,6 +66,37 @@ for(const change of [h=>h.reset.bitNodeOptions.disableSleeveExpAndAugmentation=t
   const h=game();change(h);h.g.bb=true;await h.gate()(h.ns);assert.equal(h.g.exits,1);assert(!h.files.has(file));
 }
 for(const change of [h=>h.g.count=7,h=>h.sl[7].memory=99,h=>h.g.cost=1e17,h=>h.reset.ownedSF=null]) {const h=game();h.g.wd=true;change(h);await h.gate()(h.ns);assert.equal(h.g.exits,0);assert(!h.files.has(file));}
+// Permanent completion stops the real scheduler predicate; a fresh autopilot verifies again.
+{
+  const done=game();done.player.factions.push('The Covenant');const check=done.gate();
+  assert.equal(check.shouldBuy(),true);await check(done.ns);assert.equal(check.shouldBuy(),false);
+  const reads=done.g.queries;for(let i=0;i<5;i++)await check(done.ns);assert.equal(done.g.queries,reads);
+  const restarted=done.gate();assert.equal(restarted.shouldBuy(),true);await restarted(done.ns);assert.equal(restarted.shouldBuy(),false);
+  for(const fault of [h=>h.sl[7].memory=99,h=>h.sl[7].memory=NaN,h=>h.g.cost=100,h=>h.g.count=7]){
+    const pending=game();pending.player.factions.push('The Covenant');fault(pending);const c=pending.gate();
+    await c(pending.ns);assert.equal(c.shouldBuy(),true);
+  }
+}
+// Exit preparation must not require ten times the cash needed for its last implants.
+{
+  const prep=game();prep.g.wd=true;prep.shop.push({name:'Final implant',cost:3e9});
+  prep.g.cash=prep.g.reserve+8*3e9+1.6e6+1;
+  await prep.gate()(prep.ns);
+  await assert.rejects(prep.manager().main(prep.ns),e=>e===Stop);
+  assert(prep.implants.every(a=>a.includes('Final implant')),'Spendable cash funds all final implants despite the ordinary 10% budget');
+  assert.equal(prep.tasks.filter(isClass).length,8,'Keep enough for travel, then study without waiting for new income');
+  assert.equal(prep.g.cash,prep.g.reserve+1);
+}
+for(const mode of ['ordinary','disabled','insufficient']){
+  const prep=game();prep.shop.push({name:'Final implant',cost:3e9});prep.g.cash=prep.g.reserve+8*3e9+1.6e6+1;
+  if(mode==='disabled')prep.g.options['aug-budget']=0;
+  if(mode==='insufficient')prep.g.cash=prep.g.reserve+2e9;
+  if(mode!=='ordinary'){prep.g.wd=true;await prep.gate()(prep.ns);}
+  await assert.rejects(prep.manager().main(prep.ns),e=>e===Stop);
+  assert(prep.implants.every(a=>!a.length),mode+' respects the existing budget or insufficient cash');
+  assert(!prep.tasks.some(isClass));
+  assert.equal(prep.g.exits,0);
+}
 const h=game();let worker=h.manager(),check=h.gate();const run=async()=>{await assert.rejects(worker.main(h.ns),e=>e===Stop);assert(!h.log.some(l=>l.includes('unexpected error')),h.log.join('\n'));};
 const tick=async(ms=10000,rate=1152)=>{
   const share=h.tasks.filter(isClass).length/8;
@@ -77,6 +110,17 @@ h.files.set('/data/intel-farm-state.json','{"status":"complete"}');h.files.set('
 h.g.wd=true;h.g.ramError=true;assert.equal(await check(h.ns),'sleeve-study');assert.equal(h.g.exits,0);
 h.g.now+=16000;h.g.ramError=false;assert.equal(await check(h.ns),'sleeve-study');assert.equal(armed(h),'farming');
 h.sl[6].shock=2;h.sl[7].sync=98;await tick(16000);assert.equal(h.tasks[6].type,'RECOVERY');assert.equal(h.tasks[7].type,'SYNCHRO');assert(!h.tasks.some(isClass));
+assert.match(JSON.parse(h.files.get(file)).progress.message,/synchronization.*shock recovery/);
+await h.gate()(h.ns);assert(h.log.at(-1).includes('synchronization'),'Autopilot reports the worker reason instead of generic memory preparation');
+{
+  const before=h.files.get(file),p={...JSON.parse(before).progress};
+  for(const patch of [{...rule,progress:{...p,augReset:p.augReset-1}},
+    {...rule,progress:p,status:'complete'},{...rule,progress:p,report:{}},
+    {minRate:7,minReturn:.5,progress:p}]){
+    await assert.rejects(h.state(h.ns,patch,'bn10-final'));assert.equal(h.files.get(file),before);
+  }
+  h.g.now+=90001;await h.gate()(h.ns);assert(h.log.at(-1).includes('fresh sleeve.js'),'Old progress cannot masquerade as a live worker');
+}
 h.sl[6].shock=0;h.sl[7].sync=100;await tick(31000);assert(!h.tasks.some(isClass),'Empty shop alone is not proof of installed implants');
 h.shop.push({name:'A',cost:1e6},{name:'B',cost:2e6});h.g.cash=h.g.reserve+100;await tick(61000);assert(!h.tasks.some(isClass));assert(h.implants.every(a=>!a.length));
 h.g.cash=1e12;h.g.augError=true;await tick(61000);assert(h.implants.every(a=>a.length===2));assert(!h.tasks.some(isClass),'RPC error is not an empty augmentation list');
@@ -97,6 +141,8 @@ for(let i=0;i<33;i++)await tick();assert.equal(armed(h),'complete');
 const done=JSON.parse(h.files.get(file));assert(policy.finalStudyProof(done.report,6,.5,h.reset.lastAugReset));assert(done.report.levelsPerHour<6&&done.report.returnPercent<.5);
 assert.equal(h.files.get('/data/intel-farm-state.json'),'{"status":"complete"}');assert.equal(h.files.get('/data/sleeve-intel-farm-state.json'),'{"status":"complete","target":50}');
 await check(h.ns);assert.equal(h.g.exits,1);h.g.wd=false;h.g.bb=true;await h.gate()(h.ns);assert.equal(h.g.exits,2,'Both victory paths require valid evidence');
+await assert.rejects(h.state(h.ns,{...rule,progress:{message:'old worker',updatedAt:h.g.now,augReset:h.reset.lastAugReset}},'bn10-final'));
+assert.equal(armed(h),'complete','A late progress write cannot reopen a completed study');
 h.settings['bn10-sleeve-int-per-hour']=7;assert.equal(await h.gate()(h.ns),'sleeve-study');assert.equal(JSON.parse(h.files.get(file)).minRate,7);
 h.settings['bn10-sleeve-int-per-hour']=6;h.files.set(file,JSON.stringify(done));
 h.reset.lastAugReset++;assert.equal(await h.gate()(h.ns),'sleeve-study');assert.equal(armed(h),'farming','A changed installation triggers a fresh measurement');

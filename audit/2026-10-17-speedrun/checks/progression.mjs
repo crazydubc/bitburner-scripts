@@ -70,7 +70,7 @@ async function finishCase(settings = {}) {
   const ns = {scan: () => caveVisible ? ['w0r1d_d43m0n'] : [], getServerRequiredHackingLevel: () => 3000,
     hasRootAccess: () => settings.root ?? true, getScriptName: () => 'autopilot.js'};
   const check = await extract('autopilot.js', 'async function checkIfBnIsComplete(ns)', 'function getHardCodedBNMultis', {
-    bn103StudyNode, waitingForFinalStudy: false, shouldIntelFarm: settings.farm ?? false, resetInfo: {currentNode: settings.node ?? 6, ownedSF: new Map()},
+    bn103StudyNode, waitingForFinalStudy: false, sleevePurchasesComplete: false, shouldIntelFarm: settings.farm ?? false, resetInfo: {currentNode: settings.node ?? 6, ownedSF: new Map()},
     sleeveRun: async (_ns, method) => method === 'getSleeveCost' ? settings.sleeveCost ?? Infinity
       : method === 'getNumSleeves' ? settings.count ?? 1 : {memory: settings.memory ?? 100},
     hasCompletedBladeburner: async () => settings.blade ?? false, unlockedSFs: {4: 3, 6: 1},
